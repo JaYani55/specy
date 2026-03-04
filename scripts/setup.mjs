@@ -54,18 +54,15 @@ function run(cmd) {
   }
 }
 
-// On Windows the .bin shim is a bash script — use the .cmd wrapper instead.
-const IS_WIN    = process.platform === 'win32';
-const WRANGLER  = IS_WIN ? 'node_modules\.bin\wrangler.cmd' : 'node_modules/.bin/wrangler';
-
 /**
  * Run a wrangler command with fully inherited stdio (interactive).
+ * Uses npx for cross-platform compatibility.
  */
 function wranglerInteractive(...args) {
-  const result = spawnSync(WRANGLER, args, {
+  const result = spawnSync('npx', ['wrangler', ...args], {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: IS_WIN, // shell required for .cmd files on Windows
+    shell: true,
   });
   return result.status === 0;
 }
@@ -76,8 +73,8 @@ function wranglerInteractive(...args) {
 function wranglerSilent(...args) {
   try {
     return execSync(
-      `"${WRANGLER}" ${args.join(' ')}`,
-      { encoding: 'utf8', cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WIN },
+      `npx wrangler ${args.join(' ')}`,
+      { encoding: 'utf8', cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'], shell: true },
     ).trim();
   } catch {
     return null;
@@ -254,14 +251,14 @@ async function stepApiToken() {
   s.start('Setting CF_API_TOKEN via wrangler secret put…');
 
   const result = spawnSync(
-    'node',
-    ['node_modules/.bin/wrangler', 'secret', 'put', 'CF_API_TOKEN'],
+    'npx',
+    ['wrangler', 'secret', 'put', 'CF_API_TOKEN'],
     {
       input: token.trim() + '\n',
       cwd: ROOT,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
+      shell: true,
     },
   );
 
