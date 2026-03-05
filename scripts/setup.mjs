@@ -347,11 +347,12 @@ async function stepSupabaseSecrets(storeId) {
 }
 
 function patchWranglerJsonc(accountId, storeId) {
-  const path = join(ROOT, 'wrangler.jsonc');
-  let txt = readFileSync(path, 'utf8');
-  txt = txt.replaceAll('REPLACE_WITH_YOUR_CF_ACCOUNT_ID',  accountId.trim());
+  const templatePath = join(ROOT, 'wrangler.default.jsonc');
+  const outputPath   = join(ROOT, 'wrangler.jsonc');
+  let txt = readFileSync(templatePath, 'utf8');
+  txt = txt.replaceAll('REPLACE_WITH_YOUR_CF_ACCOUNT_ID',    accountId.trim());
   txt = txt.replaceAll('REPLACE_WITH_YOUR_SECRETS_STORE_ID', storeId.trim());
-  writeFileSync(path, txt, 'utf8');
+  writeFileSync(outputPath, txt, 'utf8');
 }
 
 async function stepApiToken() {
@@ -681,7 +682,7 @@ async function main() {
 
   // ── 7. Database migrations ────────────────────────────────────────────────
   log.step(pc.bold('Step 6 — Database migrations'));
-  await stepMigrations(supabaseUrl, supabaseServiceRoleKey);
+  await stepMigrations(supabaseUrl, supabaseSecretKey);
 
   // ── 8. Build ──────────────────────────────────────────────────────────────
   log.step(pc.bold('Step 7 — Build'));

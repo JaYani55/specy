@@ -40,7 +40,9 @@ export interface Env {
   // ── Fallback vars for local `wrangler dev` (set in .dev.vars) ──────────────
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;
-  SUPABASE_SECRET_KEY: string;
+  // NOTE: SUPABASE_SECRET_KEY is intentionally NOT a plain var fallback.
+  // It must only be bound from the Secrets Store (SS_SUPABASE_SECRET_KEY)
+  // to prevent it ever being set unencrypted in wrangler.jsonc.
   ENVIRONMENT: string;
 
   // ── Secrets Store bindings (production) ────────────────────────────────────
@@ -95,10 +97,15 @@ export async function createSupabaseClient(env: Env) {
 /**
  * Create an admin/service Supabase client using the secret key.
  * Bypasses RLS — only use server-side for privileged operations.
+ * Requires SS_SUPABASE_SECRET_KEY to be bound from the Secrets Store.
+ * Never falls back to a plain var to prevent accidental exposure.
  */
 export async function createSupabaseAdminClient(env: Env) {
   const url = await resolveSecret(env.SS_SUPABASE_URL, env.SUPABASE_URL);
-  const key = await resolveSecret(env.SS_SUPABASE_SECRET_KEY, env.SUPABASE_SECRET_KEY);
+  if (!env.SS_SUPABASE_SECRET_KEY) {
+    throw new Error('SS_SUPABASE_SECRET_KEY is not bound. Add SUPABASE_SECRET_KEY to your Secrets Store and bind it in wrangler.jsonc.');
+  }
+  const key = await env.SS_SUPABASE_SECRET_KEY.get();
 
   return createClient(url, key, {
     auth: {
