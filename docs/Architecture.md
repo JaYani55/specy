@@ -76,3 +76,102 @@ To run the application, only the standard Supabase credentials are required. Sea
 | :--- | :--- |
 | `VITE_SUPABASE_URL` | The URL of your Supabase project (e.g., `https://xyz.supabase.co`). |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | The publishable key for your Supabase project. |
+
+---
+
+## 4. Database Schema & Migrations
+
+All database tables are defined as plain SQL files under `migrations/`. They are applied in dependency order by the interactive setup wizard (`scripts/setup.mjs`) via the **Supabase Management API**.
+
+### Migration Files
+
+| File | Description |
+| :--- | :--- |
+| `preamble.sql` | **Must run first.** Defines shared types (`app_enum`) and all trigger functions used by later migrations. Fully idempotent via `CREATE OR REPLACE` / `DO $$ … EXCEPTION WHEN duplicate_object`. |
+| `user_profile.sql` | User profile table (`public.user_profile`). No foreign-key dependencies outside `auth.users`. |
+| `roles.sql` | Application roles table (`public.roles`). Uses the `app_enum[]` type defined in `preamble.sql`. |
+| `employers.sql` | Employer organisation table (`public.employers`). Has a FK to `user_profile`. |
+| `user_roles.sql` | Many-to-many join between `user_profile` and `roles`. |
+| `mentor_groups.sql` | Mentor group definitions. No external FK dependencies. |
+| `products.sql` | Product/page records stored as JSONB (`public.products`). Uses `set_current_timestamp_updated_at` and `sync_is_draft_with_status` trigger functions. **Note:** this table is renamed to `pages` by `pages.sql`. |
+| `page_schemas.sql` | Schema registry for the dynamic page-builder (`public.page_schemas`). Seeded with the default `service-product` schema. Uses `set_current_timestamp_updated_at`. |
+| `mentorbooking_products.sql` | Booking products / pillars (`public.mentorbooking_products`). FK to `products`. |
+| `pages.sql` | Renames `products` → `pages`, adds `schema_id` FK to `page_schemas`, and renames the FK constraint on `mentorbooking_products`. **Must run after `mentorbooking_products.sql`** so the constraint to rename already exists. |
+| `mentorbooking_events.sql` | Event scheduling table. FKs to `employers` and `mentorbooking_products`. Uses `update_event_status` and `update_event_status_on_request` trigger functions. |
+| `mentorbooking_events_archive.sql` | Archived events table. Same FK requirements as `mentorbooking_events`. |
+| `mentorbooking_notifications.sql` | Per-user event notifications. FK to `user_profile`. |
+| `agent_logs.sql` | Page-builder AI agent request/response log. FK to `page_schemas`. |
+| `Auth/Access_hook.sql` | Supabase Auth hook function (`custom_access_token_hook`) that injects `user_roles` into JWT claims. Requires `roles` and `user_roles` tables to exist. |
+
+### Dependency Order
+
+```
+preamble.sql                    (app_enum, trigger functions)
+  └─ user_profile.sql
+       └─ employers.sql
+       └─ user_roles.sql
+  └─ roles.sql
+       └─ user_roles.sql
+  └─ products.sql
+       └─ mentorbooking_products.sql
+            └─ pages.sql        (renames products + FK on mentorbooking_products)
+            └─ mentorbooking_events.sql
+            └─ mentorbooking_events_archive.sql
+  └─ page_schemas.sql
+       └─ pages.sql
+       └─ agent_logs.sql
+  mentor_groups.sql             (standalone)
+  mentorbooking_notifications.sql  (← user_profile)
+  Auth/Access_hook.sql          (← roles + user_roles — must be last)
+```
+
+### Shared Types & Trigger Functions (`preamble.sql`)
+
+| Symbol | Type | Used by |
+| :--- | :--- | :--- |
+| `public.app_enum` | `ENUM` | `roles.sql` (`app app_enum[]` column) |
+| `set_current_timestamp_updated_at()` | trigger fn | `products.sql`, `page_schemas.sql` |
+| `sync_is_draft_with_status()` | trigger fn | `products.sql` (keeps `is_draft` ↔ `status` in sync) |
+| `update_event_status()` | trigger fn | `mentorbooking_events.sql` (INSERT / UPDATE trigger) |
+| `update_event_status_on_request()` | trigger fn | `mentorbooking_events.sql` (UPDATE trigger) |
+
+---
+
+## 5. Setup Wizard (`scripts/setup.mjs`)
+
+Run with `npm run setup`. An interactive CLI wizard ([@clack/prompts](https://github.com/natemoo-re/clack) + [picocolors](https://github.com/alexeyraspopov/picocolors)) that provisions a fresh Cloudflare Workers deployment end-to-end.
+
+### Wizard Steps
+
+| Step | Function | What it does |
+| :--- | :--- | :--- |
+| 1 | `stepLogin()` | Runs `wrangler login` if not already authenticated. Auto-detects account ID from `wrangler whoami`. |
+| 2 | `detectAccountId()` | Reads or prompts for the Cloudflare Account ID. |
+| 3 | `stepSecretsStore()` | Lists existing Secrets Stores via `wrangler secrets-store store list`. Creates one named `service-cms` if none exist. |
+| 4 | `patchWranglerJsonc()` | Copies `wrangler.default.jsonc` → `wrangler.jsonc` and substitutes `CF_ACCOUNT_ID` + `SECRETS_STORE_ID`. |
+| 5 | `stepApiToken()` | Prompts for a Cloudflare API token and stores it as a Worker secret via `wrangler secret put CF_API_TOKEN`. |
+| 6 | `stepSupabaseSecrets()` | Collects Supabase URL, publishable key, secret key, and storage config. Stores: `SUPABASE_PUBLISHABLE_KEY` as a Worker secret; `SUPABASE_SECRET_KEY` in the Secrets Store. |
+| 6b | `patchWranglerVars()` | Writes `SUPABASE_URL`, `STORAGE_PROVIDER`, `STORAGE_BUCKET`, `R2_PUBLIC_URL` into the `vars` block of `wrangler.jsonc`. |
+| 7 | `stepMigrations()` | Applies all SQL migrations via the Supabase Management API (see below). |
+| 8 | `stepBuild()` | Runs `npm run build`. |
+| 9 | `stepDeploy()` | Runs `wrangler deploy`. |
+
+### Secret Storage Strategy
+
+| Value | Where stored | Reason |
+| :--- | :--- | :--- |
+| `CF_API_TOKEN` | Worker secret (`wrangler secret put`) | Used by the deployed Worker at runtime for the `/verwaltung/connections` UI |
+| `SUPABASE_PUBLISHABLE_KEY` | Worker secret (`wrangler secret put`) | Safe for client use but kept out of source control |
+| `SUPABASE_SECRET_KEY` | Cloudflare Secrets Store | Bypasses RLS — must be kept strictly server-side |
+| `SUPABASE_URL`, `STORAGE_*` | `wrangler.jsonc` `vars` block (git-ignored) | Non-sensitive; written once by the wizard |
+
+### `wrangler.jsonc` Template System
+
+`wrangler.default.jsonc` is the **committed** template. It contains placeholder strings (`REPLACE_WITH_YOUR_CF_ACCOUNT_ID`, etc.) and defines only the `SS_SUPABASE_SECRET_KEY` binding under `secrets_store_secrets`. The wizard generates `wrangler.jsonc` (git-ignored) by substituting real values — it is never committed.
+
+### Migration Step Detail (`stepMigrations`)
+
+1. **Schema check** — queries the Supabase REST API with the secret key to see if `pages` already exists. If so, offers to skip.
+2. **PAT prompt** — asks for a Supabase personal access token (must start with `sb_pat_` or `sbp_`). The PAT is used only during setup and is never stored.
+3. **Sequential execution** — applies each file in the [dependency order](#dependency-order) above via `POST https://api.supabase.com/v1/projects/{ref}/database/query`.
+4. **Interactive failure handling** — if a migration fails, the error is displayed in full and the user is asked `Continue with remaining migrations? (y/N)` (default: No) before proceeding.

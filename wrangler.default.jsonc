@@ -69,7 +69,13 @@
     "CF_ACCOUNT_ID": "REPLACE_WITH_YOUR_CF_ACCOUNT_ID",
 
     // <<< REPLACE: Your Secrets Store UUID (see step 2 above)
-    "SECRETS_STORE_ID": "REPLACE_WITH_YOUR_SECRETS_STORE_ID"
+    "SECRETS_STORE_ID": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
+
+    // Written by the setup wizard (wrangler.jsonc is git-ignored, never committed)
+    "SUPABASE_URL":      "REPLACE_WITH_SUPABASE_URL",
+    "STORAGE_PROVIDER": "REPLACE_WITH_STORAGE_PROVIDER",
+    "STORAGE_BUCKET":   "REPLACE_WITH_STORAGE_BUCKET",
+    "R2_PUBLIC_URL":    ""
   },
 
   // ── R2 media bucket (OPTIONAL — only needed when STORAGE_PROVIDER = 'r2') ──
@@ -84,46 +90,16 @@
 
   "secrets_store_secrets": [
     {
-      "binding": "SS_SUPABASE_URL",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
-      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "SUPABASE_URL"
-    },
-    {
-      "binding": "SS_SUPABASE_PUBLISHABLE_KEY",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
-      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "SUPABASE_PUBLISHABLE_KEY"
-    },
-    {
+      // Supabase secret key — bypasses RLS, stored in Secrets Store only.
+      // All other credentials are Worker vars/secrets (see vars section above).
       "binding": "SS_SUPABASE_SECRET_KEY",
       // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
       "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
       "secret_name": "SUPABASE_SECRET_KEY"
-    },
-    {
-      // Media storage provider: 'supabase' (default) or 'r2'
-      "binding": "SS_STORAGE_PROVIDER",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
-      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "STORAGE_PROVIDER"
-    },
-    {
-      // Bucket / container name for the chosen provider
-      "binding": "SS_STORAGE_BUCKET",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
-      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "STORAGE_BUCKET"
-    },
-    {
-      // R2 only: public CDN URL prefix (e.g. https://pub-xxx.r2.dev or custom domain)
-      "binding": "SS_R2_PUBLIC_URL",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
-      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "R2_PUBLIC_URL"
     }
   ]
 
   // ── Worker secrets (CLI only — never commit these) ───────────────────────────
-  // CF_API_TOKEN  → npx wrangler secret put CF_API_TOKEN
+  // CF_API_TOKEN             → npx wrangler secret put CF_API_TOKEN
+  // SUPABASE_PUBLISHABLE_KEY → npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
 }

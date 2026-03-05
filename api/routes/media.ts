@@ -1,7 +1,7 @@
 /**
  * /api/media — Storage provider abstraction layer
  *
- * Supports two providers, selected at runtime via the SS_STORAGE_PROVIDER secret:
+ * Supports two providers, selected at runtime via the STORAGE_PROVIDER var:
  *   • "supabase" (default) — proxies to Supabase Storage using SS_STORAGE_BUCKET
  *   • "r2"                 — uses the native MEDIA_BUCKET R2 binding
  *
@@ -13,7 +13,7 @@
  */
 
 import { Hono } from 'hono';
-import { Env, createSupabaseClient, resolveSecret } from '../lib/supabase';
+import { Env, createSupabaseClient } from '../lib/supabase';
 
 export type MediaItem = {
   name: string;
@@ -33,9 +33,9 @@ type MediaConfig = {
 
 // ── helper: resolve the active storage config ──────────────────────────────
 async function resolveMediaConfig(env: Env): Promise<MediaConfig & { r2PublicUrl: string | null }> {
-  const provider = (await resolveSecret(env.SS_STORAGE_PROVIDER, '')) as 'supabase' | 'r2' | '';
-  const bucket = await resolveSecret(env.SS_STORAGE_BUCKET, '');
-  const r2PublicUrl = await resolveSecret(env.SS_R2_PUBLIC_URL, '');
+  const provider = (env.STORAGE_PROVIDER || '') as 'supabase' | 'r2' | '';
+  const bucket   = env.STORAGE_BUCKET   || '';
+  const r2PublicUrl = env.R2_PUBLIC_URL || '';
 
   if (!provider || !bucket) {
     return { provider: 'unconfigured', bucket: null, configured: false, r2PublicUrl: null };

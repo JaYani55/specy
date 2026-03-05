@@ -221,8 +221,40 @@ async function askStoreId() {
 async function putSecretsStoreSecret(storeId, name, value) {
   const result = spawnSync(
     'npx',
-    ['wrangler', 'secrets-store', 'secret', 'create', storeId,
-     '--name', name, '--scopes', 'workers', '--remote'],
+    [
+      'wrangler', 'secrets-store', 'secret', 'create', storeId,
+      '--name',   name,
+      '--value',  value.trim(),
+      '--scopes', 'workers',
+      '--remote',
+    ],
+    {
+      cwd:      ROOT,
+      encoding: 'utf8',
+      stdio:    ['ignore', 'pipe', 'pipe'],
+      shell:    true,
+    },
+  );
+
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || '').trim();
+    log.warn(
+      `Could not store ${pc.cyan(name)} — set it manually via the /verwaltung/connections UI.\n` +
+      (detail ? `  wrangler said: ${detail}` : ''),
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Store a value as an encrypted Worker secret via `wrangler secret put`.
+ * Returns true on success.
+ */
+function putWorkerSecret(name, value) {
+  const result = spawnSync(
+    'npx',
+    ['wrangler', 'secret', 'put', name],
     {
       input: value.trim() + '\n',
       cwd: ROOT,
@@ -231,7 +263,15 @@ async function putSecretsStoreSecret(storeId, name, value) {
       shell: true,
     },
   );
-  return result.status === 0;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || '').trim();
+    log.warn(
+      `Could not store Worker secret ${pc.cyan(name)} \u2014 run manually: npx wrangler secret put ${name}\n` +
+      (detail ? `  wrangler said: ${detail}` : ''),
+    );
+    return false;
+  }
+  return true;
 }
 
 async function stepSupabaseSecrets(storeId) {
@@ -313,23 +353,29 @@ async function stepSupabaseSecrets(storeId) {
   );
 
   const secrets = [
-    { name: 'SUPABASE_URL',             value: supabaseUrl },
-    { name: 'SUPABASE_PUBLISHABLE_KEY', value: supabasePublishableKey },
-    { name: 'SUPABASE_SECRET_KEY',      value: supabaseSecretKey },
-    { name: 'STORAGE_PROVIDER',          value: storageProvider },
-    { name: 'STORAGE_BUCKET',            value: storageBucket },
-    ...(storageProvider === 'r2' ? [{ name: 'R2_PUBLIC_URL', value: r2PublicUrl }] : []),
+    // Only SUPABASE_SECRET_KEY goes into the Secrets Store.
+    // SUPABASE_URL + storage values → wrangler vars (written by patchWranglerVars).
+    // SUPABASE_PUBLISHABLE_KEY → Worker secret (wrangler secret put).
   ];
 
-  const s = spinner();
-  for (const secret of secrets) {
-    s.start(`Storing ${pc.yellow(secret.name)} in Secrets Store…`);
-    const ok = await putSecretsStoreSecret(storeId, secret.name, secret.value);
-    if (ok) {
-      s.stop(pc.green(`${secret.name} stored ✓`));
-    } else {
-      s.stop(pc.yellow(`Warning: could not store ${secret.name} — set it manually via the /verwaltung/connections UI.`));
-    }
+  // ── Store SUPABASE_PUBLISHABLE_KEY as an encrypted Worker secret ────────
+  const ws = spinner();
+  ws.start(`Storing ${pc.yellow('SUPABASE_PUBLISHABLE_KEY')} as Worker secret…`);
+  const wpOk = putWorkerSecret('SUPABASE_PUBLISHABLE_KEY', supabasePublishableKey);
+  if (wpOk) {
+    ws.stop(pc.green('SUPABASE_PUBLISHABLE_KEY stored as Worker secret ✓'));
+  } else {
+    ws.stop(pc.yellow('Skipped — run manually: npx wrangler secret put SUPABASE_PUBLISHABLE_KEY'));
+  }
+
+  // ── Store SUPABASE_SECRET_KEY in Secrets Store ──────────────────────────
+  const ss2 = spinner();
+  ss2.start(`Storing ${pc.yellow('SUPABASE_SECRET_KEY')} in Secrets Store…`);
+  const ssOk = await putSecretsStoreSecret(storeId, 'SUPABASE_SECRET_KEY', supabaseSecretKey);
+  if (ssOk) {
+    ss2.stop(pc.green('SUPABASE_SECRET_KEY stored in Secrets Store ✓'));
+  } else {
+    ss2.stop(pc.yellow('Skipped — set it via /verwaltung/connections after deploy.'));
   }
 
   if (storageProvider === 'r2') {
@@ -343,7 +389,7 @@ async function stepSupabaseSecrets(storeId) {
     );
   }
 
-  return { supabaseUrl, supabaseSecretKey };
+  return { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl };
 }
 
 function patchWranglerJsonc(accountId, storeId) {
@@ -353,6 +399,22 @@ function patchWranglerJsonc(accountId, storeId) {
   txt = txt.replaceAll('REPLACE_WITH_YOUR_CF_ACCOUNT_ID',    accountId.trim());
   txt = txt.replaceAll('REPLACE_WITH_YOUR_SECRETS_STORE_ID', storeId.trim());
   writeFileSync(outputPath, txt, 'utf8');
+}
+
+/**
+ * Patch the Supabase + storage vars into the already-generated wrangler.jsonc.
+ * Called after stepSupabaseSecrets so all values are available.
+ */
+function patchWranglerVars(supabaseUrl, storageProvider, storageBucket, r2PublicUrl) {
+  const path = join(ROOT, 'wrangler.jsonc');
+  let txt = readFileSync(path, 'utf8');
+  txt = txt.replaceAll('REPLACE_WITH_SUPABASE_URL',     supabaseUrl.trim());
+  txt = txt.replaceAll('REPLACE_WITH_STORAGE_PROVIDER', storageProvider.trim());
+  txt = txt.replaceAll('REPLACE_WITH_STORAGE_BUCKET',   storageBucket.trim());
+  if (r2PublicUrl) {
+    txt = txt.replace('"R2_PUBLIC_URL":    ""', `"R2_PUBLIC_URL":    "${r2PublicUrl.trim()}"`);
+  }
+  writeFileSync(path, txt, 'utf8');
 }
 
 async function stepApiToken() {
@@ -453,8 +515,13 @@ async function runSqlQuery(projectRef, pat, sql) {
     },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error || `HTTP ${res.status}`);
+    const rawText = await res.text().catch(() => '');
+    let detail = rawText;
+    try {
+      const body = JSON.parse(rawText);
+      detail = body.message || body.error || body.msg || rawText;
+    } catch { /* use rawText */ }
+    throw new Error(`HTTP ${res.status}: ${detail}`);
   }
   return res.json().catch(() => null);
 }
@@ -495,7 +562,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
       'Create a personal access token (PAT) at:',
       pc.cyan('  supabase.com/dashboard/account/tokens'),
       '',
-      pc.dim('The token is only used locally during setup and is never stored.'),
+      pc.bold('  ⚠️  Use a PAT — NOT your publishable or secret key.'),
+      pc.dim('  PATs start with  sb_pat_  or  sbp_  and are created in your account settings.'),
+      pc.dim('  The token is only used locally during setup and is never stored.'),
     ].join('\n'),
     'Supabase Management API token',
   );
@@ -503,8 +572,14 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
   const pat = bailOnCancel(
     await password({
       message: 'Supabase personal access token (input hidden):',
-      validate: (v) =>
-        v.trim().length < 10 ? 'Token looks too short — paste the full token.' : undefined,
+      validate: (v) => {
+        const t = v.trim();
+        if (t.length < 10) return 'Token looks too short \u2014 paste the full token.';
+        if (!t.startsWith('sbp_') && !t.startsWith('sb_pat_')) {
+          return 'This does not look like a PAT (should start with sbp_ or sb_pat_). '
+            + 'Do not use your publishable or secret key here.';
+        }
+      },
     }),
   );
 
@@ -515,36 +590,54 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
   }
 
   // ── 3. Ordered migration files ─────────────────────────────────────────
-  // Order matters: respect FK dependencies.
-  // products.sql is run before mentorbooking_products.sql (FK).
-  // page_schemas.sql must precede pages.sql (FK).
-  // pages.sql renames products → pages and adds schema_id FK.
+  // Dependency order (each file must come after everything it references):
+  //
+  //  preamble.sql              — app_enum type + all trigger functions
+  //  user_profile.sql          — no deps
+  //  roles.sql                 — needs app_enum (preamble)
+  //  employers.sql             — needs user_profile
+  //  user_roles.sql            — needs roles + user_profile
+  //  mentor_groups.sql         — no deps
+  //  products.sql              — needs set_current_timestamp_updated_at (preamble)
+  //  page_schemas.sql          — needs set_current_timestamp_updated_at (preamble)
+  //  mentorbooking_products.sql — needs products (FK)
+  //  pages.sql                 — renames products→pages; renames FK on mentorbooking_products
+  //                              (must run AFTER mentorbooking_products so the FK to rename exists)
+  //  mentorbooking_events.sql  — needs employers + mentorbooking_products + event functions
+  //  mentorbooking_events_archive.sql — needs employers + mentorbooking_products
+  //  mentorbooking_notifications.sql  — needs user_profile
+  //  agent_logs.sql            — needs page_schemas
+  //  Auth/Access_hook.sql      — needs roles + user_roles (last)
   const MIGRATION_ORDER = [
+    'preamble.sql',
+    'user_profile.sql',
     'roles.sql',
     'employers.sql',
-    'user_profile.sql',
     'user_roles.sql',
     'mentor_groups.sql',
     'products.sql',
+    'page_schemas.sql',
     'mentorbooking_products.sql',
+    'pages.sql',
     'mentorbooking_events.sql',
     'mentorbooking_events_archive.sql',
     'mentorbooking_notifications.sql',
-    'page_schemas.sql',
-    'pages.sql',
     'agent_logs.sql',
     'Auth/Access_hook.sql',
   ];
 
   const migrationsDir = join(ROOT, 'migrations');
   const ms = spinner();
+  let aborted = false;
 
   for (const file of MIGRATION_ORDER) {
+    if (aborted) break;
+
     ms.start(`Applying ${pc.yellow(file)}…`);
     let sql;
     try {
       sql = readFileSync(join(migrationsDir, file), 'utf8');
-    } catch (err) {
+    } catch {
       ms.stop(pc.yellow(`  ${file} — file not found, skipping.`));
       continue;
     }
@@ -553,12 +646,23 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
       await runSqlQuery(projectRef, pat.trim(), sql);
       ms.stop(pc.green(`  ${file} ✓`));
     } catch (err) {
-      ms.stop(pc.yellow(`  ${file} — warning: ${err.message}`));
-      // Non-fatal: continue with remaining migrations.
+      ms.stop(pc.red(`  ${file} — failed: ${err.message}`));
+
+      const keepGoing = await confirm({
+        message: `Migration ${pc.yellow(file)} failed. Continue with remaining migrations?`,
+        initialValue: false,
+      });
+      if (isCancel(keepGoing) || !keepGoing) {
+        aborted = true;
+      }
     }
   }
 
-  log.success('Migrations complete.');
+  if (aborted) {
+    log.warn('Migrations aborted. Fix the failing migration and re-run  npm run setup.');
+  } else {
+    log.success('Migrations complete.');
+  }
 }
 
 async function stepBuild() {
@@ -635,7 +739,7 @@ async function main() {
       `  ${pc.cyan('2.')} Account ID  +  Secrets Store selection`,
       `  ${pc.cyan('3.')} Patch ${pc.yellow('wrangler.jsonc')} with your values`,
       `  ${pc.cyan('4.')} Set ${pc.yellow('CF_API_TOKEN')} as a Worker secret`,
-      `  ${pc.cyan('5.')} Supabase URL  +  publishable key  +  secret key  +  storage settings`,
+      `  ${pc.cyan('5.')} Supabase URL ${pc.dim('(var)')} + publishable key ${pc.dim('(Worker secret)')} + secret key ${pc.dim('(Secrets Store)')} + storage`,
       `  ${pc.cyan('6.')} Apply database migrations via Supabase Management API`,
       `  ${pc.cyan('7.')} Build  →  Deploy`,
       '',
@@ -678,7 +782,13 @@ async function main() {
 
   // ── 6. Supabase + Storage credentials ────────────────────────────────────
   log.step(pc.bold('Step 5 — Supabase & storage credentials'));
-  const { supabaseUrl, supabaseSecretKey } = await stepSupabaseSecrets(storeId);
+  const { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl } = await stepSupabaseSecrets(storeId);
+
+  // Patch wrangler.jsonc vars with Supabase + storage values
+  const vs = spinner();
+  vs.start('Patching wrangler.jsonc with Supabase & storage vars…');
+  patchWranglerVars(supabaseUrl, storageProvider, storageBucket, r2PublicUrl);
+  vs.stop(pc.green('wrangler.jsonc vars updated ✓'));
 
   // ── 7. Database migrations ────────────────────────────────────────────────
   log.step(pc.bold('Step 6 — Database migrations'));

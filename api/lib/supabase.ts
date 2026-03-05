@@ -83,10 +83,7 @@ export async function resolveSecret(binding: SecretsStoreBinding | undefined, fa
 }
 
 export async function createSupabaseClient(env: Env) {
-  const url = await resolveSecret(env.SS_SUPABASE_URL, env.SUPABASE_URL);
-  const key = await resolveSecret(env.SS_SUPABASE_PUBLISHABLE_KEY, env.SUPABASE_PUBLISHABLE_KEY);
-
-  return createClient(url, key, {
+  return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -101,13 +98,11 @@ export async function createSupabaseClient(env: Env) {
  * Never falls back to a plain var to prevent accidental exposure.
  */
 export async function createSupabaseAdminClient(env: Env) {
-  const url = await resolveSecret(env.SS_SUPABASE_URL, env.SUPABASE_URL);
   if (!env.SS_SUPABASE_SECRET_KEY) {
     throw new Error('SS_SUPABASE_SECRET_KEY is not bound. Add SUPABASE_SECRET_KEY to your Secrets Store and bind it in wrangler.jsonc.');
   }
   const key = await env.SS_SUPABASE_SECRET_KEY.get();
-
-  return createClient(url, key, {
+  return createClient(env.SUPABASE_URL, key, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
