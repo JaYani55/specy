@@ -51,13 +51,22 @@ export const SECRETS_MANIFEST: SecretDefinition[] = [
     binding: 'SS_SUPABASE_URL',
   },
   {
-    name: 'SUPABASE_ANON_KEY',
+    name: 'SUPABASE_PUBLISHABLE_KEY',
     category: 'Database',
-    label: 'Supabase Anon Key',
-    description: 'Your Supabase public anon key. Row-level security enforces access control — safe to expose to the Worker.',
+    label: 'Supabase Publishable Key',
+    description: 'Your Supabase publishable key. Row-level security enforces access control — safe to expose to the Worker.',
     required: true,
-    placeholder: 'eyJ...',
-    binding: 'SS_SUPABASE_ANON_KEY',
+    placeholder: 'sb_publishable_...',
+    binding: 'SS_SUPABASE_PUBLISHABLE_KEY',
+  },
+  {
+    name: 'SUPABASE_SECRET_KEY',
+    category: 'Database',
+    label: 'Supabase Secret Key',
+    description: 'Your Supabase secret key. Bypasses RLS — used server-side only for privileged operations.',
+    required: true,
+    placeholder: 'sb_secret_...',
+    binding: 'SS_SUPABASE_SECRET_KEY',
   },
   // ── Storage ───────────────────────────────────────────────────────────────
   {

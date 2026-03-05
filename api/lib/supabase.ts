@@ -39,13 +39,15 @@ export interface R2ObjectBody extends R2Object {
 export interface Env {
   // ── Fallback vars for local `wrangler dev` (set in .dev.vars) ──────────────
   SUPABASE_URL: string;
-  SUPABASE_ANON_KEY: string;
+  SUPABASE_PUBLISHABLE_KEY: string;
+  SUPABASE_SECRET_KEY: string;
   ENVIRONMENT: string;
 
   // ── Secrets Store bindings (production) ────────────────────────────────────
   // These override the plain vars when present (bound via wrangler.jsonc secrets_store_secrets)
   SS_SUPABASE_URL?: SecretsStoreBinding;
-  SS_SUPABASE_ANON_KEY?: SecretsStoreBinding;
+  SS_SUPABASE_PUBLISHABLE_KEY?: SecretsStoreBinding;
+  SS_SUPABASE_SECRET_KEY?: SecretsStoreBinding;
   // Media storage
   SS_STORAGE_PROVIDER?: SecretsStoreBinding; // 'supabase' | 'r2'
   SS_STORAGE_BUCKET?: SecretsStoreBinding;   // bucket / container name
@@ -80,7 +82,23 @@ export async function resolveSecret(binding: SecretsStoreBinding | undefined, fa
 
 export async function createSupabaseClient(env: Env) {
   const url = await resolveSecret(env.SS_SUPABASE_URL, env.SUPABASE_URL);
-  const key = await resolveSecret(env.SS_SUPABASE_ANON_KEY, env.SUPABASE_ANON_KEY);
+  const key = await resolveSecret(env.SS_SUPABASE_PUBLISHABLE_KEY, env.SUPABASE_PUBLISHABLE_KEY);
+
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+/**
+ * Create an admin/service Supabase client using the secret key.
+ * Bypasses RLS — only use server-side for privileged operations.
+ */
+export async function createSupabaseAdminClient(env: Env) {
+  const url = await resolveSecret(env.SS_SUPABASE_URL, env.SUPABASE_URL);
+  const key = await resolveSecret(env.SS_SUPABASE_SECRET_KEY, env.SUPABASE_SECRET_KEY);
 
   return createClient(url, key, {
     auth: {

@@ -3,12 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 const MAX_RETRIES = 3;
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 console.log('Supabase URL:', supabaseUrl ? 'Set' : 'Not set'); // Don't log the actual URL for security
-console.log('Supabase Anon Key:', supabaseAnonKey ? 'Set' : 'Not set'); // Don't log the actual key
+console.log('Supabase Publishable Key:', supabasePublishableKey ? 'Set' : 'Not set'); // Don't log the actual key
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
@@ -93,7 +93,7 @@ class CustomStorage implements Storage {
 }
 
 // Enhanced configuration for better cross-browser support
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: true,

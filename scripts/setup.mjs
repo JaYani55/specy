@@ -239,6 +239,9 @@ async function stepSupabaseSecrets(storeId) {
     [
       'Find these values at:',
       pc.cyan('  supabase.com/dashboard → your project → Settings → API'),
+      '',
+      `  ${pc.bold('Publishable key')}  ${pc.dim('(safe for client / Worker — like the old anon key)')}`,
+      `  ${pc.bold('Secret key')}       ${pc.dim('(server-side only, bypasses RLS — like the old service role key)')}`,
     ].join('\n'),
     'Supabase credentials',
   );
@@ -252,9 +255,10 @@ async function stepSupabaseSecrets(storeId) {
     }),
   );
 
-  const supabaseAnonKey = bailOnCancel(
+  const supabasePublishableKey = bailOnCancel(
     await password({
-      message: 'SUPABASE_ANON_KEY (input hidden):',
+      message: 'SUPABASE_PUBLISHABLE_KEY (input hidden):',
+      placeholder: 'sb_publishable_...',
       validate: (v) =>
         v.trim().length < 10 ? 'Key looks too short.' : undefined,
     }),
@@ -290,11 +294,30 @@ async function stepSupabaseSecrets(storeId) {
     );
   }
 
+  note(
+    [
+      'The Secret Key is needed to apply database migrations.',
+      pc.cyan('  supabase.com/dashboard → your project → Settings → API → secret'),
+      pc.dim('  Keep this secret — it bypasses Row Level Security.'),
+    ].join('\n'),
+    'Secret Key',
+  );
+
+  const supabaseSecretKey = bailOnCancel(
+    await password({
+      message: 'SUPABASE_SECRET_KEY (input hidden):',
+      placeholder: 'sb_secret_...',
+      validate: (v) =>
+        v.trim().length < 10 ? 'Key looks too short.' : undefined,
+    }),
+  );
+
   const secrets = [
-    { name: 'SUPABASE_URL',      value: supabaseUrl },
-    { name: 'SUPABASE_ANON_KEY', value: supabaseAnonKey },
-    { name: 'STORAGE_PROVIDER',  value: storageProvider },
-    { name: 'STORAGE_BUCKET',    value: storageBucket },
+    { name: 'SUPABASE_URL',             value: supabaseUrl },
+    { name: 'SUPABASE_PUBLISHABLE_KEY', value: supabasePublishableKey },
+    { name: 'SUPABASE_SECRET_KEY',      value: supabaseSecretKey },
+    { name: 'STORAGE_PROVIDER',          value: storageProvider },
+    { name: 'STORAGE_BUCKET',            value: storageBucket },
     ...(storageProvider === 'r2' ? [{ name: 'R2_PUBLIC_URL', value: r2PublicUrl }] : []),
   ];
 
@@ -319,6 +342,8 @@ async function stepSupabaseSecrets(storeId) {
       'R2 reminder',
     );
   }
+
+  return { supabaseUrl, supabaseSecretKey };
 }
 
 function patchWranglerJsonc(accountId, storeId) {
@@ -371,6 +396,168 @@ async function stepApiToken() {
   } else {
     s.stop(pc.green('CF_API_TOKEN stored as Worker secret ✓'));
   }
+}
+
+// ── Migration helpers ─────────────────────────────────────────────────────
+
+/**
+ * Extract the Supabase project ref from the project URL.
+ * e.g. https://abcdefghij.supabase.co  →  abcdefghij
+ */
+function extractProjectRef(supabaseUrl) {
+  try {
+    const host = new URL(supabaseUrl).hostname; // abcdefghij.supabase.co
+    return host.split('.')[0];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check whether the `pages` table already exists by querying the Supabase
+ * REST API with the service role key.
+ * Returns true (exists), false (does not exist), or null (unknown / auth error).
+ */
+async function checkTablesExist(supabaseUrl, serviceRoleKey) {
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/pages?select=id&limit=1`, {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    });
+    if (res.ok) return true;
+    const body = await res.json().catch(() => ({}));
+    if (body.code === '42P01') return false; // relation does not exist
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Execute a SQL string against the project via the Supabase Management API.
+ * Requires a personal access token (PAT) from supabase.com/dashboard/account/tokens.
+ */
+async function runSqlQuery(projectRef, pat, sql) {
+  const res = await fetch(
+    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error || `HTTP ${res.status}`);
+  }
+  return res.json().catch(() => null);
+}
+
+/**
+ * Step: apply the SQL migration files in the correct dependency order.
+ * Uses the Supabase Management API (requires a personal access token).
+ */
+async function stepMigrations(supabaseUrl, serviceRoleKey) {
+  // ── 1. Check if schema is already present ──────────────────────────────
+  const s = spinner();
+  s.start('Checking if database schema already exists…');
+  const exists = await checkTablesExist(supabaseUrl, serviceRoleKey);
+  s.stop('');
+
+  if (exists === true) {
+    log.success('Database schema detected — tables already exist.');
+    const rerun = bailOnCancel(
+      await confirm({
+        message: 'Run migrations anyway?  ' + pc.dim('(safe to re-run — DROP IF EXISTS guards are in place)'),
+        initialValue: false,
+      }),
+    );
+    if (!rerun) {
+      log.info('Skipping migrations.');
+      return;
+    }
+  } else if (exists === null) {
+    log.warn('Could not verify schema status — will attempt migrations anyway.');
+  } else {
+    log.info('No schema found — will apply all migrations.');
+  }
+
+  // ── 2. Ask for Supabase personal access token ──────────────────────────
+  note(
+    [
+      'Migrations are applied via the Supabase Management API.',
+      'Create a personal access token (PAT) at:',
+      pc.cyan('  supabase.com/dashboard/account/tokens'),
+      '',
+      pc.dim('The token is only used locally during setup and is never stored.'),
+    ].join('\n'),
+    'Supabase Management API token',
+  );
+
+  const pat = bailOnCancel(
+    await password({
+      message: 'Supabase personal access token (input hidden):',
+      validate: (v) =>
+        v.trim().length < 10 ? 'Token looks too short — paste the full token.' : undefined,
+    }),
+  );
+
+  const projectRef = extractProjectRef(supabaseUrl);
+  if (!projectRef) {
+    log.warn('Could not extract project ref from SUPABASE_URL — skipping migrations.');
+    return;
+  }
+
+  // ── 3. Ordered migration files ─────────────────────────────────────────
+  // Order matters: respect FK dependencies.
+  // products.sql is run before mentorbooking_products.sql (FK).
+  // page_schemas.sql must precede pages.sql (FK).
+  // pages.sql renames products → pages and adds schema_id FK.
+  const MIGRATION_ORDER = [
+    'roles.sql',
+    'employers.sql',
+    'user_profile.sql',
+    'user_roles.sql',
+    'mentor_groups.sql',
+    'products.sql',
+    'mentorbooking_products.sql',
+    'mentorbooking_events.sql',
+    'mentorbooking_events_archive.sql',
+    'mentorbooking_notifications.sql',
+    'page_schemas.sql',
+    'pages.sql',
+    'agent_logs.sql',
+    'Auth/Access_hook.sql',
+  ];
+
+  const migrationsDir = join(ROOT, 'migrations');
+  const ms = spinner();
+
+  for (const file of MIGRATION_ORDER) {
+    ms.start(`Applying ${pc.yellow(file)}…`);
+    let sql;
+    try {
+      sql = readFileSync(join(migrationsDir, file), 'utf8');
+    } catch (err) {
+      ms.stop(pc.yellow(`  ${file} — file not found, skipping.`));
+      continue;
+    }
+
+    try {
+      await runSqlQuery(projectRef, pat.trim(), sql);
+      ms.stop(pc.green(`  ${file} ✓`));
+    } catch (err) {
+      ms.stop(pc.yellow(`  ${file} — warning: ${err.message}`));
+      // Non-fatal: continue with remaining migrations.
+    }
+  }
+
+  log.success('Migrations complete.');
 }
 
 async function stepBuild() {
@@ -447,8 +634,9 @@ async function main() {
       `  ${pc.cyan('2.')} Account ID  +  Secrets Store selection`,
       `  ${pc.cyan('3.')} Patch ${pc.yellow('wrangler.jsonc')} with your values`,
       `  ${pc.cyan('4.')} Set ${pc.yellow('CF_API_TOKEN')} as a Worker secret`,
-      `  ${pc.cyan('5.')} Supabase URL  +  anon key  +  storage settings`,
-      `  ${pc.cyan('6.')} Build  →  Deploy`,
+      `  ${pc.cyan('5.')} Supabase URL  +  publishable key  +  secret key  +  storage settings`,
+      `  ${pc.cyan('6.')} Apply database migrations via Supabase Management API`,
+      `  ${pc.cyan('7.')} Build  →  Deploy`,
       '',
       pc.dim('You can re-run this wizard any time with  npm run setup'),
     ].join('\n'),
@@ -489,14 +677,18 @@ async function main() {
 
   // ── 6. Supabase + Storage credentials ────────────────────────────────────
   log.step(pc.bold('Step 5 — Supabase & storage credentials'));
-  await stepSupabaseSecrets(storeId);
+  const { supabaseUrl, supabaseSecretKey } = await stepSupabaseSecrets(storeId);
 
-  // ── 7. Build ──────────────────────────────────────────────────────────────
-  log.step(pc.bold('Step 6 — Build'));
+  // ── 7. Database migrations ────────────────────────────────────────────────
+  log.step(pc.bold('Step 6 — Database migrations'));
+  await stepMigrations(supabaseUrl, supabaseServiceRoleKey);
+
+  // ── 8. Build ──────────────────────────────────────────────────────────────
+  log.step(pc.bold('Step 7 — Build'));
   await stepBuild();
 
-  // ── 8. Deploy ─────────────────────────────────────────────────────────────
-  log.step(pc.bold('Step 7 — Deploy'));
+  // ── 9. Deploy ─────────────────────────────────────────────────────────────
+  log.step(pc.bold('Step 8 — Deploy'));
   await stepDeploy();
 
   // ── Done ──────────────────────────────────────────────────────────────────

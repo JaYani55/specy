@@ -364,14 +364,15 @@ Block IDs generated as: `${prefix}-${Date.now()}-${Math.random().toString(36).su
 | Variable | Description |
 |----------|-------------|
 | `VITE_SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Public anon key |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Publishable (public) key |
 | `VITE_API_URL` | Hono Worker URL (default: `http://localhost:8787`) |
 
 ### Hono Worker (Cloudflare)
 | Variable | Description |
-|----------|-------------|
+|----------|-----------|
 | `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-side service role key |
+| `SUPABASE_PUBLISHABLE_KEY` | Publishable key (safe for Worker) |
+| `SUPABASE_SECRET_KEY` | Secret key — server-side only, bypasses RLS |
 
 ---
 
@@ -543,14 +544,15 @@ All blocks extend `BaseBlock: { id: string, type: string }`
 | Variable | Description |
 |----------|-------------|
 | `VITE_SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Public anon key |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Publishable (public) key |
 | `VITE_API_URL` | Hono Worker URL |
 
 ### Hono Worker (Cloudflare)
 | Variable | Description |
-|----------|-------------|
+|----------|-----------|
 | `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-side service role key |
+| `SUPABASE_PUBLISHABLE_KEY` | Publishable key (safe for Worker) |
+| `SUPABASE_SECRET_KEY` | Secret key — server-side only, bypasses RLS |
 
 ---
 

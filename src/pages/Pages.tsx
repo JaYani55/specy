@@ -118,8 +118,8 @@ Fetch pages matching the schema:
     &select=id,slug,name,status,content,domain_url,updated_at
     &status=eq.published
 
-  Authorization: Bearer <SUPABASE_ANON_KEY>
-  apikey: <SUPABASE_ANON_KEY>
+  Authorization: Bearer <SUPABASE_PUBLISHABLE_KEY>
+  apikey: <SUPABASE_PUBLISHABLE_KEY>
 
 Page shape:
   {

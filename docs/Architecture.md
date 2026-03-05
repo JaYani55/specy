@@ -75,4 +75,4 @@ To run the application, only the standard Supabase credentials are required. Sea
 | Variable | Description |
 | :--- | :--- |
 | `VITE_SUPABASE_URL` | The URL of your Supabase project (e.g., `https://xyz.supabase.co`). |
-| `VITE_SUPABASE_ANON_KEY` | The public anonymous API key for your Supabase project. |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | The publishable key for your Supabase project. |

@@ -26,7 +26,9 @@
   // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
   // ║       --name SUPABASE_URL --scopes workers --remote                      ║
   // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
-  // ║       --name SUPABASE_ANON_KEY --scopes workers --remote                 ║
+  // ║       --name SUPABASE_PUBLISHABLE_KEY --scopes workers --remote          ║
+  // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
+  // ║       --name SUPABASE_SECRET_KEY --scopes workers --remote               ║
   // ║     (or use the /verwaltung/connections UI after first deploy)           ║
   // ║                                                                          ║
   // ║  6. MEDIA STORAGE — choose one provider:                                 ║
@@ -82,10 +84,16 @@
       "secret_name": "SUPABASE_URL"
     },
     {
-      "binding": "SS_SUPABASE_ANON_KEY",
+      "binding": "SS_SUPABASE_PUBLISHABLE_KEY",
       // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
       "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
-      "secret_name": "SUPABASE_ANON_KEY"
+      "secret_name": "SUPABASE_PUBLISHABLE_KEY"
+    },
+    {
+      "binding": "SS_SUPABASE_SECRET_KEY",
+      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
+      "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
+      "secret_name": "SUPABASE_SECRET_KEY"
     },
     {
       // Media storage provider: 'supabase' (default) or 'r2'
