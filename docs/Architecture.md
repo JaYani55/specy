@@ -102,6 +102,7 @@ All database tables are defined as plain SQL files under `migrations/`. They are
 | `mentorbooking_notifications.sql` | Per-user event notifications. FK to `user_profile`. |
 | `agent_logs.sql` | Page-builder AI agent request/response log. FK to `page_schemas`. |
 | `Auth/Access_hook.sql` | Supabase Auth hook function (`custom_access_token_hook`) that injects `user_roles` into JWT claims. Requires `roles` and `user_roles` tables to exist. Also includes `GRANT EXECUTE … TO supabase_auth_admin`, `GRANT USAGE ON SCHEMA public`, and the corresponding `REVOKE` from `authenticated`, `anon`, `public` — required for the hook to be callable by Supabase Auth internals. |
+| `storage.default.sql` _(template)_ | **Template only — not applied directly.** Defines four RLS policies for Supabase Storage (`public read`, `authenticated insert/update/delete`) using the placeholder `REPLACE_WITH_STORAGE_BUCKET`. The wizard substitutes the user-chosen bucket name and applies the result. **Skipped entirely when `STORAGE_PROVIDER = r2`** — Cloudflare R2 manages its own permissions outside Supabase. |
 
 ### Dependency Order
 
@@ -123,6 +124,7 @@ preamble.sql                    (app_enum, trigger functions)
   mentor_groups.sql             (standalone)
   mentorbooking_notifications.sql  (← user_profile)
   Auth/Access_hook.sql          (← roles + user_roles — must be last)
+  storage.sql                   (generated from storage.default.sql — Supabase provider only)
 ```
 
 ### Shared Types & Trigger Functions (`preamble.sql`)
@@ -152,7 +154,7 @@ Run with `npm run setup`. An interactive CLI wizard ([@clack/prompts](https://gi
 | 5 | `stepApiToken()` | Prompts for a Cloudflare API token and stores it as a Worker secret via `wrangler secret put CF_API_TOKEN`. |
 | 6 | `stepSupabaseSecrets()` | Collects Supabase URL, publishable key, secret key, and storage config. Stores: `SUPABASE_PUBLISHABLE_KEY` as a Worker secret; `SUPABASE_SECRET_KEY` in the Secrets Store. Calls `writeEnvFile()` to write `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` for Vite build-time substitution. |
 | 6b | `patchWranglerVars()` | Writes `SUPABASE_URL`, `STORAGE_PROVIDER`, `STORAGE_BUCKET`, `R2_PUBLIC_URL` into the `vars` block of `wrangler.jsonc`. |
-| 7 | `stepMigrations()` | Applies all SQL migrations via the Supabase Management API (see below). After all migrations succeed, automatically registers `custom_access_token_hook` as the Supabase JWT claims hook via `PATCH /v1/projects/{ref}/config/auth`. |
+| 7 | `stepMigrations()` | Applies all SQL migrations via the Supabase Management API (see below). When `STORAGE_PROVIDER = supabase`, also generates and applies storage RLS policies from `storage.default.sql` with the user-chosen bucket name substituted. Skips storage policies entirely for R2. After all migrations succeed, automatically registers `custom_access_token_hook` as the Supabase JWT claims hook via `PATCH /v1/projects/{ref}/config/auth`. |
 | 8 | `stepFirstAdmin()` | Optionally creates the first super-admin user. Creates an auth user with `email_confirm: true` (immediately active), upserts a `super-admin` role with `app: ["mentorbooking"]`, creates a `user_profile` row, and assigns the role via `user_roles`. |
 | 9 | `stepBuild()` | Runs `npm run build`. Vite reads `.env` written in step 6 and bakes `VITE_` variables into the browser bundle. |
 | 10 | `stepDeploy()` | Runs `wrangler deploy`. |

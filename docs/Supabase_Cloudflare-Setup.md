@@ -68,7 +68,9 @@ Step 6  Supabase credentials         Collects URL, publishable key, secret key, 
         ↳ Store SUPABASE_SECRET_KEY       Cloudflare Secrets Store
         ↳ Write .env                      VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY
         ↳ Patch wrangler.jsonc vars       SUPABASE_URL, STORAGE_PROVIDER, STORAGE_BUCKET
-Step 7  Database migrations          Supabase Management API — 15 SQL files in order
+Step 7  Database migrations          Supabase Management API — 15 SQL files in order, plus
+                                     storage RLS policies (Supabase provider only, generated
+                                     from storage.default.sql with your bucket name)
         ↳ Register Auth hook              PATCH /v1/projects/{ref}/config/auth
 Step 8  First super-admin user       Creates auth user, role, profile, and role assignment
 Step 9  Build                        npm run build (Vite reads .env, bakes VITE_ vars in)
@@ -197,6 +199,8 @@ Applied in strict dependency order by `stepMigrations()`:
 13  mentorbooking_notifications.sql  — needs user_profile
 14  agent_logs.sql                   — needs page_schemas
 15  Auth/Access_hook.sql             — JWT claims hook fn + GRANT/REVOKE (must be last)
+16  storage.sql (Supabase only)      — generated from storage.default.sql with your bucket name;
+                                       skipped when STORAGE_PROVIDER=r2
 ```
 
 All migrations are idempotent — safe to re-run. The wizard checks whether the `pages` table exists before asking to run migrations, and offers to skip if the schema is already present.
@@ -375,6 +379,8 @@ echo "VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_..." >> .env
 ### 10.6 Apply migrations
 
 Get a PAT from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens), then apply each file from `migrations/` in the order listed in [section 7](#7-database-migrations) via `psql`, the Supabase SQL editor, or the Management API.
+
+**Supabase Storage RLS policies (Supabase provider only):** After `Auth/Access_hook.sql`, copy `migrations/storage.default.sql`, replace every occurrence of `REPLACE_WITH_STORAGE_BUCKET` with your bucket name, and apply the result. Skip this step if using Cloudflare R2.
 
 ### 10.7 Register Auth hook
 
