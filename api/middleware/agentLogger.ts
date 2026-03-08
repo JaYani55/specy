@@ -23,9 +23,11 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     || 'unknown';
   const userAgent = c.req.header('user-agent') || null;
 
-  // Capture request body for POST/PUT/PATCH (clone to avoid consuming it)
+  // Capture request body for POST/PUT/PATCH (JSON only — skip multipart/binary uploads
+  // to avoid interfering with the body stream in Cloudflare Workers).
   let requestBody: unknown = null;
-  if (['POST', 'PUT', 'PATCH'].includes(method)) {
+  const contentType = c.req.header('content-type') || '';
+  if (['POST', 'PUT', 'PATCH'].includes(method) && !contentType.includes('multipart/form-data')) {
     try {
       requestBody = await c.req.raw.clone().json();
     } catch {

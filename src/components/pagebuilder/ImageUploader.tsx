@@ -1,8 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+import { API_URL } from '@/lib/apiUrl';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -183,9 +182,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       }
       const result = await res.json() as { url: string; path: string };
 
+      // Auto-confirm: uploading = selecting. Write to form and close dialog.
       setSelectedImage(result.url);
+      onChange(result.url);
+      setIsOpen(false);
       toast.success('Bild erfolgreich hochgeladen!');
-      await loadMediaLibrary(currentPath);
     } catch (error: unknown) {
       toast.error(`Upload fehlgeschlagen: ${getErrorMessage(error)}`);
     } finally {

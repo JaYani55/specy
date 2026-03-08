@@ -147,6 +147,31 @@ export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditor
               onChange={(src) => patch({ src })}
             />
           </div>
+
+          {/* Preview + URL feedback */}
+          {block.src && (
+            <div className="rounded-lg border overflow-hidden bg-muted/30">
+              <img
+                src={block.src}
+                alt={block.alt || 'Vorschau'}
+                className="w-full max-h-48 object-contain"
+              />
+              <div className="px-3 py-2 flex items-center gap-2 border-t">
+                <span className="text-xs text-muted-foreground truncate flex-1" title={block.src}>
+                  {block.src}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+                  onClick={() => { void navigator.clipboard.writeText(block.src); }}
+                  title="URL kopieren"
+                >
+                  📋
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm">Alt-Text</Label>

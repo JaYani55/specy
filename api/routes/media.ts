@@ -13,7 +13,13 @@
  */
 
 import { Hono } from 'hono';
-import { Env, createSupabaseClient } from '../lib/supabase';
+import { Env, createSupabaseClient, createSupabaseAdminClient } from '../lib/supabase';
+
+// File operations (list files, upload, delete) use the publishable key — bucket
+// policies govern access so no service key is needed for those.
+// Bucket management (listBuckets / createBucket) is admin-only and requires the
+// service key via createSupabaseAdminClient.
+const createStorageClient = createSupabaseClient;
 
 export type MediaItem = {
   name: string;
@@ -106,17 +112,29 @@ media.get('/list', async (c) => {
       return c.json({ items: [...folders, ...files] });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
-      const supabase = await createSupabaseAdminClient(c.env);
+      const supabase = await createStorageClient(c.env);
       const bucketName = cfg.bucket!;
-      
-      // Auto-create bucket if it doesn't exist
-      const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-      if (!listError && !buckets?.find(b => b.name === bucketName)) {
-        console.log(`[Media] Creating missing bucket: ${bucketName}`);
-        await supabase.storage.createBucket(bucketName, {
-          public: true,
-          fileSizeLimit: 52428800, // 50MB
-        });
+
+      // Auto-create bucket if missing — requires admin client (service key).
+      // Silently skipped when SS_SUPABASE_SECRET_KEY is not bound (e.g. local dev
+      // without a secret key configured).
+      if (c.env.SS_SUPABASE_SECRET_KEY) {
+        try {
+          const admin = await createSupabaseAdminClient(c.env);
+          const { data: buckets, error: listError } = await admin.storage.listBuckets();
+          if (!listError && !buckets?.find(b => b.name === bucketName)) {
+            console.log(`[Media] Creating missing bucket: ${bucketName}`);
+            const { error: createError } = await admin.storage.createBucket(bucketName, {
+              public: true,
+              fileSizeLimit: 52428800, // 50MB
+            });
+            if (createError) {
+              console.error(`[Media] Failed to create bucket: ${createError.message}`);
+            }
+          }
+        } catch (err) {
+          console.error('[Media] Bucket auto-create failed:', err instanceof Error ? err.message : err);
+        }
       }
 
       const { data, error } = await supabase.storage.from(bucketName).list(path || undefined, {
@@ -183,6 +201,7 @@ media.post('/upload', async (c) => {
       return c.json({ url, path: key });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
+      // Use admin client so the server-side worker bypasses RLS on storage.objects.
       const supabase = await createSupabaseAdminClient(c.env);
       const buf = await file.arrayBuffer();
       const { error } = await supabase.storage
@@ -213,6 +232,7 @@ media.delete('/file', async (c) => {
     if (cfg.provider === 'r2') {
       await c.env.MEDIA_BUCKET!.delete(path);
     } else {
+      // Use admin client to bypass RLS for server-side deletes.
       const supabase = await createSupabaseAdminClient(c.env);
       const { error } = await supabase.storage.from(cfg.bucket!).remove([path]);
       if (error) return c.json({ error: error.message }, 500);

@@ -99,27 +99,40 @@ export const ContentBlockEditor: React.FC<ContentBlockEditorProps> = ({
       {block.type === 'image' && (
         <>
           <div className="space-y-4">
-            {/* Preview if image exists */}
-            {form.watch(`${path}.src`) && (
-              <div className="relative">
-                <img
-                  src={form.watch(`${path}.src`)}
-                  alt={form.watch(`${path}.alt`) || 'Preview'}
-                  className="max-h-48 rounded-lg border object-contain w-full"
-                />
-              </div>
-            )}
-
             {/* Image URL Input with Uploader */}
             <div>
               <Label className="text-sm">Bild-URL</Label>
               <ImageUploader
                 value={form.watch(`${path}.src`)}
-                onChange={(url) => form.setValue(`${path}.src`, url)}
+                onChange={(url) => form.setValue(`${path}.src`, url, { shouldDirty: true, shouldTouch: true })}
                 bucket="booking_media"
                 folder="product-images"
               />
             </div>
+
+            {/* URL + preview feedback */}
+            {form.watch(`${path}.src`) && (
+              <div className="rounded-lg border overflow-hidden bg-muted/30">
+                <img
+                  src={form.watch(`${path}.src`)}
+                  alt={form.watch(`${path}.alt`) || 'Vorschau'}
+                  className="w-full max-h-48 object-contain"
+                />
+                <div className="px-3 py-2 flex items-center gap-2 border-t">
+                  <span className="text-xs text-muted-foreground truncate flex-1" title={form.watch(`${path}.src`)}>
+                    {form.watch(`${path}.src`)}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+                    onClick={() => { void navigator.clipboard.writeText(form.watch(`${path}.src`)); }}
+                    title="URL kopieren"
+                  >
+                    📋
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

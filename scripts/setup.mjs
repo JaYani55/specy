@@ -397,6 +397,12 @@ async function stepSupabaseSecrets(storeId) {
   writeEnvFile(supabaseUrl, supabasePublishableKey);
   ev.stop(pc.green('.env written ✓  (VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY)'));
 
+  // ── Write .dev.vars for local `wrangler dev` ───────────────────────────
+  const dv = spinner();
+  dv.start('Writing .dev.vars for local wrangler dev…');
+  writeDevVarsFile(supabasePublishableKey);
+  dv.stop(pc.green('.dev.vars written ✓  (SUPABASE_PUBLISHABLE_KEY)'));
+
   return { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl };
 }
 
@@ -582,6 +588,22 @@ function writeEnvFile(supabaseUrl, supabasePublishableKey) {
   writeFileSync(envPath, contents, 'utf8');
 }
 
+/**
+ * Write .dev.vars so `wrangler dev` can access Worker secrets locally.
+ * Mirrors the values stored via `wrangler secret put` in production.
+ * The file is git-ignored and regenerated on every setup run.
+ */
+function writeDevVarsFile(supabasePublishableKey) {
+  const devVarsPath = join(ROOT, '.dev.vars');
+  const contents = [
+    '# Local secrets for `wrangler dev` — do not commit (git-ignored)',
+    '# These mirror the Worker secrets set via `wrangler secret put` in production.',
+    '# See: https://developers.cloudflare.com/workers/testing/local-development/#secrets',
+    `SUPABASE_PUBLISHABLE_KEY=${supabasePublishableKey.trim()}`,
+  ].join('\n') + '\n';
+  writeFileSync(devVarsPath, contents, 'utf8');
+}
+
 async function stepApiToken() {
   note(
     [
@@ -695,7 +717,7 @@ async function runSqlQuery(projectRef, pat, sql) {
  * Step: apply the SQL migration files in the correct dependency order.
  * Uses the Supabase Management API (requires a personal access token).
  */
-async function stepMigrations(supabaseUrl, serviceRoleKey) {
+async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, storageBucket) {
   // ── 1. Check if schema is already present ──────────────────────────────
   const s = spinner();
   s.start('Checking if database schema already exists…');
@@ -773,6 +795,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
   //  mentorbooking_notifications.sql  — needs user_profile
   //  agent_logs.sql            — needs page_schemas
   //  Auth/Access_hook.sql      — needs roles + user_roles (last)
+  // Storage RLS policies are only needed for Supabase Storage.
+  // Cloudflare R2 manages its own permissions outside of Supabase.
   const MIGRATION_ORDER = [
     'preamble.sql',
     'user_profile.sql',
@@ -789,6 +813,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
     'mentorbooking_notifications.sql',
     'agent_logs.sql',
     'Auth/Access_hook.sql',
+    // storage.sql is generated from storage.default.sql at runtime using the
+    // user-chosen bucket name — only applies when STORAGE_PROVIDER = 'supabase'.
+    ...(storageProvider === 'supabase' ? ['storage.sql'] : []),
   ];
 
   const migrationsDir = join(ROOT, 'migrations');
@@ -800,11 +827,22 @@ async function stepMigrations(supabaseUrl, serviceRoleKey) {
 
     ms.start(`Applying ${pc.yellow(file)}…`);
     let sql;
-    try {
-      sql = readFileSync(join(migrationsDir, file), 'utf8');
-    } catch {
-      ms.stop(pc.yellow(`  ${file} — file not found, skipping.`));
-      continue;
+    if (file === 'storage.sql') {
+      // Read the template and substitute the user-chosen bucket name.
+      try {
+        sql = readFileSync(join(migrationsDir, 'storage.default.sql'), 'utf8')
+          .replaceAll('REPLACE_WITH_STORAGE_BUCKET', storageBucket.trim());
+      } catch {
+        ms.stop(pc.yellow(`  ${file} — template storage.default.sql not found, skipping.`));
+        continue;
+      }
+    } else {
+      try {
+        sql = readFileSync(join(migrationsDir, file), 'utf8');
+      } catch {
+        ms.stop(pc.yellow(`  ${file} — file not found, skipping.`));
+        continue;
+      }
     }
 
     try {
@@ -1001,7 +1039,7 @@ async function main() {
 
   // ── 7. Database migrations ────────────────────────────────────────────────
   log.step(pc.bold('Step 6 — Database migrations'));
-  await stepMigrations(supabaseUrl, supabaseSecretKey);
+  await stepMigrations(supabaseUrl, supabaseSecretKey, storageProvider, storageBucket);
 
   // ── 8. First super-admin user ─────────────────────────────────────────────
   log.step(pc.bold('Step 7 — First super-admin user'));

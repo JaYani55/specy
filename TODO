@@ -1,2 +1,3 @@
 - RBAC, create roles and give privileges.
 - Connections issue with Supabase bucket and custom secrets.
+- UX Preferences

@@ -9,6 +9,7 @@ import { cancelSchemaRegistration, getSchemaRegistrationStatus } from '@/service
 import type { PageSchema } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
 import { toast } from 'sonner';
+import { API_URL } from '@/lib/apiUrl';
 
 interface SchemaWaitingScreenProps {
   schema: PageSchema;
@@ -22,7 +23,6 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [frontendUrl, setFrontendUrl] = useState<string | null>(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
   const specUrl = `${API_URL}/api/schemas/${schema.slug}/spec.txt`;
 
   // Poll for registration status changes

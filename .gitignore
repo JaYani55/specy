@@ -26,6 +26,8 @@ dist-ssr
 # Environment variables
 .env
 .env.local
+# Wrangler local dev secrets (mirrors wrangler secret put values)
+.dev.vars
 .env.development
 .env.staging
 .env.production
