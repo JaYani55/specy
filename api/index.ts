@@ -8,6 +8,8 @@ import logs from './routes/logs';
 import mcpRoute from './routes/mcp';
 import secretsRoute from './routes/secrets';
 import mediaRoute from './routes/media';
+import pluginsRoute from './routes/plugins';
+import { mountPluginRoutes } from './plugin-routes';
 import { agentLogger } from './middleware/agentLogger';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -28,6 +30,7 @@ app.get('/', (c) => {
     timestamp: new Date().toISOString(),
     endpoints: {
       schemas: `${baseUrl}/api/schemas`,
+      plugins: `${baseUrl}/api/plugins`,
       mcp: `${baseUrl}/mcp`,
     },
     description: 'Start at /api/schemas to discover available page schemas, or connect via /mcp for MCP tool integration.',
@@ -45,7 +48,11 @@ app.route('/api/schemas', schemas);
 app.route('/api/schemas', health);
 app.route('/api/secrets', secretsRoute);
 app.route('/api/media', mediaRoute);
+app.route('/api/plugins', pluginsRoute);
 app.route('/mcp', mcpRoute);
+
+// Plugin API routes (auto-wired from api/plugin-routes.ts)
+mountPluginRoutes(app);
 
 // 404 fallback
 app.notFound((c) => {

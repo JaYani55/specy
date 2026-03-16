@@ -33,6 +33,9 @@ export interface Permissions {
   
   // Account administration (super-admin only)
   canManageAccounts: boolean;
+
+  // Plugin management (super-admin only)
+  canManagePlugins: boolean;
   
   // Animal icon permissions
   canChangeAnimalIcons: boolean;
@@ -128,6 +131,9 @@ export const usePermissions = (): Permissions => {
 
       // Account administration (super-admin only)
       canManageAccounts: isAdmin,
+
+      // Plugin management (super-admin only)
+      canManagePlugins: isAdmin,
 
       // Animal icon permissions
       canChangeAnimalIcons: isAdmin,

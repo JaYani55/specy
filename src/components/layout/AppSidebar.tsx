@@ -1,8 +1,9 @@
-import { Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal } from "lucide-react"
+import { Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle } from "lucide-react"
 import { useLocation, Link } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { usePermissions } from "@/hooks/usePermissions"
+import { getPluginSidebarItems } from "@/plugins/loader"
 import Logo from "@/components/shared/Logo"
 import {
   Sidebar,
@@ -28,7 +29,7 @@ import {
 export function AppSidebar() {
   const { logout, user } = useAuth()
   const { theme, language, toggleTheme } = useTheme()
-  const { canAccessVerwaltung } = usePermissions()
+  const { canAccessVerwaltung, canManagePlugins } = usePermissions()
   const location = useLocation()
 
   const items = [
@@ -64,6 +65,25 @@ export function AppSidebar() {
     )
   }
 
+  if (canManagePlugins) {
+    items.push({
+      title: "Plugins",
+      url: "/plugins",
+      icon: Puzzle,
+    })
+  }
+
+  // Dynamic sidebar items from installed plugins (admin group)
+  const pluginAdminItems = canAccessVerwaltung
+    ? getPluginSidebarItems('admin').filter((item) => {
+        if (item.requiredRole === 'admin') return canManagePlugins;
+        return true;
+      })
+    : [];
+
+  // Dynamic sidebar items from installed plugins (main group — visible to all authenticated users)
+  const pluginMainItems = getPluginSidebarItems('main');
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -90,6 +110,36 @@ export function AppSidebar() {
                     <Link to={item.url}>
                       <item.icon />
                       <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              {/* Plugin main-group sidebar items */}
+              {pluginMainItems.map((item) => (
+                <SidebarMenuItem key={item.key}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)}
+                    tooltip={item.label}
+                  >
+                    <Link to={item.path}>
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              {/* Plugin admin-group sidebar items */}
+              {pluginAdminItems.map((item) => (
+                <SidebarMenuItem key={item.key}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)}
+                    tooltip={item.label}
+                  >
+                    <Link to={item.path}>
+                      <item.icon />
+                      <span>{item.label}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

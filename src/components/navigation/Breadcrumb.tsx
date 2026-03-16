@@ -61,6 +61,7 @@ const Breadcrumb: React.FC = () => {
       label: { en: 'New Schema', de: 'Neues Schema' },
       parent: '/pages'
     },
+    '/plugins': { label: { en: 'Plugins', de: 'Plugins' } },
   };
 
   const generateBreadcrumbs = (): BreadcrumbItem[] => {

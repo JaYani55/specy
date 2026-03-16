@@ -44,6 +44,10 @@ import VerwaltungMentorGroups from "./pages/VerwaltungMentorGroups";
 import VerwaltungMentorGiveTraits from "./pages/VerwaltungMentorGiveTraits";
 import VerwaltungAccounts from "./pages/VerwaltungAccounts";
 import VerwaltungConnections from "./pages/VerwaltungConnections";
+import Plugins from "./pages/Plugins";
+
+// Plugin loader — provides build-time routes from installed plugins
+import { getPluginRoutes } from "./plugins/loader";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -244,6 +248,22 @@ const AppContent = () => {
               </ProtectedRoute>
             } 
           />
+          {/* Plugins */}
+          <Route path="/plugins" element={<ProtectedRoute requiredRole="admin"><Plugins /></ProtectedRoute>} />
+
+          {/* Dynamic plugin routes (build-time, from src/plugins/registry.ts) */}
+          {getPluginRoutes().map((r) => (
+            <Route
+              key={r.path}
+              path={r.path}
+              element={
+                <ProtectedRoute requiredRole={r.requiredRole}>
+                  <r.component />
+                </ProtectedRoute>
+              }
+            />
+          ))}
+
           <Route path="/test-loader" element={<ProtectedRoute><TestLoader /></ProtectedRoute>} />
         </Route>
         <Route path="*" element={<NotFound />} />
