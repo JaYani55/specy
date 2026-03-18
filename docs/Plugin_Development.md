@@ -283,17 +283,26 @@ export default myPlugin;
 
 ### Mounting API routes
 
-Plugin API routes are **not** mounted automatically. After installing a plugin that adds API routes, add the following to `api/index.ts` manually:
+Plugin API routes are **mounted automatically** by the install script. When installed, `api/plugin-routes.ts` is regenerated and `api/index.ts` calls `mountPluginRoutes(app)` which wires up all active plugin routes at startup. No manual edit to `api/index.ts` is required.
 
-```typescript
-// api/index.ts
-import myPluginRoute from '../src/plugins/my-plugin/api/index';
+The mount path is always:
 
-// Mount under /api/plugins/{plugin-id}/
-app.route('/api/plugins/my-plugin', myPluginRoute);
+```
+/api/plugin/{plugin-id}/...
 ```
 
-> This is intentional — API route mounting requires a code review step to prevent unintended exposure of endpoints.
+> **Note the singular `/api/plugin/`**, not `/api/plugins/`. The plural path `/api/plugins` is reserved for the plugin registry listing endpoint. Your plugin's own `API_BASE` constant (in `src/lib/api.ts` or equivalent) must use `/api/plugin/{slug}` — using `/api/plugins/{slug}` will result in 404 for all API calls.
+
+Generated mount code (for reference):
+
+```typescript
+// api/plugin-routes.ts — AUTO-GENERATED, do not edit
+import myPlugin from '../src/plugins/my-plugin/api/index';
+
+export function mountPluginRoutes(app: Hono<{ Bindings: Env }>): void {
+  app.route('/api/plugin/my-plugin', myPlugin);
+}
+```
 
 ### Accessing Supabase from API routes
 
@@ -301,6 +310,54 @@ Use `createSupabaseClient` (normal RLS-respecting client) or `createSupabaseAdmi
 
 ```typescript
 import { createSupabaseClient, createSupabaseAdminClient, type Env } from '../../api/lib/supabase';
+```
+
+#### Authentication in route handlers
+
+The CMS API has **no authentication middleware**. There is no JWT verification in the Hono layer — all access control is enforced by Supabase RLS at the database level. This means your route handlers must pass the user's JWT to `createSupabaseClient` so that Supabase can identify the caller and evaluate RLS policies correctly:
+
+```typescript
+// ✓ Correct — user context flows through to Supabase RLS
+myPlugin.get('/data', async (c) => {
+  const token = c.req.header('Authorization')?.slice(7) ?? '';
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+  const supabase = await createSupabaseClient(c.env, token);
+  const { data, error } = await supabase.from('my_plugin_table').select('*');
+  // RLS ensures this user can only see their own rows
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data });
+});
+
+// ✗ Wrong — anon client, no user context, RLS blocks everything
+myPlugin.get('/data', async (c) => {
+  const supabase = await createSupabaseClient(c.env); // no token!
+  ...
+});
+```
+
+The admin client (`createSupabaseAdminClient`) bypasses RLS entirely and must only be used for **privileged bootstrap operations** that cannot run as a regular user — for example, provisioning an initial user profile on first visit. Use it sparingly.
+
+#### `createSupabaseClient` signature
+
+```typescript
+// Pass the user's Bearer token as the second argument
+const supabase = await createSupabaseClient(c.env, token);
+```
+
+This sets `Authorization: Bearer <token>` on all Supabase requests, which activates `auth.uid()` and `current_setting('request.jwt.claims')` in PostgreSQL — the same mechanisms used by RLS policies throughout the CMS.
+
+#### Roles and authorization
+
+Do **not** implement role checks in your API route handlers. The CMS uses a JWT claims injection hook (`custom_access_token_hook` in `migrations/Auth/Access_hook.sql`) that injects a `user_roles` array into every Supabase JWT at sign-in. Authorization belongs in RLS policies:
+
+```sql
+-- Check roles in an RLS policy
+CREATE POLICY "admins_can_delete"
+  ON public.my_plugin_data
+  FOR DELETE TO authenticated
+  USING (
+    (current_setting('request.jwt.claims', true))::jsonb -> 'user_roles' ?| array['admin', 'super-admin']
+  );
 ```
 
 ---
@@ -320,6 +377,42 @@ Follow the same patterns used in the CMS's own migrations:
 - Enable RLS and add appropriate policies
 - Reference the `set_current_timestamp_updated_at()` trigger for `updated_at` columns
 - Prefix table names with your plugin slug to avoid conflicts: `{plugin_slug}_{table_name}`
+
+### Idempotency requirement
+
+**All migration files must be safe to run more than once.** The install script may apply a migration, fail partway through, and then be run again on a reinstall. Non-idempotent migrations cascade-fail: if migration 003 fails because a trigger already exists, migrations 004–015 will all fail because the table created in 003 doesn't exist.
+
+Key patterns:
+
+```sql
+-- Trigger functions: always use CREATE OR REPLACE
+CREATE OR REPLACE FUNCTION public.my_plugin_on_insert() ...
+
+-- Triggers: drop before creating (works on Postgres 14+)
+DROP TRIGGER IF EXISTS trg_my_plugin_insert ON my_table;
+CREATE TRIGGER trg_my_plugin_insert
+  AFTER INSERT ON my_table
+  FOR EACH ROW EXECUTE FUNCTION public.my_plugin_on_insert();
+
+-- Tables: use IF NOT EXISTS
+CREATE TABLE IF NOT EXISTS public.my_plugin_data ( ... );
+
+-- ENUM types: guard with a DO block
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'my_status_enum') THEN
+    CREATE TYPE my_status_enum AS ENUM ('open', 'closed');
+  END IF;
+END $$;
+
+-- Indexes: use IF NOT EXISTS
+CREATE INDEX IF NOT EXISTS idx_my_plugin_data_user_id ON public.my_plugin_data(user_id);
+
+-- Policies: drop before recreating
+DROP POLICY IF EXISTS "my_policy" ON public.my_plugin_data;
+CREATE POLICY "my_policy" ON public.my_plugin_data ...
+```
+
+> **Why this matters**: Postgres does not support `CREATE TRIGGER IF NOT EXISTS` (before Postgres 17) or `CREATE TYPE IF NOT EXISTS`. Always use the patterns above — bare `CREATE TRIGGER` and `CREATE TYPE` will error on second run.
 
 ```sql
 -- migrations/001_create_my_table.sql

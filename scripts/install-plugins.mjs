@@ -614,11 +614,15 @@ async function _doInstall(entries, supabase) {
             pkgs.forEach((p) => log(`    ${c.cyan}+${c.reset} ${p}`));
             try {
               const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-              await runCmd(npmCmd, ['install', '--no-save', '--legacy-peer-deps', ...pkgs], { cwd: ROOT });
+              // --no-package-lock: resolve fresh from registry, not constrained by the
+              // CMS lockfile. Without this, npm's conservative lockfile-aware resolution
+              // picks the minimum satisfying version (e.g. 8.0.0 instead of 8.21.3),
+              // which can pull in unpublished transitive deps from early releases.
+              await runCmd(npmCmd, ['install', '--no-save', '--legacy-peer-deps', '--no-package-lock', ...pkgs], { cwd: ROOT });
               ok(`  npm dependencies installed (tracked in plugin-deps.json)`);
             } catch (e) {
               warn(`  npm install failed: ${e.message}`);
-              warn(`  Install manually: npm install --no-save --legacy-peer-deps ${pkgs.join(' ')}`);
+              warn(`  Install manually: npm install --no-save --legacy-peer-deps --no-package-lock ${pkgs.join(' ')}`);
             }
           } else {
             info(`  All npm dependencies already available.`);
