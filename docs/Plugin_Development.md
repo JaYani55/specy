@@ -263,16 +263,18 @@ Declare this path in `plugin.json` as `"api_entrypoint": "api/index.ts"`.
 ```typescript
 // src/plugins/my-plugin/api/index.ts
 import { Hono } from 'hono';
-import { createSupabaseClient, type Env } from '../../api/lib/supabase';
+import { getSupabaseClient, type PluginEnv } from './lib/supabase'; // see §7 "Accessing Supabase"
 
-const myPlugin = new Hono<{ Bindings: Env }>();
+const myPlugin = new Hono<{ Bindings: PluginEnv }>();
 
 myPlugin.get('/', async (c) => {
   return c.json({ plugin: 'my-plugin', status: 'ok' });
 });
 
 myPlugin.get('/data', async (c) => {
-  const supabase = await createSupabaseClient(c.env);
+  const token = c.req.header('Authorization')?.slice(7) ?? '';
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+  const supabase = getSupabaseClient(c.env, token);
   const { data, error } = await supabase.from('my_plugin_table').select('*');
   if (error) return c.json({ error: 'Failed to fetch data' }, 500);
   return c.json({ data });
@@ -306,45 +308,93 @@ export function mountPluginRoutes(app: Hono<{ Bindings: Env }>): void {
 
 ### Accessing Supabase from API routes
 
-Use `createSupabaseClient` (normal RLS-respecting client) or `createSupabaseAdminClient` (bypasses RLS) from `api/lib/supabase`:
+#### Recommended pattern — ship your own `api/lib/supabase.ts`
+
+Create a `lib/supabase.ts` file inside your plugin's `api/` directory. This keeps the plugin self-contained and avoids fragile relative paths back into the CMS internals.
+
+Copy this template verbatim (it is the same pattern used internally by plugins in this CMS):
 
 ```typescript
-import { createSupabaseClient, createSupabaseAdminClient, type Env } from '../../api/lib/supabase';
+// src/plugins/my-plugin/api/lib/supabase.ts
+import { createClient } from '@supabase/supabase-js';
+
+interface SecretsStoreBinding { get(): Promise<string>; }
+
+export interface PluginEnv {
+  SUPABASE_URL: string;
+  SUPABASE_PUBLISHABLE_KEY: string;
+  SS_SUPABASE_SECRET_KEY: SecretsStoreBinding;
+}
+
+/** User-scoped client — respects RLS using the caller's JWT. Use for ALL user-facing handlers. */
+export function getSupabaseClient(env: PluginEnv, token: string) {
+  return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+}
+
+/** Service-role client — bypasses RLS entirely. Use ONLY for privileged bootstrap operations. */
+export async function getSupabaseAdminClient(env: PluginEnv) {
+  const key = await env.SS_SUPABASE_SECRET_KEY.get();
+  return createClient(env.SUPABASE_URL, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+/** Extract user ID from JWT payload without a network call. */
+export function getUserIdFromToken(token: string): string {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.sub as string;
+  } catch {
+    return '';
+  }
+}
 ```
+
+Import it in your route file:
+
+```typescript
+import { getSupabaseClient, type PluginEnv } from './lib/supabase';
+// or from a subdirectory:
+import { getSupabaseClient, type PluginEnv } from '../lib/supabase';
+```
+
+#### Alternative — import directly from the CMS lib
+
+If you prefer not to ship your own lib, import from the CMS's `api/lib/supabase.ts`. The correct relative path from `src/plugins/my-plugin/api/index.ts` (four levels up to the workspace root, then into `api/`) is:
+
+```typescript
+import { createSupabaseClient, createSupabaseAdminClient, type Env } from '../../../../api/lib/supabase';
+```
+
+> **Warning:** `../../api/lib/supabase` is a common mistake — that path resolves to the non-existent `src/plugins/api/lib/supabase`. Always count four `../` levels from any file inside `src/plugins/{slug}/api/`.
 
 #### Authentication in route handlers
 
-The CMS API has **no authentication middleware**. There is no JWT verification in the Hono layer — all access control is enforced by Supabase RLS at the database level. This means your route handlers must pass the user's JWT to `createSupabaseClient` so that Supabase can identify the caller and evaluate RLS policies correctly:
+The CMS API has **no authentication middleware**. There is no JWT verification in the Hono layer — all access control is enforced by Supabase RLS at the database level. Your route handlers **must** pass the user's JWT to the Supabase client so that `auth.uid()` and `request.jwt.claims` are set in PostgreSQL:
 
 ```typescript
 // ✓ Correct — user context flows through to Supabase RLS
 myPlugin.get('/data', async (c) => {
   const token = c.req.header('Authorization')?.slice(7) ?? '';
   if (!token) return c.json({ error: 'Unauthorized' }, 401);
-  const supabase = await createSupabaseClient(c.env, token);
+  const supabase = getSupabaseClient(c.env, token); // token sets Authorization header
   const { data, error } = await supabase.from('my_plugin_table').select('*');
   // RLS ensures this user can only see their own rows
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ data });
 });
 
-// ✗ Wrong — anon client, no user context, RLS blocks everything
+// ✗ Wrong — no user context; RLS blocks authenticated-only rows
 myPlugin.get('/data', async (c) => {
-  const supabase = await createSupabaseClient(c.env); // no token!
+  const supabase = getSupabaseClient(c.env, ''); // empty token → anon user
   ...
 });
 ```
 
-The admin client (`createSupabaseAdminClient`) bypasses RLS entirely and must only be used for **privileged bootstrap operations** that cannot run as a regular user — for example, provisioning an initial user profile on first visit. Use it sparingly.
-
-#### `createSupabaseClient` signature
-
-```typescript
-// Pass the user's Bearer token as the second argument
-const supabase = await createSupabaseClient(c.env, token);
-```
-
-This sets `Authorization: Bearer <token>` on all Supabase requests, which activates `auth.uid()` and `current_setting('request.jwt.claims')` in PostgreSQL — the same mechanisms used by RLS policies throughout the CMS.
+The admin client (`getSupabaseAdminClient` / `createSupabaseAdminClient`) bypasses RLS entirely and must only be used for **privileged bootstrap operations** that cannot run as a regular user — for example, provisioning an initial user profile on first visit. Use it sparingly.
 
 #### Roles and authorization
 

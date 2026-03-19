@@ -82,12 +82,18 @@ export async function resolveSecret(binding: SecretsStoreBinding | undefined, fa
   return fallback;
 }
 
-export async function createSupabaseClient(env: Env) {
+/**
+ * Create a user-scoped Supabase client.
+ * Pass the caller's Bearer token as the second argument to activate RLS (auth.uid() etc.).
+ * Omit the token only for intentionally unauthenticated operations (e.g. public reads, logging).
+ */
+export async function createSupabaseClient(env: Env, token?: string) {
   return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
+    ...(token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {}),
   });
 }
 

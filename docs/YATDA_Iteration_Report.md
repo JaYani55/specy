@@ -1,701 +1,483 @@
-# YATDA Plugin — Iteration Report
+# YATDA Plugin — Iteration Feedback Report
 
-**Reviewer:** GitHub Copilot (automated code review)  
-**Date:** 2026-03-16  
-**Scope:** Full source review — frontend (`src/`), backend API (`api/`), migrations (`migrations/`), manifest (`plugin.json`)  
-**Plugin Version:** 0.1.0
-
----
-
-## Executive Summary
-
-The plugin's architecture is solid — the DB schema is well-designed with good use of triggers, the API is well-structured with Hono, and the frontend views are feature-complete. However, **two critical integration issues** block all functionality from working in a deployed CMS environment: a Cloudflare Worker binding name mismatch for Supabase keys and an API route path mismatch. These must be resolved before any feature testing is meaningful. Additionally, a high-priority UX gap means first-time users (existing CMS users) can never see the board at all.
+**Date:** 2026-03-19  
+**Reviewer:** service-cms maintainer  
+**Plugin version under review:** 1.0.0  
+**Status:** Feedback for next iteration
 
 ---
 
-## Issues
+## Summary
 
-### CRITICAL — Blocks all functionality
+Two issues were identified during integration testing. One renders a core action (creating a ticket) inaccessible, the other makes plugin configuration unintuitive without prior knowledge of the required keys.
 
 ---
 
-#### C3 — `@tanstack/react-table@8.20.0` does not exist (install failure)
+## Issue 1 — "Add Task" Button is Invisible
 
-**File:** `plugin.json` → `required_npm_dependencies`
+### Description
 
-```
-npm error notarget No matching version found for @tanstack/react-table@8.20.0.
-```
+The `+ Add Task` button in `BoardHeader.tsx` is present in the DOM but appears invisible to users. The root cause is a CSS variable incompatibility between the plugin and the host CMS.
 
-`8.20.0` is not a published version of `@tanstack/react-table`. The package jumped from `8.19.x` to `8.21.x`. Using an exact non-existent version causes `npm install` to fail with `ETARGET`, which aborts all package installation (FullCalendar, gantt-task-react, zustand are also not installed). This means the build step immediately fails with unresolved imports.
+### Root cause
 
-**Fix:** Change the version specifier to a caret range:
+The plugin's `BoardHeader.module.css` applies the `--accent` custom property directly:
 
-```json
-// plugin.json — current (broken)
-"required_npm_dependencies": {
-  "@tanstack/react-table": "^8.20.0"
+```css
+.addBtn {
+  background: var(--accent);
+  color: #fff;
 }
+.addBtn:hover { background: var(--accent-hover); }
+```
 
-// Fixed
-"required_npm_dependencies": {
-  "@tanstack/react-table": "^8.0.0"
+The host CMS follows the shadcn/Tailwind convention where `--accent` is stored as a raw HSL triple (e.g. `210 40% 96.1%`), not a usable color value on its own. Using `background: var(--accent)` with that value produces an invalid CSS declaration and falls back to a transparent background. With `color: #fff`, this results in white text on a transparent surface — effectively invisible.
+
+Additionally, `--accent-hover` is not defined anywhere in the host CMS, so the hover state is also broken.
+
+### Impact
+
+Users cannot create new tickets. The `+ Add Task` button is rendered but cannot be seen or clicked with confidence, making ticket creation impossible via the UI.
+
+### Suggested fixes
+
+**Option A — Use `hsl()` wrappers (least intrusive):**  
+Wrap all color variable references that expect HSL triples:
+
+```css
+.addBtn {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
 }
+.addBtn:hover { background: hsl(var(--accent) / 0.85); }
 ```
 
-This resolves to the latest published `8.x` release instead of demanding a specific patch that does not exist.
+This aligns with the pattern used by the rest of the host CMS (shadcn components all use `hsl(var(--...))`) and requires no changes outside the plugin.
 
----
+**Option B — Scoped fallback variables:**  
+In `BoardPage.module.css` or a new `yatda-tokens.css`, re-declare plugin-scoped variables with safe fallback values:
 
-#### C4 — Migrations are not idempotent: re-install cascade failure
-
-**Files:** `migrations/003_create_users.sql`, `migrations/008_create_tickets.sql`
-
-The migration files use bare `CREATE TRIGGER` and `CREATE TYPE` statements with no `IF NOT EXISTS` or `OR REPLACE` guard. If a previous install attempt applied any migration partially (e.g., the trigger function was created but the table wasn't), a subsequent install attempt fails immediately:
-
-```
-migrations/003_create_users.sql ✗
-  ERROR: 42710: trigger "trg_on_auth_user_created" for relation "users" already exists
-```
-
-Because migration 003 is the one that creates `YATDA_Users`, its failure causes every subsequent migration to fail with `relation "YATDA_Users" does not exist`, producing a cascade of 13 consecutive failures:
-
-```
-004 ✗ — relation "YATDA_Users" does not exist
-005 ✗ — relation "YATDA_Workspaces" does not exist
-006 ✗ — relation "YATDA_Workspaces" does not exist
-007 ✗ — relation "YATDA_Categories" does not exist
-008 ✗ — type "ticket_status_enum" already exists  ← second partial-install artefact
-009–015 ✗ — cascade from 008 / 003
-```
-
-**Fix:** Make both affected statements idempotent:
-
-```sql
--- migrations/003_create_users.sql
--- Replace: CREATE OR REPLACE FUNCTION for the trigger function
-CREATE OR REPLACE FUNCTION public.handle_new_user_for_yatda() ...
-
--- Replace bare CREATE TRIGGER with:
-DROP TRIGGER IF EXISTS trg_on_auth_user_created ON auth.users;
-CREATE TRIGGER trg_on_auth_user_created ...
-
--- Or use CREATE TRIGGER ... IF NOT EXISTS (Postgres 17+ syntax):
-CREATE OR REPLACE TRIGGER trg_on_auth_user_created ...
-```
-
-```sql
--- migrations/008_create_tickets.sql
--- Guard the enum creation:
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ticket_status_enum') THEN
-    CREATE TYPE ticket_status_enum AS ENUM ('backlog', 'todo', 'in-progress', 'in-review', 'done');
-  END IF;
-END $$;
-```
-
-**General rule:** All plugin migrations must be idempotent. They may run more than once if the plugin is reinstalled or if a partial run occurred. See §8 of [Plugin_Development.md](Plugin_Development.md) for the full convention.
-
----
-
-#### C1 — API path mismatch: `/api/plugins/` vs `/api/plugin/`
-
-**File:** `src/lib/api.ts`, line 3  
-**File:** *(CMS)* `scripts/install-plugins.mjs`, `rebuildPluginRoutes()`
-
-```ts
-// Current (broken)
-const API_BASE = "/api/plugins/yatda";
-
-// Required
-const API_BASE = "/api/plugin/yatda";
-```
-
-The CMS mounts plugin routers at `/api/plugin/<slug>` (singular). Every `fetch` call from the YATDA frontend targets `/api/plugins/yatda` (plural), which does not exist. All API calls return 404.
-
-**Fix:** Change `API_BASE` in `src/lib/api.ts` to `/api/plugin/yatda`.
-
----
-
-#### C2 — Supabase binding names do not match the CMS environment
-
-**File:** `api/lib/supabase.ts`
-
-The plugin declares two Cloudflare Worker bindings that do not exist in the CMS worker environment:
-
-| What the plugin expects | What the CMS Worker actually exposes | Effect |
-|---|---|---|
-| `SUPABASE_ANON_KEY` | `SUPABASE_PUBLISHABLE_KEY` | `getSupabaseClient()` gets `undefined` for the anon key |
-| `SUPABASE_SERVICE_KEY` | `SS_SUPABASE_SECRET_KEY` | `getSupabaseAdminClient()` gets `undefined` for the service key |
-
-`SUPABASE_URL` is correctly named and does not need to change.
-
-```ts
-// Current (broken)
-export interface PluginEnv {
-  SUPABASE_URL: string;
-  SUPABASE_ANON_KEY: string;      // ← wrong
-  SUPABASE_SERVICE_KEY: string;   // ← wrong
-}
-
-// Fixed
-export interface PluginEnv {
-  SUPABASE_URL: string;
-  SUPABASE_PUBLISHABLE_KEY: string;
-  SS_SUPABASE_SECRET_KEY: string;
+```css
+.yatdaRoot {
+  --yatda-accent: hsl(var(--accent, 221 83% 53%));
+  --yatda-accent-hover: hsl(var(--accent) / 0.85);
 }
 ```
 
-Update `getSupabaseClient` and `getSupabaseAdminClient` accordingly:
+Then replace `var(--accent)` / `var(--accent-hover)` with `var(--yatda-accent)` / `var(--yatda-accent-hover)` across all module CSS files.
 
-```ts
-export function getSupabaseClient(env: PluginEnv, userToken: string) {
-  return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
-    global: { headers: { Authorization: `Bearer ${userToken}` } },
-  });
-}
+### Additional UX gap — No per-column "add" button in Kanban view
 
-export function getSupabaseAdminClient(env: PluginEnv) {
-  return createClient(env.SUPABASE_URL, env.SS_SUPABASE_SECRET_KEY, {
-    auth: { persistSession: false },
-  });
-}
-```
+Beyond the invisible header button, the `KanbanColumn` component (`KanbanView.tsx`) has no `+` button at the bottom of each column. This is a standard affordance in Kanban applications (Jira, Linear, GitHub Projects) and is expected by users. Adding an `onClick={() => openTicket(null)}` button at the base of each column (optionally pre-selecting the column's status in the `TicketModal`) would significantly improve discoverability.
 
 ---
 
-### HIGH — Significantly impairs core functionality
+## Issue 2 — Plugin Config Dialog Has No Pre-populated Parameter Defaults
 
----
+### Description
 
-#### H1 — Existing CMS users are never provisioned in YATDA
+The `plugin.json` manifest defines a `config_schema` array with four well-documented configuration keys (`google_client_id`, `google_client_secret`, `google_redirect_uri`, `token_encryption_key`). However, this information is never surfaced in the CMS plugin configuration UI.
 
-**Files:** `migrations/003_create_users.sql`, `migrations/004_create_workspaces.sql`
+When an admin opens the configuration dialog for YATDA in `/plugins`, they see an empty key-value editor with no indication of what keys are required or expected.
 
-The DB trigger `trg_on_auth_user_created` only fires on `INSERT` into `auth.users`. Any CMS user who was created before YATDA migrations were applied will have no `YATDA_Users` row, no personal workspace, and no workspace membership. For these users:
+### Root cause — two-layer gap
 
-1. `GET /workspaces` returns an empty array (RLS `workspaces_select_member` hides all rows).
-2. `BoardPage` never sets `activeWorkspaceId`.
-3. The "Add Task" button never renders (gated on `activeWorkspaceId`).
-4. The board shows an empty loading state indefinitely.
+**1. The `config_schema` field is absent from all relevant TypeScript types.**
 
-This is **the most likely cause of the screenshot showing 0 tickets and no way to add them**.
+- `PluginManifest` (`src/types/plugin.ts`) does not include a `config_schema` field.
+- `PluginRegistration` (`src/types/plugin.ts`) has no `config_schema` field.
+- `PluginDefinition` (the runtime descriptor exported from `src/index.tsx`) also lacks it.
 
-**Fix — Option A (recommended): backfill via API on first visit**
+As a result the schema data in `plugin.json` is read by the install script but then discarded — it never reaches the runtime or the database.
 
-Add a `POST /users/me/ensure` endpoint that creates the `YATDA_Users` row and personal workspace if they don't exist, using the admin client. Call it once from `BoardPage` on mount when `useWorkspaces` returns an empty array and `isLoading` is false.
+**2. The config dialog in `Plugins.tsx` is fully generic.**
 
-```ts
-// api/routes/users.ts
-users.post("/me/ensure", async (c) => {
-  const token = c.req.header("Authorization")?.slice(7) ?? "";
-  const userId = getUserIdFromToken(token);
-  const adminClient = getSupabaseAdminClient(c.env);
-
-  const { data: { user } } = await adminClient.auth.admin.getUserById(userId);
-  if (!user) return c.json({ error: "User not found" }, 404);
-
-  const { error } = await adminClient
-    .from("YATDA_Users")
-    .insert({
-      user_id: userId,
-      username: user.user_metadata?.username ?? user.email?.split("@")[0] ?? userId,
-      display_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
-      avatar_url: user.user_metadata?.avatar_url ?? null,
-    })
-    .onConflict("user_id")
-    .ignore();
-
-  if (error) return c.json({ error: error.message }, 500);
-
-  // The DB trigger will create the personal workspace and workspace membership automatically
-  return c.json({ ok: true });
-});
-```
-
-**Fix — Option B: backfill SQL migration**
-
-Add a `015_backfill_existing_users.sql` migration that inserts `YATDA_Users` rows for all existing `auth.users` entries that are missing one. The trigger chain (`trg_yatda_personal_workspace` → `trg_yatda_workspace_owner_member`) will propagate the workspace and membership rows automatically.
-
----
-
-#### H2 — No workspace creation UI
-
-**File:** `src/components/layout/BoardHeader.tsx`
+`openConfig()` converts `plugin.config` (saved key-value pairs) into the pairs list. For a plugin that has never been configured, this list is empty and gives no guidance:
 
 ```tsx
-// Current — button only visible if workspace already exists
-{activeWorkspaceId && (
-  <button className={styles.addBtn} onClick={() => openTicket(null)}>
-    + Add Task
-  </button>
-)}
-```
-
-There is no way for a user to:
-- Create a personal workspace manually
-- Create a team workspace
-- See any prompt explaining why the board is empty
-
-**Fix:** Render a "Create my workspace" prompt when `workspaces?.length === 0` and `!isLoadingWorkspaces`, either in `BoardPage` or `BoardHeader`. For the personal workspace case, a single button calling the `POST /users/me/ensure` endpoint (H1 fix) is sufficient.
-
----
-
-#### H3 — `handleDragOver` fires status-update mutations on every pointer-move event
-
-**File:** `src/components/views/KanbanView.tsx`
-
-```tsx
-function handleDragOver(event: DragOverEvent) {
-  // ...
-  if (targetStatus && activeTicketItem.ticket_status !== targetStatus) {
-    updateTicket.mutate({ id: activeId, body: { ticket_status: targetStatus } });
-  }
-}
-```
-
-`handleDragOver` fires for every `pointermove` event. When the cursor crosses a column boundary this check fires `updateTicket.mutate` repeatedly because `activeTicketItem.ticket_status` is read from the TanStack Query cache, which does not update until a mutation completes and is invalidated. The practical result is many redundant PATCH requests to the server for a single drag action.
-
-**Fix:** Track the in-flight target status in local state and only commit to the server in `handleDragEnd`.
-
-```tsx
-const [pendingStatus, setPendingStatus] = useState<Record<string, TicketStatus>>({});
-
-function handleDragOver(event: DragOverEvent) {
-  const { active, over } = event;
-  if (!over) return;
-  const activeId = active.id as string;
-  const overId = over.id as string;
-  const activeItem = tickets.find((t) => t.ticket_id === activeId);
-  if (!activeItem) return;
-  const overColumn = COLUMNS.find((c) => c.id === overId);
-  const overItem = tickets.find((t) => t.ticket_id === overId);
-  const targetStatus = overColumn?.id ?? overItem?.ticket_status;
-  if (targetStatus && targetStatus !== (pendingStatus[activeId] ?? activeItem.ticket_status)) {
-    setPendingStatus((prev) => ({ ...prev, [activeId]: targetStatus }));
-  }
-}
-
-function handleDragEnd(event: DragEndEvent) {
-  setActiveTicket(null);
-  const { active } = event;
-  const activeId = active.id as string;
-  const newStatus = pendingStatus[activeId];
-  if (newStatus) {
-    updateTicket.mutate({ id: activeId, body: { ticket_status: newStatus } });
-    setPendingStatus((prev) => { const n = { ...prev }; delete n[activeId]; return n; });
-  }
-  // ... existing within-column sort logic
-}
-```
-
----
-
-### MEDIUM — Impairs secondary features
-
----
-
-#### M1 — Filter state is never connected to data queries
-
-**Files:** `src/store/uiStore.ts`, `src/pages/BoardPage.tsx`
-
-The UI store has `filterStatus` and `filterCategoryId` fields but `BoardPage` never passes them to `useTickets`:
-
-```tsx
-// BoardPage.tsx — current
-const { data: tickets = [], isLoading } = useTickets(activeWorkspaceId);
-
-// Should be:
-const { filterStatus, filterCategoryId } = useUIStore();
-const { data: tickets = [], isLoading } = useTickets(activeWorkspaceId, {
-  status: filterStatus ?? undefined,
-  categoryId: filterCategoryId ?? undefined,
-});
-```
-
-Any filter controls in the header UI do nothing — tickets are never filtered.
-
----
-
-#### M2 — Optimistic update uses wrong cache key
-
-**File:** `src/hooks/useTickets.ts`
-
-`useUpdateTicket` performs its optimistic update against the cache key `["tickets", workspaceId]`, but `useTickets` stores data under `TICKETS_KEY(workspaceId, opts)` which includes `opts.status` and `opts.categoryId`. With no filters active the keys coincidentally match, but once M1 is fixed and filters are used, the optimistic update will target a cache entry that does not exist and the UI will flicker.
-
-**Fix:** Either always use the same key format in both places (include opts in the update key), or use `queryClient.invalidateQueries({ queryKey: ["tickets", workspaceId] })` as a prefix-invalidation (`exact: false` is the default).
-
----
-
-#### M3 — `POST /tickets` response is missing joined fields
-
-**File:** `api/routes/tickets.ts`
-
-The create handler returns only the raw inserted row. The `Ticket` TypeScript type includes `assignees` and `category` as joined objects. The POST response has both as `undefined`. If any code reads from the returned ticket directly (rather than waiting for a refetch after cache invalidation), it will render missing data.
-
-**Fix:** Re-fetch or use a joined select in the insert call:
-
-```ts
-const { data: ticket } = await supabase
-  .from("YATDA_Tickets")
-  .insert({ ... })
-  .select("*, category:YATDA_Categories(*), assignees:YATDA_Ticket_Assignees(*, user:YATDA_Users(*))")
-  .single();
-```
-
----
-
-#### M4 — No down-migrations provided
-
-**Status: Addressed** — All 15 down-migrations are present in the correct drop order (`migrations/down/001_drop_extensions.sql` through `migrations/down/015_revert_backfill_existing_users.sql`). However, migration 011 contains a bug that causes a partial cascade failure during uninstall. See **M5**.
-
----
-
-#### M5 — Down-migration 011 drops shared function without CASCADE
-
-**File:** `migrations/down/011_drop_comments.sql`
-
-Migration 011 attempts to drop `yatda_set_updated_at()`, the trigger function shared by all 5 YATDA tables. At the point 011 runs, those tables and their triggers still exist. PostgreSQL refuses the bare `DROP FUNCTION` because live triggers depend on it:
-
-```
-ERROR: 2BP01: cannot drop function yatda_set_updated_at() because other objects depend on it
-DETAIL:  trigger trg_yatda_users_updated_at on table "YATDA_Users" depends on function yatda_set_updated_at()
-         trigger trg_yatda_workspaces_updated_at on table "YATDA_Workspaces" depends on function yatda_set_updated_at()
-         trigger trg_yatda_categories_updated_at on table "YATDA_Categories" depends on function yatda_set_updated_at()
-         trigger trg_yatda_tickets_updated_at on table "YATDA_Tickets" depends on function yatda_set_updated_at()
-         trigger trg_yatda_milestones_updated_at on table "YATDA_Milestones" depends on function yatda_set_updated_at()
-```
-
-Because the migration runs inside a transaction, the `DROP TABLE "YATDA_Comments"` that precedes the function drop is also rolled back when the function drop fails. This leaves `YATDA_Comments` intact, which then triggers a cascade of 5 further failures:
-
-| Migration | Fails because |
-|-----------|---------------|
-| 008 — drop tickets | `YATDA_Comments_ticket_id_fkey` still exists (Comments not dropped) |
-| 006 — drop categories | `YATDA_Tickets_category_id_fkey` still exists (Tickets not dropped) |
-| 004 — drop workspaces | FK constraints from Categories and Tickets still reference Workspaces |
-| 003 — drop users | FK constraints from Workspaces, Tickets, and Comments still reference Users |
-| 002 — drop connectors | `YATDA_Users_user_origin_fkey` still references Connectors |
-
-After the failed uninstall, 6 tables remain in the database: `YATDA_Comments`, `YATDA_Tickets`, `YATDA_Categories`, `YATDA_Workspaces`, `YATDA_Users`, `YATDA_Connectors`.
-
-**Fix:** Add `CASCADE` to the function drop in `migrations/down/011_drop_comments.sql`:
-
-```sql
--- Current (broken)
-DROP FUNCTION yatda_set_updated_at();
-
--- Fixed
-DROP FUNCTION IF EXISTS yatda_set_updated_at() CASCADE;
-```
-
-`CASCADE` drops all dependent triggers automatically. Those triggers are on tables that will be dropped by migrations 008→006→004→003 anyway — the `CASCADE` only removes the forward dependency that blocks this single function drop.
-
-**Confirmed fixed in run 2 (2026-03-18):** After this fix, migrations 011 through 004 all succeed. However, two additional failures surface in 003 and 002 — see M6.
-
----
-
-#### M6 — Down-migrations 003/002 non-idempotent and missing function cleanup; three functions orphaned after uninstall
-
-**Files:** `migrations/down/003_drop_users.sql`, `migrations/down/002_drop_connectors.sql`  
-**Confirmed from live uninstall run (2026-03-18)**
-
-After the M5 fix resolves migrations 011–004, two failures remain:
-
-**Migration 003 — `relation "YATDA_Users" does not exist`**
-
-The bare `DROP TABLE "YATDA_Users"` fails if the table was partially cleaned up by a previous failed uninstall attempt. Additionally, `yatda_handle_new_user()` was created in 003 and never dropped — it has a live trigger `trg_on_auth_user_created` on `auth.users` that depends on it. Attempting to drop the function manually confirms this:
-
-```
-ERROR: 2BP01: cannot drop function yatda_handle_new_user() because other objects depend on it
-DETAIL:  trigger trg_on_auth_user_created on table auth.users depends on function yatda_handle_new_user()
-HINT:  Use DROP ... CASCADE to drop the dependent objects too.
-```
-
-**Fix for `003_drop_users.sql`** — explicitly drop the `auth.users` trigger before dropping the function, then use `IF EXISTS` on the table:
-
-```sql
--- Drop the auth.users trigger first so the function has no dependents
-DROP TRIGGER IF EXISTS trg_on_auth_user_created ON auth.users;
-DROP FUNCTION IF EXISTS yatda_handle_new_user();
--- yatda_set_updated_at() was already dropped by 011 — IF EXISTS handles this safely
-DROP FUNCTION IF EXISTS yatda_set_updated_at();
-DROP TABLE IF EXISTS "YATDA_Users";
-```
-
-Alternatively, `DROP FUNCTION IF EXISTS yatda_handle_new_user() CASCADE` removes the trigger implicitly, which is acceptable since the trigger will not exist once the DB is fully cleaned.
-
-**Migration 002 — `cannot drop YATDA_Connectors` (FK from `YATDA_Users`)**
-
-If 003 fails and `YATDA_Users` still exists, the FK `YATDA_Users_user_origin_fkey` prevents dropping `YATDA_Connectors`. The 003 fix above resolves the root cause, but 002 also needs `IF EXISTS` for idempotency:
-
-```sql
--- Current (brittle)
-DROP TABLE "YATDA_Connectors";
-
--- Fixed
-DROP TABLE IF EXISTS "YATDA_Connectors";
-```
-
-**Three trigger functions orphaned after uninstall**
-
-Even after a fully successful uninstall, three trigger functions remain in the database because their down-migrations do not drop them:
-
-| Function | Trigger it owns | Where it must be dropped |
-|----------|----------------|-------------------------|
-| `yatda_handle_new_user` | `trg_on_auth_user_created` on `auth.users` | `003_drop_users.sql` (see fix above) |
-| `yatda_add_owner_as_member` | workspace owner trigger (likely `trg_yatda_workspace_owner_member`) | corresponding down-migration for workspace members |
-| `yatda_stamp_phase_timestamp` | phase/ticket trigger | corresponding down-migration for tickets or milestones |
-
-The pattern for any function that owns a trigger **on a table outside the plugin schema** (e.g., `auth.users`) is:
-
-```sql
--- Preferred: explicit trigger drop first, then function
-DROP TRIGGER IF EXISTS <trigger_name> ON <schema.table>;
-DROP FUNCTION IF EXISTS <function_name>();
-```
-
----
-
-### LOW — Minor issues and polish
-
----
-
-#### L1 — Gantt and Calendar views share the same icon as Kanban
-
-**File:** `src/components/layout/BoardHeader.tsx`
-
-```ts
-const VIEW_ICONS: Record<ActiveView, string> = {
-  kanban: "▦",
-  list: "☰",
-  gantt: "▦",      // ← same as kanban
-  calendar: "▦",   // ← same as kanban
+const openConfig = (plugin: PluginRegistration) => {
+  setConfigPlugin(plugin);
+  setConfigPairs(toConfigPairs(plugin.config ?? {}));  // empty on first open
 };
 ```
 
-Suggested replacements: gantt → `"📊"`, calendar → `"📅"`.
+### Suggested fixes
 
----
-
-#### L2 — Static PBKDF2 salt in `api/lib/crypto.ts`
+**Step 1 — Add `config_schema` to `PluginManifest`:**
 
 ```ts
-salt: enc.encode("yatda-token-salt"),
+export interface ConfigSchemaEntry {
+  key: string;
+  type: 'string' | 'secret';
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface PluginManifest {
+  // ... existing fields ...
+  config_schema?: ConfigSchemaEntry[];
+}
 ```
 
-The PBKDF2 salt is hardcoded. A static salt means all deployments using the same `token_encryption_key` value derive an identical key. The practical risk is low (the raw key is admin-configured, not user-supplied), but a random per-token salt stored in the ciphertext string (`"<saltB64>:<ivB64>:<ctB64>"`) would be more correct.
+**Step 2 — Persist the schema in the database and/or expose it through `PluginDefinition`.**
 
----
-
-#### L3 — `pgcrypto` extension is enabled but never used
-
-**File:** `migrations/001_create_extensions.sql`
-
-All token encryption uses the Web Crypto API in application code. `pgcrypto` is not referenced in any SQL. It can be removed.
-
----
-
-#### L4 — `ticket_status_enum` blocks status changes without a migration
-
-**File:** `migrations/008_create_tickets.sql`
-
-PostgreSQL `ENUM` types require `ALTER TYPE ... ADD VALUE` to add new values and cannot remove values without recreating the type. If statuses ever need to be configurable per workspace or a new pipeline stage is added, this will require a migration. A `text` column with a `CHECK` constraint or a separate lookup table would be more flexible.
-
----
-
-#### L5 — View components rendered with `null!` workspace
-
-**File:** `src/pages/BoardPage.tsx`
-
-```tsx
-{activeView === "kanban" && (
-  <KanbanView tickets={tickets} workspaceId={activeWorkspaceId!} />
-)}
-```
-
-When no workspace is loaded, `activeWorkspaceId` is `null` but the non-null assertion passes it through. Add a guard:
-
-```tsx
-{activeView === "kanban" && activeWorkspaceId && (
-  <KanbanView tickets={tickets} workspaceId={activeWorkspaceId} />
-)}
-```
-
----
-
-## Migration Chain Summary
-
-The trigger chain for new users is well-designed and correct:
-
-```
-auth.users INSERT
-  → trg_on_auth_user_created   → YATDA_Users INSERT
-      → trg_yatda_personal_workspace  → YATDA_Workspaces INSERT
-          → trg_yatda_workspace_owner_member → YATDA_Workspace_Members INSERT
-```
-
-All three trigger functions use `SECURITY DEFINER`, so they correctly bypass RLS during setup. The chain only fails for **existing users** because triggers are not back-applied (H1).
-
----
-
-## RLS Policy Summary
-
-The RLS policies in `014_enable_rls.sql` are correct and complete:
-
-- `YATDA_Connector_Credentials` has SELECT-only policy — INSERT/UPDATE go through the admin client in the OAuth callback. Correct, as long as binding names are fixed (C2).
-- `YATDA_Workspace_Members` insert policy is gated on workspace admin role. The owner-as-member trigger bypasses this via `SECURITY DEFINER`. Correct.
-- The `yatda_is_workspace_member` helper function is `SECURITY DEFINER STABLE`, so it can see all membership rows regardless of the calling user's RLS context. Correct.
-
----
-
-## Priority Fix Order
-
-| Priority | Issue | Effort |
-|----------|-------|--------|
-| 1 | C3 — Fix `@tanstack/react-table` version to `^8.0.0` in `plugin.json` | 1 line |
-| 2 | C4 — Make migrations 003 and 008 idempotent (guard trigger + enum) | ~10 lines SQL |
-| 3 | C1 — Change `API_BASE` from `/api/plugins/` to `/api/plugin/` in `src/lib/api.ts` | 1 line |
-| 4 | C2 + Architecture Addendum — Fix binding names and switch to user-scoped Supabase client | ~30 lines |
-| 5 | H1 — Provision existing users (`POST /users/me/ensure` + call from `BoardPage`) | ~50 lines |
-| 6 | H2 — Add empty-workspace UI prompt | ~20 lines |
-| 7 | H3 — Move cross-column status mutation to `handleDragEnd` | ~30 lines |
-| 8 | M1 + M2 — Wire filter state to `useTickets` + fix cache key | ~20 lines |
-| 9 | M3 — Return joined ticket from `POST /tickets` | ~5 lines |
-| 10 | M4 — Write down-migrations | ✓ Addressed (15 down-migrations present) |
-| 11 | M5 — Fix `DROP FUNCTION ... CASCADE` in `011_drop_comments.sql` | 1 line SQL |
-| 12 | M6 — Fix 003/002 idempotency + drop orphaned functions with CASCADE | ~10 lines SQL |
-| 13 | L1–L5 — Polish | minor |
-
-**Confirmed from live install run (2026-03-18):** C3 and C4 are now the top blockers. The npm failure on `@tanstack/react-table@8.20.0` means the build fails before any code runs. Migration idempotency (C4) means reinstalling after a partial run will always cascade-fail every migration from 003 onward.
-
-**Confirmed from live uninstall runs (2026-03-18):**
-- M4 resolved — 15 down-migrations present in correct order.
-- M5 fix confirmed — migrations 011 through 004 now all succeed in run 2.
-- M6 identified in run 2 — 003 fails (`YATDA_Users doesn't exist`), 002 fails (FK from YATDA_Users blocks YATDA_Connectors drop), three trigger functions (`yatda_add_owner_as_member`, `yatda_handle_new_user`, `yatda_stamp_phase_timestamp`) remain orphaned in the database after uninstall.
-
----
-
-## Architecture Addendum — CMS Backend Clarifications
-
-> **Added:** 2026-03-18  
-> This section corrects assumptions made in C2 and provides a full description of how the CMS backend authenticates requests and manages authorization. The plugin must align with these patterns, not work around them.
-
----
-
-### How the CMS API actually works
-
-#### No application-layer authentication middleware
-
-The CMS Hono API (`api/index.ts`) has **no auth middleware**. There is no JWT verification step, no session check, and no route guard in any of the core route handlers (`schemas.ts`, `media.ts`, `plugins.ts`, `mcp.ts`, etc.). The only middleware wired to `/api/*` is `agentLogger`, which logs requests to the `agent_logs` table — it does not inspect or verify any `Authorization` header.
-
-All access control is delegated entirely to **Supabase RLS policies evaluated at the database layer**.
-
-#### How requests are authenticated in practice
-
-The CMS frontend (and plugins) include a Supabase-issued JWT as `Authorization: Bearer <token>` on every API request. The Hono route handler does not validate this token itself. Instead, it passes the token through to Supabase when constructing a **user-scoped client**:
+Either store `config_schema` in the `plugins` table as a JSONB column so `PluginRegistration` can carry it, or expose it through the runtime `PluginDefinition` (simpler, since it doesn't require a migration):
 
 ```ts
-// The correct pattern for any user-facing route
-const token = c.req.header("Authorization")?.slice(7) ?? "";
-const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
-  global: { headers: { Authorization: `Bearer ${token}` } },
-});
-// All queries now run as the authenticated user. RLS is enforced automatically.
+export interface PluginDefinition {
+  // ... existing fields ...
+  configSchema?: ConfigSchemaEntry[];
+}
 ```
 
-Supabase then validates the JWT signature internally and sets `auth.uid()` and `request.jwt.claims` for the duration of that connection. RLS policies evaluate against these values.
+**Step 3 — Pre-populate the config dialog from the schema.**
 
-#### The admin client is for privileged operations only
+In `Plugins.tsx`, when a runtime plugin with a matching slug has a `configSchema`, seed the pairs list with its keys (preserving already-saved values):
 
-`createSupabaseAdminClient` (which uses `SS_SUPABASE_SECRET_KEY`) bypasses RLS entirely. In the CMS codebase it is used in **exactly one place**: auto-creating missing storage buckets in `api/routes/media.ts`. It is not used for any user-facing data queries.
+```ts
+const openConfig = (plugin: PluginRegistration) => {
+  setConfigPlugin(plugin);
+  const savedPairs = toConfigPairs(plugin.config ?? {});
+  const runtimePlugin = runtimePlugins.find((r) => r.id === plugin.slug);
+  const schema = runtimePlugin?.configSchema ?? [];
+  // Merge: use saved value if present, otherwise empty string
+  const merged = schema.map((entry) => ({
+    key: entry.key,
+    value: plugin.config?.[entry.key] ?? '',
+  }));
+  // Append any saved keys that were not in the schema (manual pairs)
+  const schemaKeys = new Set(schema.map((e) => e.key));
+  const extra = savedPairs.filter((p) => !schemaKeys.has(p.key));
+  setConfigPairs([...merged, ...extra]);
+};
+```
 
-The plugin's current architecture uses the admin client for all API operations that require elevated access (e.g., provisioning users, fetching workspace data). This is architecturally incorrect — it means RLS policies are never exercised, and the plugin bypasses the security model the CMS is built on.
+**Optional UX enhancement — show schema metadata inline:**  
+Display `label` and `description` from the schema entry next to each row (e.g. as a tooltip or sub-label), and use `type === 'secret'` to render a password-type input instead of plain text. This prevents accidental exposure of OAuth secrets in the config dialog.
 
 ---
 
-### How roles and authorization work
+---
 
-The CMS uses a **JWT claims injection** model, not application-layer role checks.
+## Issue 3 — Ambiguous PostgREST Relationship: `YATDA_Ticket_Assignees` → `YATDA_Users`
 
-1. When a user signs in, Supabase calls the `custom_access_token_hook` Postgres function (`migrations/Auth/Access_hook.sql`).
-2. The hook reads `public.user_roles` (joined with `public.roles`) for the signing-in user and injects the result as a `user_roles` JSON array into the JWT claims.
-3. Every subsequent API request by that user carries a JWT containing e.g. `"user_roles": ["admin"]`.
-4. RLS policies check this claim directly:
+### Description
+
+This is the error currently raised at runtime:
+
+> Could not embed because more than one relationship was found for 'YATDA_Ticket_Assignees' and 'YATDA_Users'
+
+### Root cause
+
+`009_create_ticket_assignees.sql` defines **two foreign keys from `YATDA_Ticket_Assignees` to `YATDA_Users`**:
 
 ```sql
--- Example RLS policy using the injected claim
-WITH CHECK (
-  (current_setting('request.jwt.claims', true))::jsonb -> 'user_roles' ?| array['super-admin']
-)
+create table "YATDA_Ticket_Assignees" (
+  ticket_id   uuid not null references "YATDA_Tickets" (ticket_id) on delete cascade,
+  user_id     uuid not null references "YATDA_Users" (user_id) on delete cascade,   -- FK #1
+  assigned_at timestamptz not null default now(),
+  assigned_by uuid references "YATDA_Users" (user_id) on delete set null,            -- FK #2
+  primary key (ticket_id, user_id)
+);
 ```
 
-**The plugin must not reinvent this.** It should not maintain its own role-lookup logic in the API layer. Role-based access in YATDA should be enforced via RLS policies that read `current_setting('request.jwt.claims', true)::jsonb -> 'user_roles'`, exactly as the CMS does.
+Both `user_id` and `assigned_by` point to the same target table. When PostgREST resolves the embedded join:
 
-The `YATDA_Users` table is appropriate for YATDA-specific profile data (username, display name, avatar). It is **not** the place to store or check CMS roles.
+```ts
+user:YATDA_Users(user_id, username, display_name, avatar_url)
+```
+
+...it finds two candidate FK paths and cannot decide which to use, so it throws the ambiguity error.
+
+### Affected query sites in `api/routes/tickets.ts`
+
+This embedded join appears in **four separate select calls**, all of which are broken:
+
+1. `GET /` — list tickets
+2. `GET /:id` — single ticket (also embeds comments)
+3. `POST /` — create ticket (select after insert)
+4. `PATCH /:id` — update ticket (select after update)
+
+### Why the column-name hint alone does not fix it
+
+The `!<column>` shorthand (e.g. `!user_id`) was added in **PostgREST 12.2**. Supabase projects that were provisioned before that version ship with an older PostgREST binary and only support `!<constraint_name>` hints. Because the FKs in `009_create_ticket_assignees.sql` were declared inline without explicit names, PostgreSQL auto-generated opaque names (`YATDA_Ticket_Assignees_user_id_fkey`, `YATDA_Ticket_Assignees_assigned_by_fkey`). Those names are unknown to the developer, change depending on how the migration is applied, and cannot be relied upon in embed hints.
+
+### Required fix — Named FK constraints + constraint-name hint
+
+**Step 1 — Add a migration to rename the FK constraints:**
+
+```sql
+-- migrations/016_name_ticket_assignee_fks.sql
+ALTER TABLE "YATDA_Ticket_Assignees"
+  DROP CONSTRAINT "YATDA_Ticket_Assignees_user_id_fkey",
+  ADD  CONSTRAINT "fk_ticket_assignees_assignee"
+       FOREIGN KEY (user_id) REFERENCES "YATDA_Users" (user_id) ON DELETE CASCADE;
+
+ALTER TABLE "YATDA_Ticket_Assignees"
+  DROP CONSTRAINT "YATDA_Ticket_Assignees_assigned_by_fkey",
+  ADD  CONSTRAINT "fk_ticket_assignees_assigner"
+       FOREIGN KEY (assigned_by) REFERENCES "YATDA_Users" (user_id) ON DELETE SET NULL;
+```
+
+A parallel file is also needed in `supabase/migrations/` for Supabase CLI users.
+
+**Step 2 — Update the embed hint in all four query sites** (both `api/routes/tickets.ts` and `packages/api/src/routes/tickets.ts`):
+
+```diff
+- user:YATDA_Users!user_id(user_id, username, display_name, avatar_url)
++ user:YATDA_Users!fk_ticket_assignees_assignee(user_id, username, display_name, avatar_url)
+```
+
+The constraint-name hint works on **all PostgREST versions** and is self-documenting.
+
+**Step 3 — Register the migration in `plugin.json`:**
+
+```json
+"migrations": [
+  ...
+  "migrations/016_name_ticket_assignee_fks.sql"
+]
+```
+
+**Alternative — Drop `assigned_by` if audit-trailing is not needed:**  
+`assigned_by` is populated on INSERT but is never selected, filtered on, or returned in any API response. Dropping it removes the ambiguity entirely with no hint changes required. This would be a `016_drop_assigned_by.sql` migration with a corresponding column drop and a matching down migration.
 
 ---
 
-### Corrected `api/lib/supabase.ts` for the plugin
+## Issue 4 — Missing UPDATE Policy on `YATDA_Workspace_Members`
 
-The C2 fix in this report corrected the binding names but left the architectural approach unchanged. The correct plugin Supabase setup aligns with the CMS pattern:
+### Description
 
-```ts
-import { createClient } from "@supabase/supabase-js";
+`014_enable_rls.sql` defines three policies for `YATDA_Workspace_Members`:
 
-// Plugin shares env bindings with the CMS worker — these are the real names.
-export interface PluginEnv {
-  SUPABASE_URL: string;
-  SUPABASE_PUBLISHABLE_KEY: string;          // plain var (local dev via .dev.vars)
-  SS_SUPABASE_SECRET_KEY: SecretsStoreBinding; // Secrets Store binding (production only)
-}
+- `wm_select_member` (SELECT)
+- `wm_insert_admin` (INSERT)
+- `wm_delete_admin` (DELETE)
 
-// Use this for ALL user-facing routes.
-// Passes the user's JWT so that RLS is enforced and auth.uid() is set.
-export function getSupabaseClient(env: PluginEnv, userToken: string) {
-  return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
-    global: { headers: { Authorization: `Bearer ${userToken}` } },
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+There is **no UPDATE policy**. With RLS enabled, the absence of an UPDATE policy means any attempt to change a member's `role` (e.g. promoting a member to admin, or demoting an admin) is silently blocked by Supabase — the operation returns no rows affected without an error, making it appear to succeed.
 
-// Use this ONLY for privileged operations that must bypass RLS
-// (e.g., POST /users/me/ensure to provision a missing YATDA_Users row).
-// Requires SS_SUPABASE_SECRET_KEY to be a Cloudflare Secrets Store binding.
-export async function getSupabaseAdminClient(env: PluginEnv) {
-  const key = await env.SS_SUPABASE_SECRET_KEY.get();
-  return createClient(env.SUPABASE_URL, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+### Impact
+
+Workspace role management is completely non-functional at the database level. There is no way to change `role` for an existing `YATDA_Workspace_Members` row through the Supabase client or REST API.
+
+### Fix
+
+Add the missing policy:
+
+```sql
+create policy "wm_update_admin"
+  on "YATDA_Workspace_Members" for update
+  to authenticated
+  using (yatda_is_workspace_admin(workspace_id))
+  with check (yatda_is_workspace_admin(workspace_id));
 ```
 
-Every route handler should extract the token and use the user-scoped client:
-
-```ts
-// Standard pattern for all plugin route handlers
-router.get("/workspaces", async (c) => {
-  const token = c.req.header("Authorization")?.slice(7) ?? "";
-  if (!token) return c.json({ error: "Unauthorized" }, 401);
-  const supabase = getSupabaseClient(c.env, token);
-  // RLS ensures this query only returns workspaces the user is a member of
-  const { data, error } = await supabase.from("YATDA_Workspaces").select("*");
-  if (error) return c.json({ error: error.message }, 500);
-  return c.json(data);
-});
-```
-
-The admin client should only appear in the `POST /users/me/ensure` handler or equivalent privileged bootstrap route.
+This can be added as a new migration file (e.g. `016_fix_workspace_member_update_policy.sql`) or appended to `014_enable_rls.sql` if the database has not yet been deployed.
 
 ---
 
-### Summary of architectural corrections
+## Issue 5 — `YATDA_Users` Has No INSERT RLS Policy
 
-| Assumption in original review | Reality |
-|---|---|
-| CMS exposes `SUPABASE_ANON_KEY` binding | CMS exposes `SUPABASE_PUBLISHABLE_KEY` (plain var) |
-| CMS exposes `SUPABASE_SERVICE_KEY` binding | CMS exposes `SS_SUPABASE_SECRET_KEY` (Secrets Store binding, requires `.get()`) |
-| Plugin should use admin client for user queries | Plugin must use user-scoped client (pass Bearer token) for all user-facing queries |
-| Roles checked in API layer | Roles are in the JWT (`user_roles` claim); access control belongs in RLS policies |
-| `YATDA_Users` is the source of truth for roles | CMS `public.roles` / `user_roles` → JWT claims is the source of truth; `YATDA_Users` is for YATDA profile data only |
+### Description
 
-The C1 path fix (`/api/plugin/yatda`) and the C2 binding name fixes remain correct and necessary. The additional correction here is that the plugin must also switch from admin-client-first to user-scoped-client-first, or RLS will never be exercised and the security model will be silently bypassed.
+`014_enable_rls.sql` enables RLS on `YATDA_Users` and defines SELECT and UPDATE policies, but **no INSERT policy**. This is intentional — user rows are always created via the `SECURITY DEFINER` trigger `trg_on_auth_user_created` (which bypasses RLS), or via the admin client in `POST /users/me/ensure`.
+
+However, this creates a hidden dependency that is not documented and is fragile:
+
+- If the trigger is accidentally dropped or fails, there is no fallback path for a regular authenticated user to create their own profile row.
+- Any future feature that needs a user to INSERT their own row will fail silently, with no clear error message explaining why RLS is blocking it.
+
+### Recommendation
+
+Add an explicit INSERT policy scoped to the user's own `user_id`, so the intent is visible and there is a safe fallback:
+
+```sql
+create policy "users_insert_own"
+  on "YATDA_Users" for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+```
+
+This does not change current behavior (the trigger still fires first) but makes the permissions model explicit and self-evident.
+
+---
+
+## Issue 6 — `sync_hash` Comment Is Ambiguous (MD5 vs SHA-256)
+
+### Description
+
+`013_create_external_task_map.sql` documents `sync_hash` as:
+
+```sql
+sync_hash text, -- MD5 / SHA-256 of external task JSON, for change detection
+```
+
+The comment states both MD5 and SHA-256, indicating the implementation choice was left unresolved. MD5 produces known collisions and should not be used even for non-security purposes where correctness matters (a hash collision would suppress a real sync update). The column type is just `text` with no constraint on hash format or length.
+
+### Recommendation
+
+- Commit to **SHA-256** (32-byte hex = 64 chars) and document it clearly.
+- Optionally constrain the column: `sync_hash text check (length(sync_hash) = 64)`.
+- Update the application-layer code in `api/lib/google-tasks.ts` and any other sync handlers accordingly.
+
+---
+
+## Issue 7 — `014_disable_rls.sql` Down Migration Fails if Issue 4 Fix is Applied
+
+### Description
+
+When the `wm_update_admin` policy (the fix for Issue 4) is applied to the database and the plugin is subsequently uninstalled, the down migration `014_disable_rls.sql` fails with:
+
+```
+ERROR: 2BP01: cannot drop function yatda_is_workspace_admin(uuid) because other objects depend on it
+DETAIL: policy wm_update_admin on table "YATDA_Workspace_Members" depends on function yatda_is_workspace_admin(uuid)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+```
+
+### Root cause
+
+`014_disable_rls.sql` drops the `yatda_is_workspace_admin()` helper function, but `wm_update_admin` references that function and must be dropped first. Because `wm_update_admin` was not part of the original `014_enable_rls.sql`, it was never added to the corresponding down migration.
+
+### Cascade effect
+
+The failure of `014_disable_rls.sql` leaves `YATDA_Workspace_Members` intact (its RLS policies still exist). This then causes every subsequent down migration to fail in sequence:
+
+| Migration | Reason for failure |
+|-----------|--------------------|
+| `005_drop_workspace_members.sql` | `users_select_workspace_peer` policy on `YATDA_Users` references the table |
+| `004_drop_workspaces.sql` | `YATDA_Workspace_Members_workspace_id_fkey` FK still exists |
+| `003_drop_users.sql` | FKs from `YATDA_Workspaces` and `YATDA_Workspace_Members` still exist |
+| `002_drop_connectors.sql` | FK from `YATDA_Users` still exists |
+
+Five tables remain in the database and require manual cleanup.
+
+### Fix — update `014_disable_rls.sql` to drop `wm_update_admin` first
+
+The down migration must explicitly drop any policy that references the helper functions **before** dropping the functions themselves, regardless of whether those policies were part of the original `014_enable_rls.sql`. The fix is to prepend the following to `014_disable_rls.sql`:
+
+```sql
+-- Drop the wm_update_admin policy added as a fix for the missing UPDATE policy
+-- (must be dropped before yatda_is_workspace_admin() can be removed)
+DROP POLICY IF EXISTS "wm_update_admin" ON "YATDA_Workspace_Members";
+```
+
+The `IF EXISTS` guard makes this safe to run even if the Issue 4 fix was never applied.
+
+### Manual cleanup for affected databases
+
+For any database where the partial uninstall has already run, the remaining objects must be dropped manually in this order:
+
+```sql
+-- 1. Drop leftover policies that block the tables
+DROP POLICY IF EXISTS "wm_update_admin" ON "YATDA_Workspace_Members";
+DROP POLICY IF EXISTS "users_select_workspace_peer" ON "YATDA_Users";
+
+-- 2. Drop remaining tables in dependency order
+DROP TABLE IF EXISTS "YATDA_Workspace_Members" CASCADE;
+DROP TABLE IF EXISTS "YATDA_Workspaces" CASCADE;
+DROP TABLE IF EXISTS "YATDA_Users" CASCADE;
+DROP TABLE IF EXISTS "YATDA_Connectors" CASCADE;
+
+-- 3. Drop remaining functions (if not already gone)
+DROP FUNCTION IF EXISTS yatda_is_workspace_admin(uuid);
+DROP FUNCTION IF EXISTS yatda_is_workspace_member(uuid);
+DROP FUNCTION IF EXISTS yatda_set_updated_at();
+DROP FUNCTION IF EXISTS yatda_handle_new_user();
+DROP FUNCTION IF EXISTS yatda_create_personal_workspace();
+DROP FUNCTION IF EXISTS yatda_add_owner_as_member();
+```
+
+### General lesson
+
+Any migration that adds a policy referencing a helper function must also update the corresponding down migration to drop that policy **before** the function drop. Down migrations must stay in sync with all forward migrations, not just the one they nominally reverse.
+
+---
+
+## Issue 8 — Literal `"undefined"` String Passed as Filter Causes 500 on All Ticket Queries
+
+### Description
+
+All ticket list requests fail with HTTP 500. The full request URL observed at runtime is:
+
+```
+GET /api/plugin/yatda/tickets?workspace_id=...&status=undefined&category_id=undefined
+```
+
+The literal string `"undefined"` is passed as the `status` and `category_id` query parameters. Because `"undefined"` is a truthy non-empty string, the API applies it as a filter:
+
+```ts
+if (status) query = query.eq("ticket_status", status);
+```
+
+This sends `eq("ticket_status", "undefined")` to PostgREST, which tries to cast `"undefined"` to the `ticket_status_enum` type and fails, returning a Postgres error — surfaced to the client as a 500.
+
+### Impact
+
+- The board never loads (the initial fetch of tickets always fails).
+- Creating a ticket appears to fail silently: the POST succeeds and the ticket is actually saved, but `onSuccess` calls `invalidateQueries`, which triggers a refetch of the broken list endpoint. The UI shows no confirmation and the newly created ticket never appears.
+
+### Root cause — two layers
+
+**Layer 1 — Frontend: `URLSearchParams` coerces `undefined` to the string `"undefined"`**
+
+In `src/lib/api.ts`:
+
+```ts
+list: (params: { workspace_id: string; status?: string; category_id?: string }) => {
+  const qs = new URLSearchParams(params as Record<string, string>).toString();
+  //                                            ^^^^^^^^^^^^^^^^^^^
+  // TypeScript is silenced by the cast, but at runtime undefined values
+  // are serialised as the string "undefined".
+  return request<Ticket[]>(`/tickets?${qs}`);
+},
+```
+
+**Fix:** Only include params that are actually defined:
+
+```ts
+list: (params: { workspace_id: string; status?: string; category_id?: string }) => {
+  const p: Record<string, string> = { workspace_id: params.workspace_id };
+  if (params.status !== undefined) p.status = params.status;
+  if (params.category_id !== undefined) p.category_id = params.category_id;
+  const qs = new URLSearchParams(p).toString();
+  return request<Ticket[]>(`/tickets?${qs}`);
+},
+```
+
+**Layer 2 — Backend: `if (status)` treats `"undefined"` as a truthy filter value**
+
+In `api/routes/tickets.ts` and `packages/api/src/routes/tickets.ts`:
+
+```ts
+if (status) query = query.eq("ticket_status", status);      // truthy — "undefined" passes
+if (category_id) query = query.eq("category_id", category_id);
+```
+
+**Fix:** Guard against the literal string as a defensive measure, so a malformed caller doesn't cause a 500:
+
+```ts
+if (status && status !== "undefined") query = query.eq("ticket_status", status);
+if (category_id && category_id !== "undefined") query = query.eq("category_id", category_id);
+```
+
+Both layers need to be fixed. The frontend fix prevents the string from being sent; the backend fix prevents a 500 if it ever is.
+
+---
+
+## Checklist for Next Iteration
+
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| 1a | `+ Add Task` button invisible due to `--accent` / `--accent-hover` CSS variable mismatch | Critical | Open |
+| 1b | No per-column "add" button in Kanban view | Minor | Open |
+| 2a | `config_schema` not typed in `PluginManifest` / `PluginDefinition` | Medium | Open |
+| 2b | Config dialog does not pre-populate rows from schema | Medium | Open |
+| 2c | Secret config fields rendered as plain text inputs | Minor | Open |
+| 3  | Ambiguous FK: `YATDA_Ticket_Assignees` has two FKs to `YATDA_Users` — `!user_id` hint fails on pre-12.2 PostgREST; named constraints + `!fk_ticket_assignees_assignee` hint required | Critical | Open |
+| 4  | Missing UPDATE policy on `YATDA_Workspace_Members` — member role changes silently fail | High | Open |
+| 5  | No INSERT policy on `YATDA_Users` — intent undocumented, fragile trigger dependency | Low | Open |
+| 6  | `sync_hash` comment says "MD5 / SHA-256" — ambiguous, MD5 is collision-vulnerable | Low | Open |
+| 7  | `014_disable_rls.sql` down migration doesn't drop `wm_update_admin` before dropping `yatda_is_workspace_admin()` — uninstall fails and leaves 4 tables orphaned | High | Open (manual DB cleanup required) |
+| 8a | Frontend `URLSearchParams` cast serialises `undefined` options as the string `"undefined"` — all ticket list queries fail with 500 | Critical | Open |
+| 8b | Backend `if (status)` guard treats literal `"undefined"` string as a valid enum filter — causes Postgres type error | High | Open |
