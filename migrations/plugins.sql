@@ -19,6 +19,7 @@ CREATE TABLE public.plugins (
   status           VARCHAR(50)  NOT NULL DEFAULT 'registered'
                      CHECK (status IN ('registered', 'installed', 'enabled', 'disabled', 'error')),
   config           JSONB        NOT NULL DEFAULT '{}',
+  config_schema    JSONB        NOT NULL DEFAULT '[]',
   error_message    TEXT,                      -- populated when status = 'error'
   installed_at     TIMESTAMPTZ,
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -28,6 +29,14 @@ CREATE TABLE public.plugins (
 -- Index for fast lookups by slug and status
 CREATE INDEX idx_plugins_slug   ON public.plugins (slug);
 CREATE INDEX idx_plugins_status ON public.plugins (status);
+
+ALTER TABLE public.plugins
+  ADD CONSTRAINT plugins_config_is_object
+  CHECK (jsonb_typeof(config) = 'object');
+
+ALTER TABLE public.plugins
+  ADD CONSTRAINT plugins_config_schema_is_array
+  CHECK (jsonb_typeof(config_schema) = 'array');
 
 -- Auto-update updated_at on every write
 CREATE TRIGGER trg_plugins_updated_at

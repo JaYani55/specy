@@ -13,16 +13,17 @@ import {
   PackageCheck,
   PackageX,
   AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  X,
+  Shield,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -45,13 +46,22 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
+  buildPluginSecretName,
   fetchPlugins,
+  filterPluginConfigValues,
+  isSecretPluginField,
   registerPlugin,
   updatePluginConfig,
   updatePluginStatus,
   deletePlugin,
 } from '@/services/pluginService';
-import type { PluginRegistration } from '@/types/plugin';
+import {
+  deleteSecret,
+  listSecrets,
+  upsertSecret,
+  type CfSecret,
+} from '@/services/connectionsService';
+import type { PluginConfigFieldDefinition, PluginRegistration } from '@/types/plugin';
 import { getPlugins } from '@/plugins/loader';
 
 // ─── Status badge ──────────────────────────────────────────────────────────────
@@ -63,18 +73,20 @@ const STATUS_BADGE: Record<PluginRegistration['status'], { label: string; varian
   error:      { label: 'Fehler', variant: 'destructive' },
 };
 
-// ─── Config editor ─────────────────────────────────────────────────────────────
-interface ConfigPair { key: string; value: string }
-
-function toConfigPairs(config: Record<string, string>): ConfigPair[] {
-  return Object.entries(config).map(([key, value]) => ({ key, value }));
+function getPluginSchemaFields(plugin: PluginRegistration): PluginConfigFieldDefinition[] {
+  return Array.isArray(plugin.config_schema) ? plugin.config_schema : [];
 }
-function fromConfigPairs(pairs: ConfigPair[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const { key, value } of pairs) {
-    if (key.trim()) result[key.trim()] = value;
-  }
-  return result;
+
+function getPublicPluginFields(plugin: PluginRegistration): PluginConfigFieldDefinition[] {
+  return getPluginSchemaFields(plugin).filter((field) => !isSecretPluginField(field));
+}
+
+function getSecretPluginFields(plugin: PluginRegistration): PluginConfigFieldDefinition[] {
+  return getPluginSchemaFields(plugin).filter((field) => isSecretPluginField(field));
+}
+
+function toPublicConfigValues(plugin: PluginRegistration): Record<string, string> {
+  return filterPluginConfigValues(plugin.config ?? {}, getPluginSchemaFields(plugin));
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -103,8 +115,12 @@ export default function Plugins() {
 
   // Config dialog
   const [configPlugin, setConfigPlugin] = useState<PluginRegistration | null>(null);
-  const [configPairs, setConfigPairs] = useState<ConfigPair[]>([]);
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [configSaving, setConfigSaving] = useState(false);
+  const [secretSavingKey, setSecretSavingKey] = useState<string | null>(null);
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+  const [pluginSecrets, setPluginSecrets] = useState<Record<string, CfSecret | null>>({});
+  const [configLoading, setConfigLoading] = useState(false);
 
   // Delete dialog
   const [deleteTarget, setDeleteTarget] = useState<PluginRegistration | null>(null);
@@ -181,16 +197,45 @@ export default function Plugins() {
   };
 
   // ── Config ─────────────────────────────────────────────────────────────────
+  const loadPluginSecrets = useCallback(async (plugin: PluginRegistration) => {
+    const secretFields = getSecretPluginFields(plugin);
+
+    if (secretFields.length === 0) {
+      setPluginSecrets({});
+      return;
+    }
+
+    setConfigLoading(true);
+    try {
+      const secrets = await listSecrets();
+      const nextSecrets = Object.fromEntries(
+        secretFields.map((field) => {
+          const secretName = buildPluginSecretName(plugin.slug, field.key);
+          return [field.key, secrets.find((secret) => secret.name === secretName) ?? null];
+        })
+      );
+      setPluginSecrets(nextSecrets);
+    } catch {
+      toast.error('Plugin-Secrets konnten nicht geladen werden');
+      setPluginSecrets({});
+    } finally {
+      setConfigLoading(false);
+    }
+  }, []);
+
   const openConfig = (plugin: PluginRegistration) => {
     setConfigPlugin(plugin);
-    setConfigPairs(toConfigPairs(plugin.config ?? {}));
+    setConfigValues(toPublicConfigValues(plugin));
+    setSecretValues({});
+    setPluginSecrets({});
+    void loadPluginSecrets(plugin);
   };
 
   const handleConfigSave = async () => {
     if (!configPlugin) return;
     setConfigSaving(true);
     try {
-      await updatePluginConfig(configPlugin.id, fromConfigPairs(configPairs));
+      await updatePluginConfig(configPlugin.id, configValues, getPluginSchemaFields(configPlugin));
       toast.success('Konfiguration gespeichert');
       setConfigPlugin(null);
       loadPlugins();
@@ -198,6 +243,45 @@ export default function Plugins() {
       toast.error('Konfiguration konnte nicht gespeichert werden');
     } finally {
       setConfigSaving(false);
+    }
+  };
+
+  const handleSecretSave = async (field: PluginConfigFieldDefinition) => {
+    if (!configPlugin) return;
+
+    const nextValue = secretValues[field.key]?.trim();
+    if (!nextValue) {
+      toast.error('Secret-Wert darf nicht leer sein');
+      return;
+    }
+
+    const secretName = buildPluginSecretName(configPlugin.slug, field.key);
+    setSecretSavingKey(field.key);
+    try {
+      await upsertSecret(secretName, nextValue, `Plugin secret for ${configPlugin.slug}:${field.key}`);
+      toast.success(`Secret "${field.label}" gespeichert`);
+      setSecretValues((current) => ({ ...current, [field.key]: '' }));
+      await loadPluginSecrets(configPlugin);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Secret konnte nicht gespeichert werden');
+    } finally {
+      setSecretSavingKey(null);
+    }
+  };
+
+  const handleSecretDelete = async (field: PluginConfigFieldDefinition) => {
+    if (!configPlugin) return;
+
+    const secretName = buildPluginSecretName(configPlugin.slug, field.key);
+    setSecretSavingKey(field.key);
+    try {
+      await deleteSecret(secretName);
+      toast.success(`Secret "${field.label}" gelöscht`);
+      await loadPluginSecrets(configPlugin);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Secret konnte nicht gelöscht werden');
+    } finally {
+      setSecretSavingKey(null);
     }
   };
 
@@ -269,6 +353,7 @@ export default function Plugins() {
           <strong>Workflow:</strong> Plugin hier registrieren → <code>plugins.json</code> aktualisieren →{' '}
           <code>node scripts/install-plugins.mjs</code> ausführen → neu bauen und deployen.
           Registrierte Plugins werden erst nach einem Neustart der Anwendung aktiv.
+          Konfigurationswerte und Secrets werden danach separat im Plugin-Dialog gepflegt.
           Siehe <strong>docs/Plugin_Development.md</strong> für das vollständige Plugin-Entwicklungshandbuch.
         </AlertDescription>
       </Alert>
@@ -426,57 +511,140 @@ export default function Plugins() {
           <DialogHeader>
             <DialogTitle>Konfiguration: {configPlugin?.name}</DialogTitle>
             <DialogDescription>
-              Schlüssel-Wert-Paare, die dem Plugin über seine Plugin-ID zugänglich sind.
+              Felder werden aus dem Plugin-Schema geladen. Secrets liegen getrennt im Cloudflare Secrets Store.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2 max-h-80 overflow-y-auto">
-            {configPairs.map((pair, i) => (
-              <div key={i} className="flex gap-2 items-center">
-                <Input
-                  placeholder="Schlüssel"
-                  value={pair.key}
-                  onChange={(e) =>
-                    setConfigPairs((prev) =>
-                      prev.map((p, j) => (j === i ? { ...p, key: e.target.value } : p))
-                    )
-                  }
-                  className="flex-1"
-                />
-                <Input
-                  placeholder="Wert"
-                  value={pair.value}
-                  onChange={(e) =>
-                    setConfigPairs((prev) =>
-                      prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p))
-                    )
-                  }
-                  className="flex-1"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setConfigPairs((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+          <div className="space-y-4 py-2 max-h-[28rem] overflow-y-auto pr-1">
+            {configLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Secret-Status wird geladen
               </div>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfigPairs((prev) => [...prev, { key: '', value: '' }])}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Eintrag hinzufügen
-            </Button>
+            )}
+
+            {configPlugin && getPluginSchemaFields(configPlugin).length === 0 && (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription>
+                  Dieses Plugin hat noch kein <code>config_schema</code> definiert. Beim nächsten Installationslauf wird ein Schema aus der <code>plugin.json</code> übernommen, falls vorhanden.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {configPlugin && getPluginSchemaFields(configPlugin).map((field) => {
+              const isSecret = isSecretPluginField(field);
+              const storedSecret = pluginSecrets[field.key];
+              const inputType = field.type === 'url' ? 'url' : 'text';
+
+              return (
+                <div key={field.key} className="space-y-3 rounded-md border p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label htmlFor={`plugin-config-${field.key}`}>{field.label}</Label>
+                    {isSecret ? (
+                      <Badge variant="destructive" className="gap-1">
+                        <Shield className="h-3 w-3" />
+                        Secret
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">Variable</Badge>
+                    )}
+                    {field.required && <Badge variant="outline">Pflichtfeld</Badge>}
+                    <Badge variant="outline">
+                      {field.expose_to_frontend ? 'Frontend erlaubt' : 'Nur Backend'}
+                    </Badge>
+                    {isSecret ? (
+                      storedSecret ? (
+                        <Badge variant="outline" className="gap-1 border-green-300 text-green-600">
+                          <ShieldCheck className="h-3 w-3" />
+                          Gespeichert
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 border-amber-300 text-amber-600">
+                          <ShieldAlert className="h-3 w-3" />
+                          Nicht gesetzt
+                        </Badge>
+                      )
+                    ) : null}
+                  </div>
+
+                  {field.description && (
+                    <p className="text-sm text-muted-foreground">{field.description}</p>
+                  )}
+
+                  {isSecret ? (
+                    <>
+                      <Input
+                        id={`plugin-config-${field.key}`}
+                        type="password"
+                        placeholder={field.placeholder ?? 'Secret eingeben'}
+                        value={secretValues[field.key] ?? ''}
+                        onChange={(e) =>
+                          setSecretValues((current) => ({ ...current, [field.key]: e.target.value }))
+                        }
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="font-mono">
+                          Secret-Name: {configPlugin ? buildPluginSecretName(configPlugin.slug, field.key) : ''}
+                        </span>
+                        {storedSecret?.updated_at && (
+                          <span>Zuletzt aktualisiert: {new Date(storedSecret.updated_at).toLocaleString('de-DE')}</span>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleSecretSave(field)}
+                          disabled={secretSavingKey === field.key || configLoading}
+                        >
+                          {secretSavingKey === field.key && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Secret speichern
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSecretDelete(field)}
+                          disabled={secretSavingKey === field.key || !storedSecret || configLoading}
+                        >
+                          Secret löschen
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    field.type === 'textarea' ? (
+                      <Textarea
+                        id={`plugin-config-${field.key}`}
+                        placeholder={field.placeholder ?? ''}
+                        value={configValues[field.key] ?? ''}
+                        onChange={(e) =>
+                          setConfigValues((current) => ({ ...current, [field.key]: e.target.value }))
+                        }
+                      />
+                    ) : (
+                      <Input
+                        id={`plugin-config-${field.key}`}
+                        type={inputType}
+                        placeholder={field.placeholder ?? ''}
+                        value={configValues[field.key] ?? ''}
+                        onChange={(e) =>
+                          setConfigValues((current) => ({ ...current, [field.key]: e.target.value }))
+                        }
+                      />
+                    )
+                  )}
+                </div>
+              );
+            })}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigPlugin(null)}>
               Abbrechen
             </Button>
-            <Button onClick={handleConfigSave} disabled={configSaving}>
+            <Button
+              onClick={handleConfigSave}
+              disabled={configSaving || !!configPlugin && getPublicPluginFields(configPlugin).length === 0}
+            >
               {configSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Speichern
+              Öffentliche Variablen speichern
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -520,6 +688,9 @@ interface PluginCardProps {
 
 function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCardProps) {
   const badge = STATUS_BADGE[plugin.status] ?? STATUS_BADGE.registered;
+  const schemaFields = getPluginSchemaFields(plugin);
+  const secretCount = schemaFields.filter((field) => isSecretPluginField(field)).length;
+  const publicCount = schemaFields.length - secretCount;
 
   return (
     <Card>
@@ -533,7 +704,7 @@ function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCa
             )}
             <div className="min-w-0">
               <CardTitle className="text-base truncate">{plugin.name}</CardTitle>
-              <CardDescription className="text-xs font-mono">{plugin.slug} · v{plugin.version}</CardDescription>
+              <p className="text-xs font-mono text-muted-foreground">{plugin.slug} · v{plugin.version}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -554,6 +725,7 @@ function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCa
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           {plugin.author_name && <span>Autor: {plugin.author_name}</span>}
           {plugin.license && <span>Lizenz: {plugin.license}</span>}
+          {schemaFields.length > 0 && <span>Schema: {publicCount} Variablen · {secretCount} Secrets</span>}
           {plugin.installed_at && (
             <span>Installiert: {new Date(plugin.installed_at).toLocaleDateString('de-DE')}</span>
           )}
@@ -569,13 +741,16 @@ function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCa
         <Separator />
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <a href={plugin.repo_url} target="_blank" rel="noopener noreferrer">
-              <Github className="h-4 w-4 mr-1.5" />
-              Repository
-              <ExternalLink className="h-3 w-3 ml-1" />
-            </a>
-          </Button>
+          <a
+            href={plugin.repo_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-normal transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <Github className="h-4 w-4" />
+            Repository
+            <ExternalLink className="h-3 w-3" />
+          </a>
           <Button variant="outline" size="sm" onClick={onConfig}>
             <Settings2 className="h-4 w-4 mr-1.5" />
             Konfiguration

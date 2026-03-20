@@ -787,6 +787,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   //  mentor_groups.sql         — no deps
   //  products.sql              — needs set_current_timestamp_updated_at (preamble)
   //  page_schemas.sql          — needs set_current_timestamp_updated_at (preamble)
+  //  plugins.sql               — needs set_current_timestamp_updated_at (preamble)
+  //  plugins_config_schema.sql — additive update for existing installations
   //  mentorbooking_products.sql — needs products (FK)
   //  pages.sql                 — renames products→pages; renames FK on mentorbooking_products
   //                              (must run AFTER mentorbooking_products so the FK to rename exists)
@@ -806,6 +808,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     'mentor_groups.sql',
     'products.sql',
     'page_schemas.sql',
+    'plugins.sql',
+    'plugins_config_schema.sql',
     'mentorbooking_products.sql',
     'pages.sql',
     'mentorbooking_events.sql',

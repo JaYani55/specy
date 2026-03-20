@@ -184,6 +184,38 @@ async function markPluginInstalled(supabase, slug, version) {
   else ok(`  DB status → installed`);
 }
 
+function sanitizeConfigSchema(configSchema) {
+  if (!Array.isArray(configSchema)) return [];
+
+  return configSchema
+    .filter((field) => field && typeof field === 'object' && typeof field.key === 'string' && typeof field.label === 'string')
+    .map((field) => ({
+      key: field.key.trim(),
+      label: field.label.trim(),
+      description: typeof field.description === 'string' ? field.description : undefined,
+      type: field.type === 'textarea' || field.type === 'url' || field.type === 'secret' ? field.type : 'text',
+      required: Boolean(field.required),
+      placeholder: typeof field.placeholder === 'string' ? field.placeholder : undefined,
+      expose_to_frontend: Boolean(field.expose_to_frontend),
+    }))
+    .filter((field) => field.key && field.label);
+}
+
+async function syncPluginConfigSchema(supabase, slug, configSchema) {
+  if (!supabase) return;
+
+  const { error } = await supabase
+    .from('plugins')
+    .update({ config_schema: sanitizeConfigSchema(configSchema) })
+    .eq('slug', slug);
+
+  if (error) {
+    warn(`  Could not sync config schema for "${slug}": ${error.message}`);
+  } else {
+    ok('  DB config schema synced');
+  }
+}
+
 async function markPluginError(supabase, slug, message) {
   if (!supabase) return;
   const { error } = await supabase
@@ -637,6 +669,7 @@ async function _doInstall(entries, supabase) {
 
         // ── config schema reminder ────────────────────────────────────────────
         if (Array.isArray(m.config_schema) && m.config_schema.length > 0) {
+          await syncPluginConfigSchema(supabase, activeId, m.config_schema);
           log('');
           info(`  Configuration keys for "${activeId}":`);
           m.config_schema.forEach((field) => {
@@ -645,6 +678,8 @@ async function _doInstall(entries, supabase) {
             log(`    ${c.cyan}${field.key}${c.reset}${tag}${req}  —  ${field.description ?? field.label ?? ''}`);
           });
           log(`  → Set these in the Plugins admin UI at /plugins`);
+        } else {
+          await syncPluginConfigSchema(supabase, activeId, []);
         }
 
         // ── Update DB status ──────────────────────────────────────────────────

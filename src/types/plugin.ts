@@ -44,6 +44,32 @@ export interface PluginManifest {
    * Uses semver range syntax, e.g. ">=1.0.0".
    */
   min_cms_version?: string;
+
+  /**
+   * Declarative config fields shown in the CMS plugin settings UI.
+   * Secret values are stored in Cloudflare Secrets Store, non-secret values
+   * are stored in public.plugins.config.
+   */
+  config_schema?: PluginConfigFieldDefinition[];
+}
+
+export type PluginConfigFieldType = 'text' | 'textarea' | 'url' | 'secret';
+
+export interface PluginConfigFieldDefinition {
+  /** Unique config key inside the plugin namespace. */
+  key: string;
+  /** Human-readable label shown in the admin UI. */
+  label: string;
+  /** Optional help text shown below the field. */
+  description?: string;
+  /** Input/storage behavior. 'secret' is stored in the Cloudflare secrets store. */
+  type: PluginConfigFieldType;
+  /** Whether the field must be set before the plugin can operate. */
+  required?: boolean;
+  /** Optional placeholder/example text. */
+  placeholder?: string;
+  /** Whether the value may be exposed to frontend plugin code. */
+  expose_to_frontend?: boolean;
 }
 
 // ─── Route ───────────────────────────────────────────────────────────────────
@@ -143,6 +169,7 @@ export interface PluginRegistration {
   download_url: string | null;
   status: 'registered' | 'installed' | 'enabled' | 'disabled' | 'error';
   config: Record<string, string>;
+  config_schema: PluginConfigFieldDefinition[];
   error_message: string | null;
   installed_at: string | null;
   created_at: string;
@@ -152,7 +179,8 @@ export interface PluginRegistration {
 /** Input type for registering a new plugin (INSERT). */
 export type PluginRegistrationInsert = Omit<
   PluginRegistration,
-  'id' | 'created_at' | 'updated_at' | 'installed_at' | 'status' | 'config' | 'error_message'
+  'id' | 'created_at' | 'updated_at' | 'installed_at' | 'status' | 'config' | 'config_schema' | 'error_message'
 > & {
   status?: PluginRegistration['status'];
+  config_schema?: PluginConfigFieldDefinition[];
 };
