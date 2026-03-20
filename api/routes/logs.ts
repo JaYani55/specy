@@ -3,6 +3,10 @@ import { createSupabaseClient, type Env } from '../lib/supabase';
 
 const logs = new Hono<{ Bindings: Env }>();
 
+interface IpAddressRow {
+  ip_address: string | null;
+}
+
 // GET /api/schemas/logs — List log entries (paginated, filterable)
 logs.get('/', async (c) => {
   const supabase = await createSupabaseClient(c.env);
@@ -72,7 +76,11 @@ logs.get('/stats', async (c) => {
     .select('ip_address')
     .not('ip_address', 'is', null);
 
-  const uniqueIps = new Set((ipData ?? []).map((r: any) => r.ip_address)).size;
+  const uniqueIps = new Set(
+    ((ipData ?? []) as IpAddressRow[])
+      .map((row) => row.ip_address)
+      .filter((ip): ip is string => Boolean(ip))
+  ).size;
 
   return c.json({
     total: total ?? 0,

@@ -3,6 +3,21 @@ import { createSupabaseClient, type Env } from '../lib/supabase';
 
 const plugins = new Hono<{ Bindings: Env }>();
 
+interface PluginRow {
+  slug: string;
+  name: string;
+  version: string;
+  description: string | null;
+  author_name: string | null;
+  author_url: string | null;
+  license: string | null;
+  repo_url: string;
+  status: string;
+  installed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * GET /api/plugins
  * Returns the list of registered plugins (public, read-only).
@@ -28,7 +43,7 @@ plugins.get('/', async (c) => {
     service: 'service-cms-api',
     description: 'Registered plugins for this CMS instance.',
     install_docs: `${baseUrl}/docs/Plugin_Development.md`,
-    plugins: (data ?? []).map((p: any) => ({
+    plugins: ((data ?? []) as PluginRow[]).map((p) => ({
       slug: p.slug,
       name: p.name,
       version: p.version,

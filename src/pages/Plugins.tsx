@@ -73,6 +73,21 @@ const STATUS_BADGE: Record<PluginRegistration['status'], { label: string; varian
   error:      { label: 'Fehler', variant: 'destructive' },
 };
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
 function getPluginSchemaFields(plugin: PluginRegistration): PluginConfigFieldDefinition[] {
   return Array.isArray(plugin.config_schema) ? plugin.config_schema : [];
 }
@@ -189,8 +204,8 @@ export default function Plugins() {
       setRegisterOpen(false);
       setRegisterForm({ repo_url: '', slug: '', name: '', description: '', author_name: '', author_url: '', license: '', version: '0.0.0', download_url: '' });
       loadPlugins();
-    } catch (err: any) {
-      toast.error(err?.message ?? 'Registrierung fehlgeschlagen');
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, 'Registrierung fehlgeschlagen'));
     } finally {
       setRegisterSaving(false);
     }

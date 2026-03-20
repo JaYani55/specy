@@ -35,16 +35,23 @@ export const MentorStatusBadge = ({
   const isDeclined = event?.declinedMentors?.includes(userId);
 
   useEffect(() => {
-    const newLocalStatuses = { ...localStatuses };
-    let hasChanges = false;
-    
-    if (isAccepted) { newLocalStatuses.isAccepted = true; hasChanges = true; }
-    if (isPending) { newLocalStatuses.isPending = true; hasChanges = true; }
-    if (isDeclined) { newLocalStatuses.isDeclined = true; hasChanges = true; }
-    
-    if (hasChanges) {
-      setLocalStatuses(newLocalStatuses);
-    }
+    setLocalStatuses((current) => {
+      const next = {
+        isAccepted: current.isAccepted || Boolean(isAccepted),
+        isPending: current.isPending || Boolean(isPending),
+        isDeclined: current.isDeclined || Boolean(isDeclined),
+      };
+
+      if (
+        next.isAccepted === current.isAccepted
+        && next.isPending === current.isPending
+        && next.isDeclined === current.isDeclined
+      ) {
+        return current;
+      }
+
+      return next;
+    });
   }, [
     event?.id,
     isAccepted, 

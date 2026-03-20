@@ -106,10 +106,14 @@ export interface EnvStatusEntry {
   source: 'secrets-store' | 'env-var' | 'unset';
 }
 
+interface ErrorResponse {
+  error?: string;
+}
+
 export async function listSecrets(): Promise<CfSecret[]> {
   const res = await fetch(`${API_URL}/api/secrets`);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as any;
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   const data = await res.json() as { secrets: CfSecret[] };
@@ -126,7 +130,7 @@ export async function getEnvStatus(): Promise<EnvStatusEntry[]> {
 export async function listStores(): Promise<CfStore[]> {
   const res = await fetch(`${API_URL}/api/secrets/stores`);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as any;
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   const data = await res.json() as { stores: CfStore[] };
@@ -143,7 +147,7 @@ export async function upsertSecret(name: string, value: string, comment?: string
     body: JSON.stringify({ value, comment: comment || '' }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as any;
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
 }
@@ -185,7 +189,7 @@ export async function deleteSecret(name: string): Promise<void> {
     method: 'DELETE',
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as any;
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
 }

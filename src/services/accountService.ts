@@ -37,6 +37,12 @@ export interface CreateAccountPayload {
   roleIds?: number[];
 }
 
+interface UserRoleRow {
+  user_id: string;
+  role_id: number;
+  roles: Role | null;
+}
+
 // ─── Role CRUD ───────────────────────────────────────────────────────
 
 export const fetchRoles = async (): Promise<Role[]> => {
@@ -123,13 +129,12 @@ export const fetchAccounts = async (): Promise<AccountUser[]> => {
 
   // Build a map of user_id → roles
   const rolesByUser = new Map<string, Role[]>();
-  for (const ur of userRoles || []) {
+  for (const ur of (userRoles ?? []) as UserRoleRow[]) {
     const userId = ur.user_id;
     if (!rolesByUser.has(userId)) {
       rolesByUser.set(userId, []);
     }
-    // Supabase join returns the joined table as an object
-    const role = (ur as any).roles as Role | null;
+    const role = ur.roles;
     if (role) {
       rolesByUser.get(userId)!.push(role);
     }

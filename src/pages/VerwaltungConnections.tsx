@@ -552,7 +552,7 @@ const VerwaltungConnections: React.FC = () => {
         </Card>
 
         {/* ── Extra / custom secrets in the store ── */}
-        {(extraCfSecrets.length > 0 || true) && (
+        {(
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">

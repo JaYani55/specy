@@ -40,6 +40,9 @@ export interface Env {
   // ── Fallback vars for local `wrangler dev` (set in .dev.vars) ──────────────
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;
+  STORAGE_PROVIDER?: string;
+  STORAGE_BUCKET?: string;
+  R2_PUBLIC_URL?: string;
   // NOTE: SUPABASE_SECRET_KEY is intentionally NOT a plain var fallback.
   // It must only be bound from the Secrets Store (SS_SUPABASE_SECRET_KEY)
   // to prevent it ever being set unencrypted in wrangler.jsonc.

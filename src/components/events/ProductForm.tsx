@@ -177,5 +177,10 @@ export function ProductForm({
   );
 }
 
-// Export types from the correct location
-export * from '@/components/products/types';
+export type {
+  ExtendedMentor,
+  MentorGroupMemberResponse,
+  ProductFormProps,
+  ProductFormValues,
+  ProductInfo,
+} from '@/components/products/types';

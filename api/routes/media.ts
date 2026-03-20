@@ -188,7 +188,7 @@ media.post('/upload', async (c) => {
   if (!file) return c.json({ error: 'No file provided' }, 400);
 
   const folder = (formData.get('path') as string | null) ?? '';
-  const safeName = file.name.replace(/[^a-zA-Z0-9._\-]/g, '_');
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = folder ? `${folder.replace(/\/$/, '')}/${safeName}` : safeName;
 
   try {

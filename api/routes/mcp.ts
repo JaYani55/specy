@@ -6,6 +6,15 @@ import { createSupabaseClient, type Env } from '../lib/supabase';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
+interface SchemaListRow {
+  slug: string;
+  name: string;
+  description: string | null;
+  registration_status: string | null;
+  is_default: boolean | null;
+  frontend_url: string | null;
+}
+
 // ─── MCP Server Factory ─────────────────────────────────────────────────────
 // Creates a fresh McpServer instance with all tools registered.
 // We need a factory because each connection needs its own server + transport.
@@ -34,7 +43,7 @@ async function createMcpServerWithTools(env: Env, baseUrl: string) {
         return { content: [{ type: 'text' as const, text: `Error fetching schemas: ${error.message}` }] };
       }
 
-      const schemas = (data ?? []).map((s: any) => ({
+      const schemas = ((data ?? []) as SchemaListRow[]).map((s) => ({
         slug: s.slug,
         name: s.name,
         description: s.description,

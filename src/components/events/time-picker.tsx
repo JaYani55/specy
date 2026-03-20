@@ -28,7 +28,7 @@ export function TimePicker({
 
   // Parse current value when it changes
   useEffect(() => {
-    if (value && value !== inputValue) {
+    if (value) {
       setInputValue(value);
       const [hours, minutes] = value.split(':').map(Number);
       if (!isNaN(hours) && !isNaN(minutes)) {

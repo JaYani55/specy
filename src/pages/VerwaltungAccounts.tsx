@@ -77,6 +77,21 @@ const ROLE_COLORS: Record<string, string> = {
 const getRoleBadgeClass = (roleName: string) =>
   ROLE_COLORS[roleName] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
 
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+  }
+
+  return fallback;
+};
+
 // ─── Main Page Component ────────────────────────────────────────────
 
 const VerwaltungAccounts: React.FC = () => {
@@ -156,8 +171,8 @@ const VerwaltungAccounts: React.FC = () => {
       setNewRoleName('');
       setNewRoleDescription('');
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler beim Erstellen' : 'Error creating role'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler beim Erstellen' : 'Error creating role'));
     } finally {
       setSubmitting(false);
     }
@@ -177,8 +192,8 @@ const VerwaltungAccounts: React.FC = () => {
       setNewRoleName('');
       setNewRoleDescription('');
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler beim Aktualisieren' : 'Error updating role'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler beim Aktualisieren' : 'Error updating role'));
     } finally {
       setSubmitting(false);
     }
@@ -193,8 +208,8 @@ const VerwaltungAccounts: React.FC = () => {
       setShowDeleteRole(false);
       setSelectedRole(null);
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler beim Löschen' : 'Error deleting role'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler beim Löschen' : 'Error deleting role'));
     } finally {
       setSubmitting(false);
     }
@@ -219,8 +234,8 @@ const VerwaltungAccounts: React.FC = () => {
       setNewUsername('');
       setNewAccountRoleIds([]);
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler beim Erstellen des Kontos' : 'Error creating account'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler beim Erstellen des Kontos' : 'Error creating account'));
     } finally {
       setSubmitting(false);
     }
@@ -238,8 +253,8 @@ const VerwaltungAccounts: React.FC = () => {
       setAssignRoleId('');
       setSelectedUser(null);
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler bei Rollenzuweisung' : 'Error assigning role'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler bei Rollenzuweisung' : 'Error assigning role'));
     } finally {
       setSubmitting(false);
     }
@@ -250,8 +265,8 @@ const VerwaltungAccounts: React.FC = () => {
       await removeRole(userId, roleId);
       toast.success(de ? 'Rolle entfernt' : 'Role removed');
       await loadData();
-    } catch (err: any) {
-      toast.error(err?.message || (de ? 'Fehler beim Entfernen' : 'Error removing role'));
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, de ? 'Fehler beim Entfernen' : 'Error removing role'));
     }
   };
 

@@ -30,12 +30,13 @@ const ProductManagementModal: React.FC<ProductManagementModalProps> = ({
   
   // Use our custom hook for Product management
   const ProductManager = useProductManagement(onProductsChange);
+  const { loadProducts, setEditingProduct } = ProductManager;
   
   useEffect(() => {
     if (isOpen || embedded) {
-      ProductManager.loadProducts();
+      void loadProducts();
     }
-  }, [isOpen, embedded, ProductManager.loadProducts]);
+  }, [embedded, isOpen, loadProducts]);
 
   // Set initial product when in embedded mode
   useEffect(() => {
@@ -57,14 +58,14 @@ const ProductManagementModal: React.FC<ProductManagementModalProps> = ({
         productCopy.assigned_groups = productCopy.assigned_groups || [];
         productCopy.approved = productCopy.approved || [];
         
-        ProductManager.setEditingProduct(productCopy);
+        setEditingProduct(productCopy);
         setShowCreateForm(true);
       }, 100);
     } else if (embedded) {
-      ProductManager.setEditingProduct(null);
+      setEditingProduct(null);
       setShowCreateForm(true);
     }
-  }, [embedded, initialProduct, ProductManager.setEditingProduct]);
+  }, [embedded, initialProduct, setEditingProduct]);
 
   // Ensure logging doesn't include product IDs
   useEffect(() => {

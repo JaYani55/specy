@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -40,7 +40,7 @@ export function ProductColorGradientSelector({
   }, [value, usedColors]);
 
   // Color palette with 12 base colors (darkest shades) and 4 shades each
-  const colorPalette = [
+  const colorPalette = useMemo(() => [
     {
       name: language === 'en' ? 'Default' : 'Standard',
       baseColor: DEFAULT_COLOR,
@@ -106,7 +106,7 @@ export function ProductColorGradientSelector({
       baseColor: '#343a40',
       shades: ['#343a40', '#868e96', '#ced4da', '#e9ecef']
     }
-  ];
+  ], [language]);
 
   // Find the base color for the current value
   useEffect(() => {
@@ -118,7 +118,7 @@ export function ProductColorGradientSelector({
         setSelectedBaseColor(foundColor.baseColor);
       }
     }
-  }, [value]);
+  }, [colorPalette, value]);
 
   // Get available shades for the selected base color
   const getAvailableShades = (baseColor: string) => {

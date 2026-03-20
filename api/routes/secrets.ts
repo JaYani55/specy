@@ -21,6 +21,44 @@ const secrets = new Hono<{ Bindings: Env }>();
 
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 
+interface CloudflareErrorItem {
+  message?: string;
+}
+
+interface CloudflareSecret {
+  id: string;
+  name: string;
+  comment?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface CloudflareApiResponse<T> {
+  result?: T;
+  errors?: CloudflareErrorItem[];
+}
+
+type SecretEnvKey =
+  | 'SUPABASE_URL'
+  | 'SUPABASE_PUBLISHABLE_KEY'
+  | 'SUPABASE_SECRET_KEY'
+  | 'STORAGE_PROVIDER'
+  | 'STORAGE_BUCKET'
+  | 'R2_PUBLIC_URL'
+  | 'CF_API_TOKEN';
+
+type SecretStoreBindingKey =
+  | 'SS_SUPABASE_URL'
+  | 'SS_SUPABASE_PUBLISHABLE_KEY'
+  | 'SS_SUPABASE_SECRET_KEY'
+  | 'SS_STORAGE_PROVIDER'
+  | 'SS_STORAGE_BUCKET'
+  | 'SS_R2_PUBLIC_URL';
+
+function getCloudflareErrorMessage<T>(json: CloudflareApiResponse<T>, fallback = 'CF API error') {
+  return json.errors?.[0]?.message ?? fallback;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function cfHeaders(token: string) {
@@ -52,10 +90,10 @@ secrets.get('/', async (c) => {
   const url = `${CF_API_BASE}/accounts/${c.env.CF_ACCOUNT_ID}/secrets_store/stores/${c.env.SECRETS_STORE_ID}/secrets`;
 
   const res = await fetch(url, { headers: cfHeaders(c.env.CF_API_TOKEN!) });
-  const json = await res.json() as any;
+  const json = await res.json() as CloudflareApiResponse<CloudflareSecret[]>;
 
   if (!res.ok) {
-    return c.json({ error: json?.errors?.[0]?.message ?? 'CF API error', cf: json }, res.status as any);
+    return c.json({ error: getCloudflareErrorMessage(json), cf: json }, res.status);
   }
 
   return c.json({ secrets: json.result ?? [] });
@@ -67,22 +105,22 @@ secrets.get('/', async (c) => {
  * Checks both plain env vars (wrangler.jsonc vars) and Secrets Store bindings.
  * Values are NEVER returned — only boolean presence.
  */
-const KNOWN_KEYS: Array<{ name: string; envKey: keyof Env; ssKey?: keyof Env }> = [
+const KNOWN_KEYS: Array<{ name: SecretEnvKey; envKey: SecretEnvKey; ssKey?: SecretStoreBindingKey }> = [
   { name: 'SUPABASE_URL',            envKey: 'SUPABASE_URL',            ssKey: 'SS_SUPABASE_URL' },
   { name: 'SUPABASE_PUBLISHABLE_KEY', envKey: 'SUPABASE_PUBLISHABLE_KEY', ssKey: 'SS_SUPABASE_PUBLISHABLE_KEY' },
   { name: 'SUPABASE_SECRET_KEY',      envKey: 'SUPABASE_URL',            ssKey: 'SS_SUPABASE_SECRET_KEY' }, // no plain fallback by design
-  { name: 'STORAGE_PROVIDER',        envKey: 'STORAGE_PROVIDER' as any,  ssKey: 'SS_STORAGE_PROVIDER' },
-  { name: 'STORAGE_BUCKET',          envKey: 'STORAGE_BUCKET' as any,    ssKey: 'SS_STORAGE_BUCKET' },
-  { name: 'R2_PUBLIC_URL',           envKey: 'R2_PUBLIC_URL' as any,     ssKey: 'SS_R2_PUBLIC_URL' },
-  { name: 'CF_API_TOKEN',            envKey: 'CF_API_TOKEN' as any },
+  { name: 'STORAGE_PROVIDER',        envKey: 'STORAGE_PROVIDER',  ssKey: 'SS_STORAGE_PROVIDER' },
+  { name: 'STORAGE_BUCKET',          envKey: 'STORAGE_BUCKET',    ssKey: 'SS_STORAGE_BUCKET' },
+  { name: 'R2_PUBLIC_URL',           envKey: 'R2_PUBLIC_URL',     ssKey: 'SS_R2_PUBLIC_URL' },
+  { name: 'CF_API_TOKEN',            envKey: 'CF_API_TOKEN' },
 ];
 
 secrets.get('/env-status', (c) => {
-  const env = c.env as any;
-  const status: Array<{ name: string; hasValue: boolean; source: string }> = KNOWN_KEYS.map(({ name, envKey, ssKey }) => {
+  const env = c.env;
+  const status: Array<{ name: string; hasValue: boolean; source: 'secrets-store' | 'env-var' | 'unset' }> = KNOWN_KEYS.map(({ name, envKey, ssKey }) => {
     const fromSS = ssKey ? !!env[ssKey] : false;
     // For SUPABASE_SECRET_KEY there is intentionally no plain env fallback
-    const fromEnv = name !== 'SUPABASE_SECRET_KEY' ? !!(env[envKey] as string | undefined) : false;
+    const fromEnv = name !== 'SUPABASE_SECRET_KEY' ? !!env[envKey] : false;
     return {
       name,
       hasValue: fromSS || fromEnv,
@@ -106,10 +144,10 @@ secrets.get('/stores', async (c) => {
 
   const url = `${CF_API_BASE}/accounts/${accountId}/secrets_store/stores`;
   const res = await fetch(url, { headers: cfHeaders(token) });
-  const json = await res.json() as any;
+  const json = await res.json() as CloudflareApiResponse<Array<{ id: string; name: string; created_at?: string }>>;
 
   if (!res.ok) {
-    return c.json({ error: json?.errors?.[0]?.message ?? 'CF API error', cf: json }, res.status as any);
+    return c.json({ error: getCloudflareErrorMessage(json), cf: json }, res.status);
   }
 
   return c.json({ stores: json.result ?? [] });
@@ -145,8 +183,8 @@ secrets.post('/:name', async (c) => {
 
   // First: check if the secret already exists (to decide create vs update)
   const listRes = await fetch(storeBase, { headers: cfHeaders(c.env.CF_API_TOKEN!) });
-  const listJson = await listRes.json() as any;
-  const existing = (listJson.result ?? []).find((s: any) => s.name === secretName);
+  const listJson = await listRes.json() as CloudflareApiResponse<CloudflareSecret[]>;
+  const existing = (listJson.result ?? []).find((secret) => secret.name === secretName);
 
   let res: Response;
 
@@ -174,10 +212,10 @@ secrets.post('/:name', async (c) => {
     });
   }
 
-  const json = await res.json() as any;
+  const json = await res.json() as CloudflareApiResponse<CloudflareSecret>;
 
   if (!res.ok) {
-    return c.json({ error: json?.errors?.[0]?.message ?? 'CF API error', cf: json }, res.status as any);
+    return c.json({ error: getCloudflareErrorMessage(json), cf: json }, res.status);
   }
 
   return c.json({
@@ -200,8 +238,8 @@ secrets.delete('/:name', async (c) => {
 
   // Look up the secret ID first
   const listRes = await fetch(storeBase, { headers: cfHeaders(c.env.CF_API_TOKEN!) });
-  const listJson = await listRes.json() as any;
-  const existing = (listJson.result ?? []).find((s: any) => s.name === secretName);
+  const listJson = await listRes.json() as CloudflareApiResponse<CloudflareSecret[]>;
+  const existing = (listJson.result ?? []).find((secret) => secret.name === secretName);
 
   if (!existing) {
     return c.json({ error: `Secret "${secretName}" not found in store` }, 404);
@@ -213,8 +251,8 @@ secrets.delete('/:name', async (c) => {
   });
 
   if (!res.ok) {
-    const json = await res.json() as any;
-    return c.json({ error: json?.errors?.[0]?.message ?? 'CF API error', cf: json }, res.status as any);
+    const json = await res.json() as CloudflareApiResponse<unknown>;
+    return c.json({ error: getCloudflareErrorMessage(json), cf: json }, res.status);
   }
 
   return c.json({ success: true, deleted: secretName });

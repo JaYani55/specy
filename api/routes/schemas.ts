@@ -3,6 +3,17 @@ import { createSupabaseClient, type Env } from '../lib/supabase';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
+interface SchemaRow {
+  slug: string;
+  name: string;
+  description: string | null;
+  registration_status: string | null;
+  is_default: boolean | null;
+  frontend_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // GET /api/schemas — Discovery endpoint: list all available schemas
 schemas.get('/', async (c) => {
   const supabase = await createSupabaseClient(c.env);
@@ -23,7 +34,7 @@ schemas.get('/', async (c) => {
     service: 'service-cms-api',
     description: 'Available page schemas. Use the spec_url to fetch the full LLM-readable specification for any schema.',
     mcp_endpoint: `${baseUrl}/mcp`,
-    schemas: (data ?? []).map((s: any) => ({
+    schemas: ((data ?? []) as SchemaRow[]).map((s) => ({
       slug: s.slug,
       name: s.name,
       description: s.description,

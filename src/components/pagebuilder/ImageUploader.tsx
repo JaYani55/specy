@@ -199,7 +199,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     } finally {
       setUploading(false);
     }
-  }, [currentPath, loadMediaLibrary]);
+  }, [currentPath, onChange]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

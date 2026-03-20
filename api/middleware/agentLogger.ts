@@ -1,6 +1,18 @@
 import type { MiddlewareHandler } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+function extractErrorMessage(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || !('error' in value)) {
+    return null;
+  }
+
+  const error = (value as { error?: unknown }).error;
+  return typeof error === 'string' ? error : null;
+}
+
 /**
  * Hono middleware that logs every request/response to the agent_logs table.
  * Captures method, path, status, duration, request/response bodies, IP, and user-agent.
@@ -81,12 +93,12 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
       method,
       path,
       status_code: status,
-      request_body: requestBody as any,
-      response_body: responseBody as any,
+      request_body: requestBody as JsonValue,
+      response_body: responseBody as JsonValue,
       duration_ms: duration,
       ip_address: ip,
       user_agent: userAgent,
-      error: status >= 400 ? (typeof responseBody === 'object' && responseBody && 'error' in responseBody ? (responseBody as any).error : null) : null,
+      error: status >= 400 ? extractErrorMessage(responseBody) : null,
     });
   } catch (err) {
     // Never let logging break a real request

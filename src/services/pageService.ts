@@ -42,7 +42,7 @@ export const getSchemas = async (): Promise<PageSchema[]> => {
 
 export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_count: number }> => {
   // Try by slug first, then by id
-  let query = supabase
+  const query = supabase
     .from('page_schemas')
     .select('*')
     .eq('slug', slugOrId)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -46,18 +46,7 @@ const VerwaltungMentorAdmin = () => {
 
   const hasPermission = permissions.canManageTraits;
 
-  useEffect(() => {
-    if (!hasPermission) {
-      navigate('/verwaltung');
-      return;
-    }
-
-    fetchMentors();
-    fetchGroups();
-    loadAvailableTraits();
-  }, [hasPermission, navigate]);
-
-  const fetchMentors = async () => {
+  const fetchMentors = useCallback(async () => {
     try {
       setIsLoadingMentors(true);
       
@@ -112,9 +101,9 @@ const VerwaltungMentorAdmin = () => {
     } finally {
       setIsLoadingMentors(false);
     }
-  };
+  }, [getUserProfile, language]);
 
-  const fetchGroups = async () => {
+  const fetchGroups = useCallback(async () => {
     try {
       setIsLoadingGroups(true);
       const { data, error } = await supabase
@@ -140,12 +129,23 @@ const VerwaltungMentorAdmin = () => {
     } finally {
       setIsLoadingGroups(false);
     }
-  };
+  }, [language]);
 
-  const loadAvailableTraits = async () => {
+  const loadAvailableTraits = useCallback(async () => {
     const traits = await fetchMentorGroups();
     setAvailableTraits(traits);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!hasPermission) {
+      navigate('/verwaltung');
+      return;
+    }
+
+    void fetchMentors();
+    void fetchGroups();
+    void loadAvailableTraits();
+  }, [fetchGroups, fetchMentors, hasPermission, loadAvailableTraits, navigate]);
 
   const getInitials = (name: string) => {
     if (!name || name === 'Unknown User') return 'UN';
@@ -166,10 +166,10 @@ const VerwaltungMentorAdmin = () => {
     setSelectedMentor(null);
   };
 
-  const handleUpdateComplete = () => {
-    fetchGroups();
-    loadAvailableTraits();
-  };
+  const handleUpdateComplete = useCallback(() => {
+    void fetchGroups();
+    void loadAvailableTraits();
+  }, [fetchGroups, loadAvailableTraits]);
 
   if (isLoadingMentors || isLoadingGroups) {
     return (

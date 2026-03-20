@@ -31,7 +31,9 @@ const ProductDetail = () => {
 
   useEffect(() => {
     document.title = product ? `${product.name} | Product Details` : 'Product Details';
-    
+  }, [product]);
+
+  useEffect(() => {
     const loadData = async () => {
       // Only load if user has permission
       if (!permissions.canViewAdminData && !permissions.canManageProducts) return;
@@ -63,7 +65,7 @@ const ProductDetail = () => {
     };
 
     loadData();
-  }, [productId, product?.name, permissions.canViewAdminData, permissions.canManageProducts]);
+  }, [permissions.canManageProducts, permissions.canViewAdminData, productId]);
 
   // Add loading state while checking permissions
   if (!permissions.canViewAdminData && !permissions.canManageProducts) {

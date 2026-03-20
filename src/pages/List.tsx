@@ -100,13 +100,9 @@ const EventList = () => {
     setSortDirection(sortDirection === "asc" ? "desc" : "asc");
   };
 
-  const fetchEvents = async () => {
-    await refetchEvents();
-  };
-
   useEffect(() => {
-    fetchEvents();
-  }, []);
+    void refetchEvents();
+  }, [refetchEvents]);
 
   useEffect(() => {
     if (contextEvents) {
