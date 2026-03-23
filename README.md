@@ -1,32 +1,55 @@
-# Booking Content Management System (Working Title)
-## Project Setup
+# Booking Content Management System
 
-The project consists of two separate services that need to be started independently during development.
+A modern, decoupled CMS built with Vite, React, and Cloudflare Workers.
+
+## 🚀 Quick Start
 
 ### 1. Install Dependencies
 ```sh
 npm install
 ```
 
-### 2. Start Services
-
-Open two separate terminal windows:
-
-**Terminal 1: CMS Dashboard (Frontend)**
+### 2. Run Setup Wizard
+This interactive script guides you through Cloudflare login, environment configuration, and initial deployment.
 ```sh
-# Starts Vite dev server on http://localhost:5173
+npm run setup
+```
+
+### 3. Local Development
+Start the frontend and backend services:
+
+**Terminal 1: Frontend (Dashboard)**
+```sh
 npm run dev
 ```
 
-**Terminal 2: CMS API (Backend Worker)**
+**Terminal 2: Backend (API)**
 ```sh
-# Starts Cloudflare Wrangler on http://localhost:8787
 npm run dev:api
 ```
 
-## Technologies
+## 🔌 Plugin Management
 
-This project uses a modern decoupled architecture:
+The system features a modular plugin architecture. Use these scripts to manage plugins:
+
+- **Install All Plugins:** `npm run plugin:install:all`
+- **Install Specific Plugin:** `npm run plugin:install`
+- **Install Local Plugins:** `npm run plugin:install:local`
+- **Remove Plugin:** `npm run plugin:remove`
+
+## 🛠 Project Structure
+
+- `src/`: React frontend components and pages.
+- `api/`: Cloudflare Workers backend.
+- `scripts/`: Setup and plugin management utilities.
+- `migrations/`: SQL database schemas for Supabase.
+
+## 🧰 Technologies
+- **Frontend:** React, Vite, Tailwind CSS, Shadcn UI
+- **Backend:** Hono, Cloudflare Workers
+- **Database:** Supabase (PostgreSQL)
+- **Deployment:** Wrangler
+
 
 ### Frontend (SPA)
 - **Vite & React 18**: High-performance dashboard

@@ -88,6 +88,22 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function parseConfigSchemaJson(raw: string): PluginConfigFieldDefinition[] {
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  const parsed = JSON.parse(trimmed) as unknown;
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('Das Konfigurationsschema muss ein JSON-Array sein.');
+  }
+
+  return parsed as PluginConfigFieldDefinition[];
+}
+
 function getPluginSchemaFields(plugin: PluginRegistration): PluginConfigFieldDefinition[] {
   return Array.isArray(plugin.config_schema) ? plugin.config_schema : [];
 }
@@ -125,6 +141,7 @@ export default function Plugins() {
     license:     '',
     version:     '0.0.0',
     download_url: '',
+    config_schema_json: '',
   });
   const [registerSaving, setRegisterSaving] = useState(false);
 
@@ -187,6 +204,15 @@ export default function Plugins() {
       toast.error('Repository-URL, Slug und Name sind Pflichtfelder.');
       return;
     }
+
+    let configSchema: PluginConfigFieldDefinition[] = [];
+    try {
+      configSchema = parseConfigSchemaJson(registerForm.config_schema_json);
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Konfigurationsschema ist kein gültiges JSON.'));
+      return;
+    }
+
     setRegisterSaving(true);
     try {
       await registerPlugin({
@@ -199,10 +225,11 @@ export default function Plugins() {
         license:      registerForm.license.trim() || null,
         repo_url:     registerForm.repo_url.trim(),
         download_url: registerForm.download_url.trim() || null,
+        config_schema: configSchema,
       });
       toast.success('Plugin registriert');
       setRegisterOpen(false);
-      setRegisterForm({ repo_url: '', slug: '', name: '', description: '', author_name: '', author_url: '', license: '', version: '0.0.0', download_url: '' });
+      setRegisterForm({ repo_url: '', slug: '', name: '', description: '', author_name: '', author_url: '', license: '', version: '0.0.0', download_url: '', config_schema_json: '' });
       loadPlugins();
     } catch (err: unknown) {
       toast.error(getErrorMessage(err, 'Registrierung fehlgeschlagen'));
@@ -506,6 +533,37 @@ export default function Plugins() {
                 value={registerForm.download_url}
                 onChange={(e) => setRegisterForm((f) => ({ ...f, download_url: e.target.value }))}
               />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="config_schema_json">
+                Konfigurationsschema (JSON)
+                <span className="text-muted-foreground text-xs"> (optional, getrennt von Werten und Secrets)</span>
+              </Label>
+              <Textarea
+                id="config_schema_json"
+                className="min-h-40 font-mono text-xs"
+                placeholder={`[
+  {
+    "key": "google_client_id",
+    "label": "Google Client ID",
+    "type": "text",
+    "required": true,
+    "description": "OAuth Client ID"
+  },
+  {
+    "key": "google_client_secret",
+    "label": "Google Client Secret",
+    "type": "secret",
+    "required": true
+  }
+]`}
+                value={registerForm.config_schema_json}
+                onChange={(e) => setRegisterForm((f) => ({ ...f, config_schema_json: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Erlaubte Typen: <code>text</code>, <code>textarea</code>, <code>url</code>, <code>secret</code>.
+                Secrets werden spaeter separat im Plugin-Dialog gespeichert.
+              </p>
             </div>
           </div>
           <DialogFooter>
