@@ -18,8 +18,9 @@ This document is the definitive reference for developing, installing, and mainta
 10. [Available Imports and Shared Infrastructure](#10-available-imports-and-shared-infrastructure)
 11. [Installation Workflow](#11-installation-workflow)
 12. [Security Requirements](#12-security-requirements)
-13. [Versioning and Compatibility](#13-versioning-and-compatibility)
-14. [Complete Minimal Example](#14-complete-minimal-example)
+13. [Licensing and EUPL Compliance](#13-licensing-and-eupl-compliance)
+14. [Versioning and Compatibility](#14-versioning-and-compatibility)
+15. [Complete Minimal Example](#15-complete-minimal-example)
 
 ---
 
@@ -614,7 +615,20 @@ All plugins must comply with these rules:
 
 ---
 
-## 13. Versioning and Compatibility
+## 13. Licensing and EUPL Compliance
+
+The CMS core is licensed under the **European Union Public Licence (EUPL) v1.2**. This license includes a "copyleft" clause, but the plugin system is architected to ensure that your plugin code remains a **Separate Work**.
+
+To maintain compliance and avoid the copyleft clause:
+- **Always use the plugin registry** for integration.
+- **Do not modify the CMS core** (anything outside of `src/plugins/{slug}/`) for your plugin's logic.
+- **Use the provided interfaces** (`PluginDefinition`, `PluginRoute`) for all interaction points.
+
+For more detailed information, see the [EUPL Compliance Guide](EUPL_Compliance.md).
+
+---
+
+## 14. Versioning and Compatibility
 
 ### Plugin versioning
 - Use [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`

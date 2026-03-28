@@ -1,8 +1,11 @@
-Service-CMS (including derivatives ServiceCMS, Server-CMS, and ServerCMS)
+== Service-CMS Project Notice ==
+
+Software: Service-CMS (including derivatives ServiceCMS, Server-CMS, and ServerCMS)
 Copyright 2026, Jan-Alban Rathjen (also known as 'Jay Rathjen'), 
 acting in the name of the Service-CMS Project Authors.
 
-Project Website (Temporary): https://pluracon.org
+Licensed under the European Union Public Licence v. 1.2 (EUPL).
+Project Website: https://pluracon.org
 
 == Project Stewardship & Governance ==
 
@@ -14,26 +17,28 @@ foundation or a successor legal entity at their sole discretion.
 
 The Steward is committed to transferring the Service-CMS trademarks and 
 names to a neutral, independent legal entity once the project has 
-sufficiently organized itself to ensure long-term sustainability, 
-vendor neutrality, and equitable distribution of rights among contributors.
+sufficiently organized itself to ensure long-term sustainability.
 
-== Attribution Requirements ==
+== Attribution & Integrity (EUPL Art. 4) ==
 
-Pursuant to Section 4(d) of the Apache License 2.0, any derivative work 
-or redistribution of this software MUST retain this NOTICE file. If the 
-software is used in a web-hosted environment, a visible link to 
-the contributor list (e.g., via /info/legal) must be maintained.
+Pursuant to the obligations of the EUPL, any distribution or communication 
+of the software (including providing access via a network/SaaS) MUST 
+retain this NOTICE file and all original copyright and attribution notices.
+
+If the software is used in a web-hosted environment (SaaS), a visible link 
+to the contributor list (e.g., via /info/legal) must be maintained to 
+ensure the "Communication to the Public" requirements of the EUPL are met.
 
 Core Contributors:
 - Mira Weitner
 - Jay Rathjen
 
-== Permissions & Scope ==
+== Permissions & Trademarks ==
 
-1. Modification & Commercial Use: As per the Apache 2.0 License, users are 
-   permitted to modify, bundle, and resell this software.
-2. Plugins & Interfaces: Software that links to this Work via established 
-   interfaces or APIs is considered separable and is not subject to the 
-   terms of this License as a Derivative Work.
-3. Trademark: The names "Service-CMS" and derivatives remain trademarks of 
-   the Project Steward until the formal transfer to a legal entity.
+1. Copyleft: This software is subject to the Copyleft provisions of the EUPL. 
+   Any derivative work distributed or made available over a network must 
+   be licensed under the EUPL or a compatible license as listed in the 
+   EUPL Appendix.
+2. Trademarks: The names "Service-CMS" and derivatives remain trademarks of 
+   the Project Steward until the formal transfer to a legal entity. Use 
+   of these names is permitted only for factual attribution.
