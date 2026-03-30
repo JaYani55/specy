@@ -25,6 +25,7 @@ interface ProductFormDeliveryProps {
 
 export function ProductFormDelivery({ form, getUsedIcons }: ProductFormDeliveryProps) {
   const { language, theme } = useTheme();
+  void getUsedIcons;
   
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -61,7 +62,6 @@ export function ProductFormDelivery({ form, getUsedIcons }: ProductFormDeliveryP
                   <SelectItem 
                     key={icon.name} 
                     value={icon.name} 
-                    disabled={getUsedIcons().includes(icon.name) && field.value !== icon.name} 
                     className="text-base"
                   >
                     <div className="flex items-center gap-2">
@@ -71,13 +71,6 @@ export function ProductFormDelivery({ form, getUsedIcons }: ProductFormDeliveryP
                         className="h-7 w-7 object-contain"
                       />
                       <span>{icon.label}</span>
-                      {getUsedIcons().includes(icon.name) && field.value !== icon.name && (
-                        <span className="text-muted-foreground text-sm ml-1">
-                          <span lang={language === 'en' ? 'en' : 'de'}>
-                            {language === 'en' ? '(in use)' : '(in Verwendung)'}
-                          </span>
-                        </span>
-                      )}
                     </div>
                   </SelectItem>
                 ))}

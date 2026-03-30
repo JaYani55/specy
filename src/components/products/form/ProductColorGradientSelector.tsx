@@ -3,7 +3,6 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
 
-// Updated interface to include product name information for used colors
 interface UsedColor {
   color: string;
   productName: string;
@@ -12,7 +11,7 @@ interface UsedColor {
 interface ColorSelectorProps {
   onChange: (color: string) => void;
   value?: string;
-  usedColors?: UsedColor[]; // Track which colors are used by which products
+  usedColors?: UsedColor[];
 }
 
 const DEFAULT_COLOR = '#f8f1ee';
@@ -33,11 +32,7 @@ export function ProductColorGradientSelector({
     }
   }, [value, onChange]);
 
-  // Log for debugging the exact value from database
-  useEffect(() => {
-    console.log("ProductColorSelector - Raw value from database:", value);
-    console.log("ProductColorSelector - Used colors:", usedColors);
-  }, [value, usedColors]);
+  void usedColors;
 
   // Color palette with 12 base colors (darkest shades) and 4 shades each
   const colorPalette = useMemo(() => [
@@ -131,17 +126,6 @@ export function ProductColorGradientSelector({
     return value?.toLowerCase() === color.toLowerCase();
   };
 
-  // Check if a color is used by another product
-  const isUsed = (color: string): boolean => {
-    return usedColors.some(used => used.color.toLowerCase() === color.toLowerCase());
-  };
-
-  // Get the product name that uses a specific color
-  const getProductUsingColor = (color: string): string | null => {
-    const usedColor = usedColors.find(used => used.color.toLowerCase() === color.toLowerCase());
-    return usedColor ? usedColor.productName : null;
-  };
-
   return (
     <div className="space-y-4">
       {/* Base Color Selection - Only for MentoringManagement */}
@@ -190,41 +174,25 @@ export function ProductColorGradientSelector({
               ? getAvailableShades(selectedBaseColor)
               : colorPalette.flatMap(color => color.shades)
             ).map((shade, index) => {
-              const isShadeUsed = isUsed(shade);
               const isShadeSelected = isSelected(shade);
-              const productUsing = getProductUsingColor(shade);
               
               return (
                 <div key={index} className="relative">
                   <button
                     type="button"
-                    disabled={isShadeUsed && !isShadeSelected}
                     onClick={() => {
-                      if (!isShadeUsed || isShadeSelected) {
-                        onChange(shade);
-                      }
+                      onChange(shade);
                     }}
-                    title={`${shade}${isShadeUsed && !isShadeSelected ? ` (${language === 'en' ? 'Used by' : 'Verwendet von'}: ${productUsing})` : ''}`}
+                    title={shade}
                     className={cn(
                       "h-12 w-full rounded-md transition-all relative",
                       isShadeSelected 
                         ? "outline outline-3 outline-black" 
                         : "border border-gray-200 hover:border-gray-300",
-                      isShadeUsed && !isShadeSelected 
-                        ? "opacity-50 cursor-not-allowed" 
-                        : "hover:scale-105"
+                      "hover:scale-105"
                     )}
                     style={{ backgroundColor: shade }}
                   />
-                  
-                  {/* Usage indicator */}
-                  {isShadeUsed && (
-                    <div className="absolute -bottom-6 left-0 right-0 text-xs text-center">
-                      <div className="bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-1 py-0.5 rounded text-xs font-medium truncate">
-                        {language === 'en' ? 'In use by: ' : 'Verwendet von: '}{productUsing}
-                      </div>
-                    </div>
-                  )}
                   
                   {/* Selected indicator */}
                   {isShadeSelected && (

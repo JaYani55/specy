@@ -13,6 +13,7 @@ import { getEventTimeDisplay } from '@/utils/timeUtils';
 import { isEventInPast } from '@/utils/eventUtils';
 import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
+import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 
 interface EventInfoCardProps {
   event: Event;
@@ -42,7 +43,7 @@ export const EventInfoCard = ({
   const hasAlreadyRequested = event.requestingMentors?.includes(userId || '') || false;
   const isAcceptedMentor = event.acceptedMentors?.includes(userId || '') || false;
   const isDeclinedMentor = event.declinedMentors?.includes(userId || '') || false;
-  const mentorSlotsFilled = (event.acceptedMentors?.length || 0) >= requiredStaffCount;
+  const mentorSlotsFilled = (event.staff_members?.length || 0) >= requiredStaffCount;
 
   useEffect(() => {
     const loadRequiredTrait = async () => {
@@ -91,8 +92,9 @@ export const EventInfoCard = ({
           <div className="flex justify-center mb-4">
             <Avatar className="w-20 h-20">
               <AvatarImage 
-                src={event.staffProfilePicture}
+                src={normalizeProfileImageUrl(event.staffProfilePicture, 160) || undefined}
                 alt={event.primaryStaffName}
+                className="object-cover"
               />
               <AvatarFallback>{event.primaryStaffName?.charAt(0) || 'S'}</AvatarFallback>
             </Avatar>
@@ -143,7 +145,7 @@ export const EventInfoCard = ({
               {language === "en" ? "Required Staff" : "Benötigte Mitarbeiter"}
             </p>
             <p className="text-muted-foreground">
-              {`${event.acceptedMentors?.length || 0} / ${requiredStaffCount}`}
+              {`${event.staff_members?.length || 0} / ${requiredStaffCount}`}
             </p>
             {requiredTraitName && (
               <p className="text-muted-foreground">
@@ -185,7 +187,7 @@ export const EventInfoCard = ({
             >
               {isRequestLoading
                 ? (language === "en" ? 'Requesting…' : 'Anfrage läuft…')
-                : (language === "en" ? "Request to be a mentor" : "Anfrage als MentorIn")}
+                : (language === "en" ? "Request staff assignment" : "Mitarbeiterzuweisung anfragen")}
             </Button>
             {isEventPast && (
               <div className="w-full mt-2 text-center text-sm text-muted-foreground bg-gray-50 rounded px-2 py-1 border border-gray-200">

@@ -2,22 +2,22 @@ import React, { useMemo } from 'react';
 import { Event } from '@/types/event';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import type { Product } from '@/services/events/productService'; // Nur Typ importieren
 import { Calendar, Clock, MapPin, Users, User, Loader2, Eye, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { formatDistanceToNow, parseISO } from 'date-fns';
-import { de } from 'date-fns/locale';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useData } from '@/contexts/DataContext'; // Produkte aus globalem Cache holen
 import { usePermissions } from '@/hooks/usePermissions';
 import { useMentorRequests } from '@/hooks/useMentorRequests';
 import { isEventInPast } from "@/utils/eventUtils";
+import { getRelativeEventTime } from '@/utils/timeUtils';
+import { fetchStaffProfiles, normalizeProfileImageUrl, type StaffProfile } from '@/utils/staffUtils';
 import * as LucideIcons from "lucide-react";
 import { getIconByName } from "@/constants/pillaricons";
 import ConfirmationModal from '../shared/ConfirmationModal';
 import { CounterButton } from '@/components/ui/counter-button';
-import type { UserProfileRecord } from '@/types/auth';
 
 // Helper to determine if a color is "dark" (returns true for dark backgrounds)
 function isColorDark(hexColor: string): boolean {
@@ -69,7 +69,7 @@ export const EventCard = ({
   const { theme } = useTheme();
   const { user } = useAuth();
   const { requestToMentor, isRequestLoading } = useMentorRequests(event, user);
-  const { getUserProfile, products, isLoadingProducts } = useData(); // Produkte holen
+  const { products, isLoadingProducts } = useData(); // Produkte holen
   const { canViewMentorProfiles, canViewStaffProfiles, canProcessMentorRequests, canRequestMentor } = usePermissions();
 
   // Produkt aus globalem Cache holen
@@ -91,7 +91,7 @@ export const EventCard = ({
   const iconUrl = productIconName ? getIconByName(productIconName, theme === "dark") : undefined;
   const firstColor = extractFirstColor(productGradient);
   const shouldUseWhiteText = isColorDark(firstColor);
-  const [staffProfile, setStaffProfile] = React.useState<UserProfileRecord | null>(null);
+  const [assignedStaffProfiles, setAssignedStaffProfiles] = React.useState<StaffProfile[]>([]);
   const [isLoadingProfile, setIsLoadingProfile] = React.useState<boolean>(false);
   const [confirmModalOpen, setConfirmModalOpen] = React.useState<boolean>(false);
 
@@ -101,33 +101,34 @@ export const EventCard = ({
   // Now declare other computed values that depend on isPastEvent
   const hasAlreadyRequested = event.requestingMentors?.includes(userId || '') || false;
   const acceptedMentorCount = event.acceptedMentors?.length ?? 0;
+  const assignedStaffCount = event.staff_members?.length ?? 0;
   const requiredStaffCount = event.required_staff_count || event.amount_requiredmentors || 1;
   const isAcceptedMentor = event.acceptedMentors?.includes(userId || '') || false;
   const isDeclinedMentor = event.declinedMentors?.includes(userId || '') || false;
   
   // Load staff profile effect
   React.useEffect(() => {
-    const loadStaffProfile = async () => {
-      if (!event.primaryStaffId || !canViewStaffProfiles || showSkeleton) {
+    const loadAssignedStaffProfiles = async () => {
+      if (!event.staff_members?.length || !canViewStaffProfiles || showSkeleton) {
         setIsLoadingProfile(false);
-        setStaffProfile(null);
+        setAssignedStaffProfiles([]);
         return;
       }
 
       setIsLoadingProfile(true);
       try {
-        const profile = await getUserProfile(event.primaryStaffId);
-        setStaffProfile(profile);
+        const profiles = await fetchStaffProfiles(event.staff_members);
+        setAssignedStaffProfiles(profiles);
       } catch (error) {
-        console.error('Error loading staff profile:', error);
-        setStaffProfile(null);
+        console.error('Error loading staff profiles:', error);
+        setAssignedStaffProfiles([]);
       } finally {
         setIsLoadingProfile(false);
       }
     };
 
-    void loadStaffProfile();
-  }, [event.primaryStaffId, canViewStaffProfiles, getUserProfile, showSkeleton]);
+    void loadAssignedStaffProfiles();
+  }, [event.staff_members, canViewStaffProfiles, showSkeleton]);
 
   const canRequest = useMemo(() => {
     if (!userId || isPastEvent) return false;
@@ -147,27 +148,9 @@ export const EventCard = ({
     event,
   ]);
 
-  // Format event date
-  const eventDate = useMemo(() => {
-    try {
-      return parseISO(event.date);
-    } catch (error) {
-      console.error('Error parsing event date:', error);
-      return new Date();
-    }
-  }, [event.date]);
-
   const timeUntilEvent = useMemo(() => {
-    try {
-      return formatDistanceToNow(eventDate, { 
-        addSuffix: true, 
-        locale: language === 'de' ? de : undefined 
-      });
-    } catch (error) {
-      console.error('Error formatting time until event:', error);
-      return '';
-    }
-  }, [eventDate, language]);
+    return getRelativeEventTime(event, language);
+  }, [event, language]);
 
   if (showSkeleton) {
     return (
@@ -297,7 +280,7 @@ export const EventCard = ({
             valueClassName={isPastEvent ? "text-muted-foreground" : "text-foreground"}
           />
           <InfoItem
-            value={`${event.acceptedMentors?.length || 0} / ${requiredStaffCount}`}
+            value={`${assignedStaffCount} / ${requiredStaffCount}`}
             label={language === "en" ? "Required Staff" : "Benötigte Mitarbeiter"}
           />
           {event.mode && (
@@ -309,16 +292,50 @@ export const EventCard = ({
         </div>
 
         {/* Staff Information */}
-        {canViewStaffProfiles && staffProfile && (
+        {canViewStaffProfiles && assignedStaffCount > 0 && (
           <div className="pt-2 border-t border-border">
-            <div className="flex items-center gap-2 text-sm">
-              <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              <span className="text-muted-foreground">
-                {language === "en" ? "Staff/Coach:" : "Mitarbeiter/Coach:"}
-              </span>
-              <span className="font-medium text-foreground">
-                {isLoadingProfile ? "Loading..." : staffProfile.Username || event.primaryStaffName}
-              </span>
+            <div className="flex items-start gap-2 text-sm">
+              <User className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-1" />
+              <div className="flex-1 min-w-0">
+                <div className="text-muted-foreground mb-2">
+                  {language === "en" ? "Assigned Staff" : "Zugewiesene Mitarbeiter"}
+                </div>
+                {isLoadingProfile ? (
+                  <span className="font-medium text-foreground">
+                    {language === 'en' ? 'Loading...' : 'Wird geladen...'}
+                  </span>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(assignedStaffProfiles.length > 0
+                      ? assignedStaffProfiles
+                      : (event.staff_members || []).map((staffId, index) => ({
+                          user_id: staffId,
+                          Username: event.staffNames?.[index] || 'Unknown',
+                          profile_picture_url: null,
+                        }))
+                    ).map((staffMember) => (
+                      <div
+                        key={staffMember.user_id}
+                        className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/40 px-2.5 py-1"
+                      >
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage
+                            src={normalizeProfileImageUrl(staffMember.profile_picture_url, 72) || undefined}
+                            alt={staffMember.Username}
+                            className="object-cover"
+                          />
+                          <AvatarFallback>
+                            {staffMember.Username?.charAt(0)?.toUpperCase() || 'S'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium text-foreground">
+                          {staffMember.Username}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -340,7 +357,7 @@ export const EventCard = ({
               >
                 {isRequestLoading
                   ? (language === 'en' ? 'Requesting…' : 'Anfrage läuft…')
-                  : (language === 'en' ? 'Request to be a mentor' : 'Anfrage als MentorIn')}
+                    : (language === 'en' ? 'Request staff assignment' : 'Mitarbeiterzuweisung anfragen')}
               </Button>
               <ConfirmationModal
                 event={event}

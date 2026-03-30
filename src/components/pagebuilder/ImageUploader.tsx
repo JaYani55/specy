@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/lib/supabase';
+import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -271,7 +272,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         <div className="flex items-center gap-3">
           <div className="relative group shrink-0">
             <img
-              src={value}
+              src={normalizeProfileImageUrl(value, 160) || value}
               alt="Vorschau"
               className="w-16 h-16 rounded-full object-cover border-2 border-border"
             />

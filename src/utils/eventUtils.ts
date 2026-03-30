@@ -1,4 +1,5 @@
 import { Event, EventStatus } from '../types/event';
+import { getEventStartDateTime } from './timeUtils';
 
 // Pure function to calculate event status based on event data
 export const calculateEventStatus = (event: Event): EventStatus => {
@@ -58,22 +59,8 @@ export const hasPendingRequests = (event: Event): boolean => {
  * Determines if an event has already occurred (is in the past)
  */
 export const isEventInPast = (event: Event): boolean => {
-  if (!event?.date) return false;
-  
-  const eventDate = new Date(event.date);
-  const today = new Date();
-  
-  // Reset time portions to compare only dates
-  today.setHours(0, 0, 0, 0);
-  eventDate.setHours(0, 0, 0, 0);
-  
-  // If event is today, check time
-  if (eventDate.getTime() === today.getTime() && event.time) {
-    const [hours, minutes] = event.time.split(':').map(Number);
-    const eventTime = new Date();
-    eventTime.setHours(hours, minutes, 0, 0);
-    return eventTime < new Date();
-  }
-  
-  return eventDate < today;
+  const eventStart = getEventStartDateTime(event);
+  if (!eventStart) return false;
+
+  return eventStart.getTime() < Date.now();
 };

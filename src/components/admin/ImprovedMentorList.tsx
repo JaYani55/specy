@@ -9,6 +9,7 @@ import { Search, Users, Edit3, Filter } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MentorGroup } from '@/services/mentorGroupService';
 import { usePermissions } from '@/hooks/usePermissions';
+import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 
 interface Mentor {
   id: string;
@@ -145,7 +146,11 @@ export const ImprovedMentorList: React.FC<ImprovedMentorListProps> = ({
                 >
                   <div className="flex items-start gap-3">
                     <Avatar className="h-12 w-12 flex-shrink-0">
-                      <AvatarImage src={mentor.profilePic} alt={mentor.name} />
+                      <AvatarImage
+                        src={normalizeProfileImageUrl(mentor.profilePic, 128) || undefined}
+                        alt={mentor.name}
+                        className="object-cover"
+                      />
                       <AvatarFallback className="bg-primary/10">
                         {getInitials(mentor.name)}
                       </AvatarFallback>

@@ -1,3 +1,6 @@
+import { formatDistanceToNow } from 'date-fns';
+import { de } from 'date-fns/locale';
+
 /**
  * Calculates the end time based on start time and duration
  */
@@ -71,3 +74,43 @@ export function calculateEndTime(startTime: string, durationMinutes: number): st
     // If no duration is specified, just show start time
     return event.time;
   }
+
+export function parseLocalDateTime(date: string, time = '00:00'): Date | null {
+  if (!date) return null;
+
+  const [year, month, day] = date.split('-').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function getEventStartDateTime(event: { date: string; time?: string }): Date | null {
+  return parseLocalDateTime(event.date, event.time || '00:00');
+}
+
+export function getRelativeEventTime(
+  event: { date: string; time?: string },
+  language: 'en' | 'de' = 'en'
+): string {
+  const eventStart = getEventStartDateTime(event);
+
+  if (!eventStart) {
+    return '';
+  }
+
+  return formatDistanceToNow(eventStart, {
+    addSuffix: true,
+    locale: language === 'de' ? de : undefined,
+  });
+}

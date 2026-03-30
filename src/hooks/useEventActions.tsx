@@ -15,6 +15,7 @@ interface UseEventActionsReturn {
   handleDeleteEvent: () => Promise<void>;
   handleAssignMentor: (mentorId: string) => Promise<void>;
   handleRemoveMentor: (mentorId: string) => Promise<void>;
+  handleUpdateStaffMembers: (staffIds: string[]) => Promise<void>;
 }
 
 const useEventActions = (event: Event | null, setEvent: (event: Event) => void): UseEventActionsReturn => {
@@ -25,6 +26,36 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  const buildUpdatedStaffFields = async (staffIds: string[]) => {
+    if (staffIds.length === 0) {
+      return {
+        primaryStaffId: '',
+        primaryStaffName: '',
+        staffNames: [] as string[],
+      };
+    }
+
+    const { data, error } = await supabase
+      .from('user_profile')
+      .select('user_id, Username')
+      .in('user_id', staffIds);
+
+    if (error) {
+      throw error;
+    }
+
+    const nameMap = new Map(
+      (data || []).map(profile => [profile.user_id, profile.Username || 'Unknown'])
+    );
+    const staffNames = staffIds.map(staffId => nameMap.get(staffId) || 'Unknown');
+
+    return {
+      primaryStaffId: staffIds[0] || '',
+      primaryStaffName: staffNames[0] || '',
+      staffNames,
+    };
+  };
 
   const handleDeleteEvent = async () => {
     if (!event || !permissions.canDeleteEvents) {
@@ -102,13 +133,45 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
     }
   };
 
+  const handleUpdateStaffMembers = async (staffIds: string[]) => {
+    if (!event || !permissions.canAssignMentors) {
+      console.error('Cannot update staff members: missing event or permissions');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('mentorbooking_events')
+        .update({ staff_members: staffIds })
+        .eq('id', event.id);
+
+      if (error) {
+        throw error;
+      }
+
+      const updatedStaffFields = await buildUpdatedStaffFields(staffIds);
+      setEvent({
+        ...event,
+        staff_members: staffIds,
+        ...updatedStaffFields,
+      });
+
+      await refetchEvents();
+      toast.success('Assigned staff updated successfully');
+    } catch (error) {
+      console.error('Error updating staff members:', error);
+      toast.error('Failed to update assigned staff');
+    }
+  };
+
   return {
     isDeleting,
     showDeleteDialog,
     setShowDeleteDialog,
     handleDeleteEvent,
     handleAssignMentor,
-    handleRemoveMentor
+    handleRemoveMentor,
+    handleUpdateStaffMembers
   };
 };
 

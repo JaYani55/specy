@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import { Loader2, Clock, Package, MessageSquarePlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { useMentorProfileLoader } from '@/hooks/useMentorProfileLoader';
 import { fetchProductById, Product } from '@/services/events/productService';
 import type { ProductInfo } from '@/components/products/types';
 import { getIconByName } from '@/constants/pillaricons';
@@ -19,9 +18,7 @@ import useEventActions from '@/hooks/useEventActions';
 import { EventDetailHeader } from '@/components/events/EventDetailHeader';
 import { EventInfoCard } from '@/components/events/EventInfoCard';
 import { DeleteEventDialog } from '@/components/events/DeleteEventDialog';
-import MentorRequestsModal from "@/components/events/MentorRequestsModal";
-import { MentorStatusPanel } from '@/components/events/MentorStatusTabs';
-import { ManualMentorApproval } from '../components/events/ManualMentorApproval';
+import { EventStaffAssignment } from '@/components/events/EventStaffAssignment';
 
 type DisplayProduct = {
   id: number;
@@ -100,12 +97,9 @@ const EventDetail = () => {
     showDeleteDialog,
     setShowDeleteDialog,
     handleDeleteEvent,
-    handleAssignMentor,
-    handleRemoveMentor
+    handleUpdateStaffMembers
   } = useEventActions(event, setEvent);
 
-  const [mentorRequestsModalOpen, setMentorRequestsModalOpen] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [selectedMentorNames, setSelectedMentorNames] = useState<{name: string}[]>([]);
 
@@ -164,14 +158,6 @@ const EventDetail = () => {
     loadProductDetails();
   }, [event?.product_id, event?.ProductInfo]);
 
-  const {
-    isLoading: isLoadingMentors,
-    requestingMentors,
-    updateRequestingMentors,
-    acceptedMentorProfiles,
-    declinedMentorProfiles
-  } = useMentorProfileLoader(event, getUserProfile);
-
   useEffect(() => {
     const loadAdditionalData = async () => {
       if (event?.initial_selected_mentors && event.initial_selected_mentors.length > 0) {
@@ -218,8 +204,6 @@ const EventDetail = () => {
   }, [event, productDetails]);
 
   const isPastEvent = event ? isEventInPast(event) : false;
-  // Use a boolean for mentor requests section
-  const shouldShowMentorRequests = !!event && isEventOwner;
 
   const currentProduct = useMemo(
     () => buildDisplayProduct(productDetails, event?.ProductInfo),
@@ -315,10 +299,16 @@ const EventDetail = () => {
         <div className="lg:col-span-1 space-y-6">
           <EventInfoCard 
             event={event} 
-            refreshEventData={handleMentorActionsProcessed} 
-            onViewRequestsClick={() => setMentorRequestsModalOpen(true)}
+            refreshEventData={handleMentorActionsProcessed}
             isPastEvent={isPastEvent}
           />
+          {permissions.canAssignMentors && (
+            <EventStaffAssignment
+              event={event}
+              isPastEvent={isPastEvent}
+              onSave={handleUpdateStaffMembers}
+            />
+          )}
         </div>
         <div className="lg:col-span-2 space-y-6">
           <Card className="p-6">
@@ -412,11 +402,11 @@ const EventDetail = () => {
                       )}
                     </div>
 
-                    {/* Selected Mentors Who Can See This Event */}
+                    {/* Selected team members who can see this event */}
                     {event.initial_selected_mentors && event.initial_selected_mentors.length > 0 && (
                       <div>
                         <h4 className="font-semibold text-base mb-3 text-green-800 dark:text-green-200">
-                          {language === "en" ? "Mentors Who Can See This Event" : "MentorInnen, die diese Veranstaltung sehen können"}
+                          {language === "en" ? "Team Members Who Can See This Event" : "Teammitglieder, die diese Veranstaltung sehen können"}
                         </h4>
                         <div className="flex flex-wrap gap-2">
                           {selectedMentorNames.map((mentor, index) => (
@@ -436,7 +426,7 @@ const EventDetail = () => {
                           {language === "en" ? "Special Product Type" : "Besondere Produktart"}
                         </h4>
                         <p className="text-purple-700">
-                          {language === "en" ? "Mentor Product" : "Mentor-Produkt"}
+                          {language === "en" ? "Staff Product" : "Mitarbeiter-Produkt"}
                         </p>
                       </div>
                     )}
@@ -461,43 +451,10 @@ const EventDetail = () => {
                 </div>
               )}
 
-              {/* Mentor Requests Section */}
-              {shouldShowMentorRequests && (
-                <div className="border-t pt-6">
-                  <h3 className="text-xl font-semibold mb-4">
-                    {language === "en" ? "Mentor Requests" : "Mentoranfragen"}
-                  </h3>
-                  <MentorRequestsModal
-                    event={event}
-                    open={isModalOpen}
-                    onOpenChange={setIsModalOpen}
-                    onSuccess={handleMentorActionsProcessed}
-                    isPastEvent={isPastEvent}
-                  />
-                </div>
-              )}
             </div>
           </Card>
         </div>
       </div>
-
-      {permissions.canViewMentorProfiles && (
-        <MentorStatusPanel
-          event={event}
-          acceptedMentorProfiles={acceptedMentorProfiles}
-          declinedMentorProfiles={declinedMentorProfiles}
-          language={language}
-          isPastEvent={isPastEvent}
-        />
-      )}
-
-      {event && permissions.canAssignMentors && !isPastEvent && (
-        <ManualMentorApproval
-          event={event}
-          onMentorAdded={handleMentorActionsProcessed}
-          isPastEvent={isPastEvent}
-        />
-      )}
 
       <DeleteEventDialog
         open={showDeleteDialog}
@@ -505,14 +462,6 @@ const EventDetail = () => {
         onDelete={handleDeleteEvent}
         isDeleting={isDeleting}
         event={event}
-      />
-
-      <MentorRequestsModal
-        event={event}
-        open={mentorRequestsModalOpen}
-        onOpenChange={setMentorRequestsModalOpen}
-        onSuccess={handleMentorActionsProcessed}
-        isPastEvent={isPastEvent}
       />
     </div>
   );

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 
 export interface StaffRecord {
   id: string;
@@ -113,7 +114,7 @@ const mapStaffRow = (row: StaffRow): StaffRecord => ({
   displayName: row.display_name,
   email: row.email,
   phone: row.phone,
-  avatarUrl: row.avatar_url,
+  avatarUrl: normalizeProfileImageUrl(row.avatar_url, 160),
   jobTitle: row.job_title,
   status: row.status,
   notes: row.notes,
@@ -155,7 +156,7 @@ const fetchLegacyStaffDirectory = async (): Promise<StaffRecord[]> => {
     id: profile.user_id,
     accountUserId: profile.user_id,
     displayName: profile.Username || 'Unnamed staff',
-    avatarUrl: profile.pfp_url || null,
+    avatarUrl: normalizeProfileImageUrl(profile.pfp_url, 160),
     status: 'active',
     profile: {},
   }));
