@@ -782,9 +782,11 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   //  preamble.sql              — app_enum type + all trigger functions
   //  user_profile.sql          — no deps
   //  roles.sql                 — needs app_enum (preamble)
-  //  employers.sql             — needs user_profile
+  //  employers.sql             — legacy employer table, still used by auth helpers
+  //  companies.sql             — needs user_profile + employers (legacy backfill)
   //  user_roles.sql            — needs roles + user_profile
   //  mentor_groups.sql         — no deps
+  //  staff_registry.sql        — needs roles + user_roles + user_profile + mentor_groups
   //  products.sql              — needs set_current_timestamp_updated_at (preamble)
   //  page_schemas.sql          — needs set_current_timestamp_updated_at (preamble)
   //  plugins.sql               — needs set_current_timestamp_updated_at (preamble)
@@ -792,8 +794,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   //  mentorbooking_products.sql — needs products (FK)
   //  pages.sql                 — renames products→pages; renames FK on mentorbooking_products
   //                              (must run AFTER mentorbooking_products so the FK to rename exists)
-  //  mentorbooking_events.sql  — needs employers + mentorbooking_products + event functions
-  //  mentorbooking_events_archive.sql — needs employers + mentorbooking_products
+  //  mentorbooking_events.sql  — needs companies + staff_registry + mentorbooking_products + event functions
+  //  mentorbooking_events_archive.sql — needs companies + staff_registry + mentorbooking_products
   //  mentorbooking_notifications.sql  — needs user_profile
   //  agent_logs.sql            — needs page_schemas
   //  Auth/Access_hook.sql      — needs roles + user_roles (last)
@@ -806,6 +808,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     'employers.sql',
     'user_roles.sql',
     'mentor_groups.sql',
+    'companies.sql',
+    'staff_registry.sql',
     'products.sql',
     'page_schemas.sql',
     'plugins.sql',

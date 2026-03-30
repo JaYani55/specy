@@ -91,7 +91,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           id: event.id,
           title: event.company || '',
-          employer_id: event.employer_id || '',
+          company_id: event.company_id || '',
           company: event.company || '',
           date: event.date || '',
           time: event.time || '',
@@ -109,6 +109,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           acceptedMentors: event.accepted_mentors || [],
           declinedMentors: event.declined_mentors || [],
           amount_requiredmentors: event.amount_requiredmentors || 1,
+          required_staff_count: event.required_staff_count || event.amount_requiredmentors || 1,
+          required_trait_id: event.required_trait_id ?? null,
           product_id: event.product_id,
           teams_link: event.teams_link || '',
           initial_selected_mentors: event.initial_selected_mentors || [],

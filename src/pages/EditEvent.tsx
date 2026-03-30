@@ -8,17 +8,17 @@ import { EventForm, EventFormValues } from '../components/events/EventForm';
 import { supabase } from '../lib/supabase';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { getEmployerById } from '@/services/employer/employerService';
 import { useData } from '../contexts/DataContext'; 
 import { calculateEndTime } from '@/utils/timeUtils';
 import { calculateEventStatus } from '../utils/eventUtils';
 import { EventStatus, EventMode } from '@/types/event';
+import { ensureCompanyRecord } from '@/services/company/companyService';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
 
 type SupabaseEventRow = {
   id: string;
-  employer_id: string | null;
+  company_id: string | null;
   company: string | null;
   date: string | null;
   time: string | null;
@@ -28,6 +28,8 @@ type SupabaseEventRow = {
   status: EventStatus | null;
   mode: EventMode | null;
   amount_requiredmentors: number | null;
+  required_staff_count: number | null;
+  required_trait_id: number | null;
   product_id: number | null;
   staff_members: string[] | null;
   teams_link: string | null;
@@ -36,7 +38,7 @@ type SupabaseEventRow = {
 
 const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormInitialValues => ({
   id: input.id,
-  employer_id: input.employer_id ?? "",
+  company_id: input.company_id ?? "",
   company: input.company ?? "",
   date: input.date ?? "",
   time: input.time ?? "",
@@ -45,7 +47,8 @@ const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormIniti
   description: input.description ?? "",
   status: input.status ?? 'new',
   mode: input.mode ?? 'online',
-  amount_requiredmentors: input.amount_requiredmentors ?? 1,
+  required_staff_count: input.required_staff_count ?? 1,
+  required_trait_id: input.required_trait_id ?? null,
   product_id: input.product_id ?? undefined,
   staff_members: Array.isArray(input.staff_members) ? input.staff_members : [],
   teams_link: input.teams_link ?? "",
@@ -100,7 +103,7 @@ const EditEvent = () => {
         if (cachedEvent) {
           const normalizedFromCache = toInitialValues({
             id: cachedEvent.id,
-            employer_id: cachedEvent.employer_id,
+            company_id: cachedEvent.company_id,
             company: cachedEvent.company,
             date: cachedEvent.date,
             time: cachedEvent.time,
@@ -109,7 +112,8 @@ const EditEvent = () => {
             description: cachedEvent.description,
             status: cachedEvent.status,
             mode: cachedEvent.mode,
-            amount_requiredmentors: cachedEvent.amount_requiredmentors,
+            required_staff_count: cachedEvent.required_staff_count,
+            required_trait_id: cachedEvent.required_trait_id,
             product_id: cachedEvent.product_id,
             staff_members: cachedEvent.staff_members,
             teams_link: cachedEvent.teams_link,
@@ -130,7 +134,7 @@ const EditEvent = () => {
 
         const normalizedFromDb = toInitialValues({
           id: data.id,
-          employer_id: data.employer_id ?? undefined,
+          company_id: data.company_id ?? undefined,
           company: data.company ?? undefined,
           date: data.date ?? undefined,
           time: data.time ?? undefined,
@@ -139,7 +143,8 @@ const EditEvent = () => {
           description: data.description ?? undefined,
           status: data.status ?? undefined,
           mode: data.mode ?? undefined,
-          amount_requiredmentors: data.amount_requiredmentors ?? undefined,
+          required_staff_count: data.required_staff_count ?? data.amount_requiredmentors ?? undefined,
+          required_trait_id: data.required_trait_id ?? undefined,
           product_id: data.product_id ?? undefined,
           staff_members: Array.isArray(data.staff_members) ? data.staff_members : undefined,
           teams_link: data.teams_link ?? undefined,
@@ -167,46 +172,31 @@ const EditEvent = () => {
   const handleSubmit = async (values: EventFormValues) => {
     setIsLoading(true);
     try {
-      // Handle staff members properly
-      const staffMembers = values.staff_members && values.staff_members.length > 0 
-        ? values.staff_members 
+      const staffMembers = values.staff_members && values.staff_members.length > 0
+        ? values.staff_members
         : [];
-    
-      // Get company name from the selected employer before submitting
-      let companyName = "";
-      if (values.employer_id) {
-        try {
-          const employerData = await getEmployerById(values.employer_id);
-          companyName = employerData?.name || values.company || "";
-        } catch (err) {
-          console.error("Error fetching employer:", err);
-          companyName = values.company || "";
-        }
-      }
-      
-      // Calculate end time based on start time and duration
-  const endTime = calculateEndTime(values.time, values.duration_minutes);
-      
-      // Get the current event to calculate status properly
+      const companyRecord = await ensureCompanyRecord({
+        companyId: values.company_id,
+        companyName: values.company,
+      });
+      const endTime = calculateEndTime(values.time, values.duration_minutes);
       const currentEvent = getEventById(id);
-      
-      // Use locked status if specified, otherwise calculate
+
       const newStatus = values.status === 'locked'
         ? 'locked'
         : (currentEvent
             ? calculateEventStatus({
                 ...currentEvent,
-                amount_requiredmentors: values.amount_requiredmentors,
+                amount_requiredmentors: values.required_staff_count,
+                required_staff_count: values.required_staff_count,
               })
             : 'new');
-      
-      // Get product details if a product is selected (do not send ProductInfo to Supabase)
-      // You can still fetch product details if needed for local use, but do not include in update payload
+
       const { error } = await supabase
         .from('mentorbooking_events')
         .update({
-          employer_id: values.employer_id,
-          company: companyName,
+          company_id: companyRecord.id,
+          company: companyRecord.name,
           date: values.date,
           time: values.time,
           end_time: endTime,
@@ -215,7 +205,9 @@ const EditEvent = () => {
           staff_members: staffMembers,
           status: newStatus,
           mode: values.mode ?? 'online',
-          amount_requiredmentors: values.amount_requiredmentors,
+          amount_requiredmentors: values.required_staff_count,
+          required_staff_count: values.required_staff_count,
+          required_trait_id: values.required_trait_id ?? null,
           product_id: values.product_id ?? null,
           teams_link: values.teams_link ?? "",
         })

@@ -101,6 +101,7 @@ export const EventCard = ({
   // Now declare other computed values that depend on isPastEvent
   const hasAlreadyRequested = event.requestingMentors?.includes(userId || '') || false;
   const acceptedMentorCount = event.acceptedMentors?.length ?? 0;
+  const requiredStaffCount = event.required_staff_count || event.amount_requiredmentors || 1;
   const isAcceptedMentor = event.acceptedMentors?.includes(userId || '') || false;
   const isDeclinedMentor = event.declinedMentors?.includes(userId || '') || false;
   
@@ -131,7 +132,7 @@ export const EventCard = ({
   const canRequest = useMemo(() => {
     if (!userId || isPastEvent) return false;
     if (hasAlreadyRequested || isAcceptedMentor || isDeclinedMentor) return false;
-    if (acceptedMentorCount >= event.amount_requiredmentors) return false;
+    if (acceptedMentorCount >= requiredStaffCount) return false;
     if (!canRequestMentor(event, userId)) return false; // <-- FIX: call the function with arguments
     return true;
   }, [
@@ -141,6 +142,7 @@ export const EventCard = ({
     isAcceptedMentor,
     isDeclinedMentor,
     acceptedMentorCount,
+    requiredStaffCount,
     canRequestMentor,
     event,
   ]);
@@ -295,8 +297,8 @@ export const EventCard = ({
             valueClassName={isPastEvent ? "text-muted-foreground" : "text-foreground"}
           />
           <InfoItem
-            value={`${event.acceptedMentors?.length || 0} / ${event.amount_requiredmentors}`}
-            label={language === "en" ? "Mentors" : "MentorInnen"}
+            value={`${event.acceptedMentors?.length || 0} / ${requiredStaffCount}`}
+            label={language === "en" ? "Required Staff" : "Benötigte Mitarbeiter"}
           />
           {event.mode && (
             <InfoItem

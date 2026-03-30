@@ -11,7 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../contexts/ThemeContext";
 
-interface Employer {
+interface Company {
   id: string;
   name: string;
   logo_url?: string;
@@ -28,8 +28,8 @@ export function CompanyCombobox({ value, onChange, disabled = false }: CompanyCo
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState("");
-  const [companies, setCompanies] = React.useState<Employer[]>([]);
-  const [selectedCompany, setSelectedCompany] = React.useState<Employer | null>(null);
+  const [companies, setCompanies] = React.useState<Company[]>([]);
+  const [selectedCompany, setSelectedCompany] = React.useState<Company | null>(null);
   const [highlightedIndex, setHighlightedIndex] = React.useState<number>(-1);
   const itemsRef = React.useRef<(HTMLDivElement | null)[]>([]);
 
@@ -56,7 +56,7 @@ export function CompanyCombobox({ value, onChange, disabled = false }: CompanyCo
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('employers')
+        .from('companies')
         .select('id, name, logo_url')
         .order('name');
       if (error) {
@@ -75,7 +75,7 @@ export function CompanyCombobox({ value, onChange, disabled = false }: CompanyCo
   const loadCompanyById = async (id: string) => {
     try {
       const { data, error } = await supabase
-        .from('employers')
+        .from('companies')
         .select('id, name, logo_url')
         .eq('id', id)
         .single();
@@ -107,7 +107,7 @@ export function CompanyCombobox({ value, onChange, disabled = false }: CompanyCo
   }, [companies, searchText]);
 
   // Handle company selection
-  const selectCompany = (company: Employer) => {
+  const selectCompany = (company: Company) => {
     onChange(company.id, company.name);
     setSelectedCompany(company);
     setOpen(false);

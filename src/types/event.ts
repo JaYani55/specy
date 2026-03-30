@@ -8,6 +8,7 @@ export interface Event {
   id: string;
   title: string;
   company: string;
+  company_id?: string;
   date: string;
   time: string;
   end_time?: string;
@@ -26,10 +27,11 @@ export interface Event {
   declinedMentors: string[];
   column?: number;
   amount_requiredmentors: number;
+  required_staff_count: number;
+  required_trait_id?: number | null;
   product_id?: number;
-  employer_id?: string;
   initial_selected_mentors?: string[];
-  employerInfo?: {
+  companyInfo?: {
     id: string;
     name: string;
     logo_url?: string;
@@ -38,7 +40,7 @@ export interface Event {
 }
 
 export interface EventFormData {
-  employer_id: string;
+  company_id?: string;
   company: string;
   date: string;
   time: string;
@@ -47,7 +49,8 @@ export interface EventFormData {
   description: string;
   status: EventStatus;
   mode?: EventMode;
-  amount_requiredmentors: number;
+  required_staff_count: number;
+  required_trait_id?: number | null;
   product_id?: number;
   staff_members: string[]; // Replace with this
   teams_link: string;
@@ -55,7 +58,7 @@ export interface EventFormData {
 }
 
 export interface EventFormErrors {
-  employer_id?: string;
+  company_id?: string;
   staff_members?: string; // Add this instead
   date?: string;
   time?: string;

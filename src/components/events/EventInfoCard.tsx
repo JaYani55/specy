@@ -2,9 +2,9 @@ import { Event } from '@/types/event';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { UserRound, CalendarIcon, Building2, ExternalLink } from 'lucide-react';
+import { UserRound, CalendarIcon, Building2, ExternalLink, Users } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMentorRequests } from '@/hooks/useMentorRequests';
 import ConfirmationModal from '../shared/ConfirmationModal';
@@ -12,6 +12,7 @@ import { CounterButton } from "@/components/ui/counter-button";
 import { getEventTimeDisplay } from '@/utils/timeUtils';
 import { isEventInPast } from '@/utils/eventUtils';
 import { usePermissions } from '@/hooks/usePermissions';
+import { supabase } from '@/lib/supabase';
 
 interface EventInfoCardProps {
   event: Event;
@@ -30,16 +31,44 @@ export const EventInfoCard = ({
   const { user } = useAuth();
   const permissions = usePermissions();
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [requiredTraitName, setRequiredTraitName] = useState<string | null>(null);
   const { requestToMentor, isRequestLoading } = useMentorRequests(event, user);
 
   const isEventPast = isPastEvent || isEventInPast(event);
+  const requiredStaffCount = event.required_staff_count || event.amount_requiredmentors || 1;
 
   // Logic for mentor request button (copied from EventCard)
   const userId = user?.id;
   const hasAlreadyRequested = event.requestingMentors?.includes(userId || '') || false;
   const isAcceptedMentor = event.acceptedMentors?.includes(userId || '') || false;
   const isDeclinedMentor = event.declinedMentors?.includes(userId || '') || false;
-  const mentorSlotsFilled = (event.acceptedMentors?.length || 0) >= event.amount_requiredmentors;
+  const mentorSlotsFilled = (event.acceptedMentors?.length || 0) >= requiredStaffCount;
+
+  useEffect(() => {
+    const loadRequiredTrait = async () => {
+      if (!event.required_trait_id) {
+        setRequiredTraitName(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('staff_traits')
+        .select('name')
+        .eq('id', event.required_trait_id)
+        .maybeSingle<{ name: string }>();
+
+      if (error) {
+        console.error('Error loading required trait:', error);
+        setRequiredTraitName(null);
+        return;
+      }
+
+      setRequiredTraitName(data?.name ?? null);
+    };
+
+    void loadRequiredTrait();
+  }, [event.required_trait_id]);
+
   const canRequest = useMemo(() => {
     if (!userId || isEventPast) return false;
     if (hasAlreadyRequested || isAcceptedMentor || isDeclinedMentor) return false;
@@ -101,8 +130,25 @@ export const EventInfoCard = ({
           <Building2 className="h-5 w-5 text-muted-foreground mt-0.5" />
           <div>
             <p className="font-medium">{event.company}</p>
-            {event.employerInfo?.name && event.employerInfo.name !== event.company && (
-              <p className="text-muted-foreground">{event.employerInfo.name}</p>
+            {event.companyInfo?.name && event.companyInfo.name !== event.company && (
+              <p className="text-muted-foreground">{event.companyInfo.name}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-start gap-4">
+          <Users className="h-5 w-5 text-muted-foreground mt-0.5" />
+          <div>
+            <p className="font-medium">
+              {language === "en" ? "Required Staff" : "Benötigte Mitarbeiter"}
+            </p>
+            <p className="text-muted-foreground">
+              {`${event.acceptedMentors?.length || 0} / ${requiredStaffCount}`}
+            </p>
+            {requiredTraitName && (
+              <p className="text-muted-foreground">
+                {language === "en" ? `Required trait: ${requiredTraitName}` : `Erforderliche Eigenschaft: ${requiredTraitName}`}
+              </p>
             )}
           </div>
         </div>

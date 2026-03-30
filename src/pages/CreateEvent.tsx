@@ -10,6 +10,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { useData } from '../contexts/DataContext';
 import { calculateEndTime } from '@/utils/timeUtils';
+import { ensureCompanyRecord } from '@/services/company/companyService';
 
 const CreateEvent = () => {
   const { user, loading } = useAuth();
@@ -41,24 +42,24 @@ const CreateEvent = () => {
     }
   }, [user, loading, navigate, permissions.canCreateEvents]);
   
-  // Update handleSubmit to ensure both fields are always populated
   const handleSubmit = async (values: EventFormValues) => {
     setIsSubmitting(true);
-    
+
     try {
-  const endTime = calculateEndTime(values.time, values.duration_minutes);
-      
-      // Ensure staff_members is always populated
-      const staffMembers = values.staff_members && values.staff_members.length > 0 
-        ? values.staff_members 
-        : user?.id ? [user.id] : []; // Fallback to current user
-    
-      // Insert into database - only include existing columns
+      const endTime = calculateEndTime(values.time, values.duration_minutes);
+      const staffMembers = values.staff_members && values.staff_members.length > 0
+        ? values.staff_members
+        : user?.id ? [user.id] : [];
+      const companyRecord = await ensureCompanyRecord({
+        companyId: values.company_id,
+        companyName: values.company,
+      });
+
       const { error } = await supabase
         .from('mentorbooking_events')
         .insert({
-          company: values.company,
-          employer_id: values.employer_id,
+          company: companyRecord.name,
+          company_id: companyRecord.id,
           date: values.date,
           time: values.time,
           end_time: endTime,
@@ -70,7 +71,9 @@ const CreateEvent = () => {
           requesting_mentors: [],
           accepted_mentors: [],
           declined_mentors: [],
-          amount_requiredmentors: values.amount_requiredmentors,
+          amount_requiredmentors: values.required_staff_count,
+          required_staff_count: values.required_staff_count,
+          required_trait_id: values.required_trait_id ?? null,
           product_id: values.product_id ?? null,
           teams_link: values.teams_link ?? "",
           initial_selected_mentors: values.initial_selected_mentors ?? [],
@@ -129,8 +132,9 @@ const CreateEvent = () => {
         key="create-event-form"
         initialValues={{
           status: 'new',
-          amount_requiredmentors: 1,
-          employer_id: "",
+          required_staff_count: 1,
+          required_trait_id: null,
+          company_id: "",
           company: "",
           date: new Date().toISOString().split('T')[0],
           time: "09:00",
