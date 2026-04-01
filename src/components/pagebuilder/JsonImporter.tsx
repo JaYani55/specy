@@ -153,6 +153,58 @@ function checkFieldType(
       }
       break;
 
+    case 'CodeBlock[]':
+      if (!Array.isArray(val)) {
+        errors.push(`"${path}" erwartet ein Array (CodeBlock[]), erhalten: ${typeof val}.`);
+      } else {
+        (val as unknown[]).forEach((block, idx) => {
+          if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+            errors.push(`"${path}[${idx}]" muss ein Objekt sein.`);
+            return;
+          }
+          const codeBlock = block as Record<string, unknown>;
+          if (!codeBlock.id || typeof codeBlock.id !== 'string') {
+            warnings.push(
+              `"${path}[${idx}]" hat kein gültiges "id"-Feld — wird beim Import automatisch gesetzt.`,
+            );
+          }
+          if ('language' in codeBlock && typeof codeBlock.language !== 'string') {
+            errors.push(`"${path}[${idx}].language" erwartet einen String.`);
+          }
+          if ('code' in codeBlock && typeof codeBlock.code !== 'string') {
+            errors.push(`"${path}[${idx}].code" erwartet einen String.`);
+          }
+          if ('frameworks' in codeBlock && !Array.isArray(codeBlock.frameworks)) {
+            errors.push(`"${path}[${idx}].frameworks" erwartet ein Array von Strings.`);
+          }
+          if (Array.isArray(codeBlock.frameworks)) {
+            codeBlock.frameworks.forEach((framework, frameworkIndex) => {
+              if (typeof framework !== 'string') {
+                errors.push(
+                  `"${path}[${idx}].frameworks[${frameworkIndex}]" erwartet einen String.`,
+                );
+              }
+            });
+          }
+          if (field.items?.properties) {
+            for (const property of field.items.properties) {
+              if (property.name in codeBlock) {
+                checkFieldType(
+                  property,
+                  codeBlock[property.name],
+                  `${path}[${idx}].${property.name}`,
+                  errors,
+                  warnings,
+                );
+              } else if (property.required) {
+                errors.push(`Pflichtfeld "${path}[${idx}].${property.name}" fehlt.`);
+              }
+            }
+          }
+        });
+      }
+      break;
+
     case 'object':
       if (typeof val !== 'object' || val === null || Array.isArray(val)) {
         errors.push(`"${path}" erwartet ein Objekt, erhalten: ${typeof val}.`);
@@ -179,6 +231,14 @@ function ensureBlockIds(obj: Record<string, unknown>, fields: SchemaFieldDefinit
         id:
           block.id ||
           `${field.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      }));
+    }
+    if (field.type === 'CodeBlock[]' && Array.isArray(obj[field.name])) {
+      obj[field.name] = (obj[field.name] as Record<string, unknown>[]).map((block) => ({
+        ...block,
+        id:
+          block.id ||
+          `${field.name}-code-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       }));
     }
     if (field.type === 'object' && field.properties && typeof obj[field.name] === 'object') {

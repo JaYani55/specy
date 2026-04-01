@@ -112,7 +112,7 @@ Each field in a schema's `schema` JSONB column serialises a `SchemaFieldDefiniti
 ```json
 {
   "field_name": {
-    "type": "string | number | boolean | array | object | ContentBlock[]",
+    "type": "string | number | boolean | array | object | ContentBlock[] | CodeBlock[]",
     "description": "Help text shown below the field in the Page Builder",
     "placeholder": "Input placeholder shown inside the input in the Page Builder",
     "meta_description": "Developer / LLM context — NOT rendered in Page Builder, only exposed via API and spec.txt",
@@ -129,7 +129,7 @@ Each field in a schema's `schema` JSONB column serialises a `SchemaFieldDefiniti
 ```ts
 interface SchemaFieldDefinition {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]';
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'CodeBlock[]';
   description?: string;       // shown in PageBuilder below the field
   placeholder?: string;       // shown inside the input in PageBuilder
   meta_description?: string;  // developer/LLM context, API-only
@@ -260,6 +260,7 @@ Located at `src/components/pagebuilder/SchemaPageBuilderForm.tsx`.
 | Field type | Rendered as |
 |---|---|
 | `ContentBlock[]` | `ContentBlocksEditor` (inline block list with add dropdown) |
+| `CodeBlock[]` | Structured code variants editor with language, pattern, frameworks, and code textarea |
 | `string` + `enum` | `Select` |
 | `string` (long-text heuristic) | `Textarea` |
 | `string` | `Input` |
@@ -269,6 +270,52 @@ Located at `src/components/pagebuilder/SchemaPageBuilderForm.tsx`.
 | `array` | Repeatable item list with add/remove |
 
 Long-text heuristic: field name or description contains `description`, `content`, `text`, `body`, `summary`, `bio`, or `instructions`.
+
+### Example: `CodeBlock[]` schema field
+
+```json
+{
+  "examples": {
+    "type": "CodeBlock[]",
+    "description": "Alternative implementations of the same logic.",
+    "meta_description": "Use this for code examples that may vary by language, framework, or implementation pattern. Each item should contain the exact source code plus a language identifier for frontend syntax highlighting.",
+    "items": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Visible label for this variant"
+        },
+        "language": {
+          "type": "string",
+          "required": true,
+          "enum": ["typescript", "javascript", "python", "php"],
+          "meta_description": "Syntax highlighting token consumed by the frontend renderer."
+        },
+        "pattern": {
+          "type": "string",
+          "enum": ["functional", "class-based", "server-action", "api-route"],
+          "meta_description": "Optional implementation style or architectural pattern."
+        },
+        "frameworks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["react", "nextjs", "express", "hono"]
+          },
+          "meta_description": "Optional framework tags. When enum values are provided, the Page Builder renders a multi-select control."
+        },
+        "code": {
+          "type": "string",
+          "required": true,
+          "description": "Source code",
+          "meta_description": "Exact source code snippet. Preserve indentation and syntax exactly as it should be rendered."
+        }
+      }
+    }
+  }
+}
+```
 
 ### `StandaloneContentBlockEditor`
 

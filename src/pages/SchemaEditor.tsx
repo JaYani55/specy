@@ -22,7 +22,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { toast } from 'sonner';
 import { SCHEMA_TEMPLATES, type SchemaTemplate } from '@/config/schemaTemplates';
 
-const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentBlock[]', 'media'] as const;
+const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentBlock[]', 'CodeBlock[]', 'media'] as const;
 const VALID_SCHEMA_TYPES = new Set<string>(FIELD_TYPES);
 
 const emptyField = (): SchemaFieldDefinition => ({
@@ -32,6 +32,61 @@ const emptyField = (): SchemaFieldDefinition => ({
   placeholder: '',
   meta_description: '',
   required: false,
+});
+
+const defaultCodeBlockItemsField = (): SchemaFieldDefinition => ({
+  name: 'item',
+  type: 'object',
+  required: false,
+  properties: [
+    {
+      name: 'label',
+      type: 'string',
+      description: 'Optional display label for this code variant.',
+      placeholder: 'e.g. React Hook',
+      meta_description: 'Short label describing this code variant or implementation style.',
+      required: false,
+    },
+    {
+      name: 'language',
+      type: 'string',
+      description: 'Programming language used for syntax highlighting.',
+      placeholder: 'e.g. typescript',
+      meta_description: 'Syntax highlighting token used by the frontend renderer. Prefer canonical identifiers like typescript, javascript, python, or bash.',
+      required: true,
+    },
+    {
+      name: 'pattern',
+      type: 'string',
+      description: 'Optional implementation pattern or style.',
+      placeholder: 'e.g. async server action',
+      meta_description: 'Optional label describing the implementation pattern, framework convention, or architectural style used by this code example.',
+      required: false,
+    },
+    {
+      name: 'frameworks',
+      type: 'array',
+      description: 'Optional framework tags for filtering or variant selection.',
+      meta_description: 'Optional list of frameworks or runtimes this snippet applies to. When enum options are provided, the Page Builder renders this as a multi-select control.',
+      required: false,
+      items: {
+        name: 'item',
+        type: 'string',
+        description: 'Framework or runtime name.',
+        placeholder: 'e.g. nextjs',
+        meta_description: 'One framework or runtime tag such as react, nextjs, hono, express, or node.',
+        required: false,
+      },
+    },
+    {
+      name: 'code',
+      type: 'string',
+      description: 'Source code for this variant.',
+      placeholder: 'Paste code here...',
+      meta_description: 'The full code snippet. Preserve indentation and exact syntax. This field is typically rendered in a monospace code editor or code block preview.',
+      required: true,
+    },
+  ],
 });
 
 interface SchemaJsonParseResult {
@@ -171,6 +226,17 @@ const parseSchemaFieldEntry = (
         field.items = itemResult.field;
       }
     }
+  } else if (field.type === 'CodeBlock[]') {
+    if (value.items === undefined) {
+      field.items = defaultCodeBlockItemsField();
+    } else {
+      const itemResult = parseSchemaFieldEntry('item', value.items, `${path}.items`);
+      errors.push(...itemResult.errors);
+      warnings.push(...itemResult.warnings);
+      if (itemResult.field) {
+        field.items = itemResult.field;
+      }
+    }
   } else if (value.items !== undefined) {
     errors.push(`${path}.items is only allowed for array fields.`);
   }
@@ -258,10 +324,16 @@ const fieldsToJsonSchema = (fields: SchemaFieldDefinition[]): Record<string, unk
       entry.properties = fieldsToJsonSchema(field.properties);
     }
 
-    if (field.type === 'array' && field.items) {
+    if ((field.type === 'array' || field.type === 'CodeBlock[]') && field.items) {
       entry.items = {
         type: field.items.type,
         description: field.items.description || undefined,
+        placeholder: field.items.placeholder || undefined,
+        meta_description: field.items.meta_description || undefined,
+        required: field.items.required || undefined,
+        ...(field.items.enum && field.items.enum.length > 0
+          ? { enum: field.items.enum }
+          : {}),
         ...(field.items.type === 'object' && field.items.properties
           ? { properties: fieldsToJsonSchema(field.items.properties) }
           : {}),
@@ -320,7 +392,7 @@ interface FieldEditorProps {
 
 const FieldEditor: React.FC<FieldEditorProps> = ({ field, onChange, onRemove, depth = 0 }) => {
   const [expanded, setExpanded] = useState(true);
-  const hasChildren = field.type === 'object' || field.type === 'array';
+  const hasChildren = field.type === 'object' || field.type === 'array' || field.type === 'CodeBlock[]';
 
   return (
     <div className={`border rounded-lg p-3 space-y-3 ${depth > 0 ? 'ml-6 border-dashed' : ''}`}>
@@ -344,7 +416,12 @@ const FieldEditor: React.FC<FieldEditorProps> = ({ field, onChange, onRemove, de
                   ...field,
                   type: value as SchemaFieldDefinition['type'],
                   properties: value === 'object' ? field.properties || [] : undefined,
-                  items: value === 'array' ? field.items || emptyField() : undefined,
+                  items:
+                    value === 'array'
+                      ? field.items || emptyField()
+                      : value === 'CodeBlock[]'
+                        ? field.items || defaultCodeBlockItemsField()
+                        : undefined,
                 })}
               >
                 <SelectTrigger className="h-8 text-sm">
@@ -447,14 +524,19 @@ const FieldEditor: React.FC<FieldEditorProps> = ({ field, onChange, onRemove, de
       )}
 
       {/* Item definition for array type */}
-      {hasChildren && expanded && field.type === 'array' && field.items && (
+      {hasChildren && expanded && (field.type === 'array' || field.type === 'CodeBlock[]') && field.items && (
         <div className="space-y-2">
-          <Label className="text-xs font-medium text-muted-foreground">Array Item Type</Label>
+          <Label className="text-xs font-medium text-muted-foreground">
+            {field.type === 'CodeBlock[]' ? 'Code Block Item Definition' : 'Array Item Type'}
+          </Label>
           <FieldEditor
             field={field.items}
             depth={depth + 1}
             onChange={(updated) => onChange({ ...field, items: updated })}
-            onRemove={() => onChange({ ...field, items: emptyField() })}
+            onRemove={() => onChange({
+              ...field,
+              items: field.type === 'CodeBlock[]' ? defaultCodeBlockItemsField() : emptyField(),
+            })}
           />
         </div>
       )}

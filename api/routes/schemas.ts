@@ -113,6 +113,18 @@ schemas.get('/:slug/spec.txt', async (c) => {
     '',
   );
 
+  lines.push(
+    '--- CODE BLOCK FIELD TYPE ---',
+    '',
+    'Schemas may also use the custom field type "CodeBlock[]" for structured code examples.',
+    'Each item is typically stored as:',
+    '  { id: string, language: string, code: string, label?: string, pattern?: string, frameworks?: string[] }',
+    '',
+    'The optional items.properties definition can be used to configure placeholders, help text, required flags, and enum options for language, pattern, frameworks, or extra metadata fields.',
+    'If frameworks.items.enum is provided, the Page Builder renders a multi-select checkbox group for frameworks.',
+    '',
+  );
+
   if (schema.llm_instructions) {
     lines.push('--- LLM INSTRUCTIONS ---', '', schema.llm_instructions, '');
   }

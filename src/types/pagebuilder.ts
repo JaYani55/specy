@@ -1,6 +1,15 @@
 // Content Block Types
 export type ContentBlock = TextBlock | HeadingBlock | ImageBlock | QuoteBlock | ListBlock | VideoBlock;
 
+export interface CodeBlockItem {
+  id: string;
+  language: string;
+  code: string;
+  label?: string;
+  pattern?: string;
+  frameworks?: string[];
+}
+
 export interface BaseBlock {
   id: string;
   type: string;
@@ -133,7 +142,7 @@ export interface PageRecord {
 
 export interface SchemaFieldDefinition {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'media';
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'CodeBlock[]' | 'media';
   /** Help text shown below the field in the Page Builder */
   description?: string;
   /** Input placeholder shown inside the input in the Page Builder */

@@ -39,7 +39,7 @@ import {
 import { Save, Eye, Loader2, ExternalLink, Plus, Trash2, ChevronDown, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { savePage, triggerRevalidation } from '@/services/pageService';
-import type { PageSchema, SchemaFieldDefinition, ContentBlock } from '@/types/pagebuilder';
+import type { PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
 import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
 import { ImageUploader } from './ImageUploader';
 import { JsonImporter } from './JsonImporter';
@@ -70,35 +70,48 @@ const createDefaultBlock = (type: ContentBlock['type'], prefix: string): Content
   }
 };
 
+const createDefaultCodeBlock = (prefix: string): CodeBlockItem => ({
+  id: generateBlockId(`${prefix}-code`),
+  label: '',
+  language: '',
+  pattern: '',
+  frameworks: [],
+  code: '',
+});
+
+const createSchemaFieldDefinition = (
+  name: string,
+  value: Record<string, unknown>,
+): SchemaFieldDefinition => {
+  const field: SchemaFieldDefinition = {
+    name,
+    type: (value.type as SchemaFieldDefinition['type']) || 'string',
+    description: (value.description as string) || undefined,
+    placeholder: (value.placeholder as string) || undefined,
+    meta_description: (value.meta_description as string) || undefined,
+    required: (value.required as boolean) || false,
+  };
+
+  if (value.enum) {
+    field.enum = value.enum as string[];
+  }
+
+  if (value.properties && typeof value.properties === 'object') {
+    field.properties = parseSchemaFields(value.properties as Record<string, unknown>);
+  }
+
+  if (value.items && typeof value.items === 'object') {
+    field.items = createSchemaFieldDefinition('item', value.items as Record<string, unknown>);
+  }
+
+  return field;
+};
+
 /** Parse schema.schema (flat JSON object with type+required+etc.) into SchemaFieldDefinition[] */
 const parseSchemaFields = (schemaObj: Record<string, unknown>): SchemaFieldDefinition[] => {
   const fields: SchemaFieldDefinition[] = [];
   for (const [name, value] of Object.entries(schemaObj)) {
-    const entry = value as Record<string, unknown>;
-    const field: SchemaFieldDefinition = {
-      name,
-      type: (entry.type as SchemaFieldDefinition['type']) || 'string',
-      description: (entry.description as string) || undefined,
-      placeholder: (entry.placeholder as string) || undefined,
-      required: (entry.required as boolean) || false,
-    };
-    if (entry.enum) field.enum = entry.enum as string[];
-    if (entry.properties && typeof entry.properties === 'object') {
-      field.properties = parseSchemaFields(entry.properties as Record<string, unknown>);
-    }
-    if (entry.items && typeof entry.items === 'object') {
-      const items = entry.items as Record<string, unknown>;
-      field.items = {
-        name: 'item',
-        type: (items.type as SchemaFieldDefinition['type']) || 'string',
-        description: (items.description as string) || undefined,
-        placeholder: (items.placeholder as string) || undefined,
-        ...(items.properties
-          ? { properties: parseSchemaFields(items.properties as Record<string, unknown>) }
-          : {}),
-      };
-    }
-    fields.push(field);
+    fields.push(createSchemaFieldDefinition(name, value as Record<string, unknown>));
   }
   return fields;
 };
@@ -107,7 +120,7 @@ const parseSchemaFields = (schemaObj: Record<string, unknown>): SchemaFieldDefin
 const buildInitialData = (fields: SchemaFieldDefinition[]): Record<string, unknown> => {
   const defaults: Record<string, unknown> = {};
   for (const field of fields) {
-    if (field.type === 'ContentBlock[]' || field.type === 'array') defaults[field.name] = [];
+    if (field.type === 'ContentBlock[]' || field.type === 'CodeBlock[]' || field.type === 'array') defaults[field.name] = [];
     else if (field.type === 'object') defaults[field.name] = {};
     else if (field.type === 'boolean') defaults[field.name] = false;
     else if (field.type === 'number') defaults[field.name] = 0;
@@ -205,6 +218,201 @@ const ContentBlocksEditor: React.FC<ContentBlocksEditorProps> = ({ fieldName, bl
   );
 };
 
+interface CodeBlocksEditorProps {
+  field: SchemaFieldDefinition;
+  blocks: CodeBlockItem[];
+  onChange: (blocks: CodeBlockItem[]) => void;
+}
+
+const CodeBlocksEditor: React.FC<CodeBlocksEditorProps> = ({ field, blocks, onChange }) => {
+  const properties = field.items?.properties || [];
+  const getProperty = (propertyName: string): SchemaFieldDefinition | undefined =>
+    properties.find((property) => property.name === propertyName);
+
+  const labelField = getProperty('label');
+  const languageField = getProperty('language');
+  const patternField = getProperty('pattern');
+  const frameworksField = getProperty('frameworks');
+  const codeField = getProperty('code');
+  const extraFields = properties.filter(
+    (property) => !['label', 'language', 'pattern', 'frameworks', 'code'].includes(property.name),
+  );
+  const frameworkOptions = frameworksField?.items?.enum || [];
+
+  const updateBlock = (index: number, update: Partial<CodeBlockItem> & Record<string, unknown>) => {
+    const next = [...blocks];
+    next[index] = { ...next[index], ...update };
+    onChange(next);
+  };
+
+  const toggleFramework = (index: number, framework: string, checked: boolean) => {
+    const current = blocks[index]?.frameworks || [];
+    const nextFrameworks = checked
+      ? Array.from(new Set([...current, framework]))
+      : current.filter((entry) => entry !== framework);
+    updateBlock(index, { frameworks: nextFrameworks });
+  };
+
+  const addBlock = () => onChange([...blocks, createDefaultCodeBlock(field.name)]);
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, index) => (
+        <Card key={block.id} className="p-4 space-y-4 bg-muted/20">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">💻</span>
+              <div>
+                <p className="text-sm font-semibold">
+                  {block.label?.trim() || `Code-Variante ${index + 1}`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {(block.language || 'Sprache offen')}
+                  {block.pattern ? ` · ${block.pattern}` : ''}
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => onChange(blocks.filter((_, blockIndex) => blockIndex !== index))}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Entfernen
+            </Button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>{labelField?.description || 'Label'}</Label>
+              <Input
+                value={block.label || ''}
+                onChange={(event) => updateBlock(index, { label: event.target.value })}
+                placeholder={labelField?.placeholder || 'z.B. Next.js Server Action'}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>{languageField?.description || 'Sprache'}</Label>
+              {languageField?.enum && languageField.enum.length > 0 ? (
+                <Select
+                  value={block.language || ''}
+                  onValueChange={(language) => updateBlock(index, { language })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={languageField.placeholder || 'Sprache wählen...'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {languageField.enum.map((option) => (
+                      <SelectItem key={option} value={option}>{option}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={block.language || ''}
+                  onChange={(event) => updateBlock(index, { language: event.target.value })}
+                  placeholder={languageField?.placeholder || 'z.B. typescript'}
+                />
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>{patternField?.description || 'Pattern / Stil'}</Label>
+              {patternField?.enum && patternField.enum.length > 0 ? (
+                <Select
+                  value={block.pattern || ''}
+                  onValueChange={(pattern) => updateBlock(index, { pattern })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={patternField.placeholder || 'Pattern wählen...'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {patternField.enum.map((option) => (
+                      <SelectItem key={option} value={option}>{option}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={block.pattern || ''}
+                  onChange={(event) => updateBlock(index, { pattern: event.target.value })}
+                  placeholder={patternField?.placeholder || 'z.B. React Hook'}
+                />
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>{frameworksField?.description || 'Frameworks'}</Label>
+              {frameworkOptions.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2 rounded-lg border p-3 bg-muted/30">
+                  {frameworkOptions.map((option) => (
+                    <label key={option} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={(block.frameworks || []).includes(option)}
+                        onCheckedChange={(checked) => toggleFramework(index, option, Boolean(checked))}
+                      />
+                      <span>{option}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <Input
+                  value={(block.frameworks || []).join(', ')}
+                  onChange={(event) => updateBlock(index, {
+                    frameworks: event.target.value
+                      .split(',')
+                      .map((entry) => entry.trim())
+                      .filter(Boolean),
+                  })}
+                  placeholder={frameworksField?.placeholder || 'z.B. react, nextjs'}
+                />
+              )}
+            </div>
+          </div>
+
+          {extraFields.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {extraFields.map((property) => (
+                <div key={property.name} className="space-y-1.5">
+                  <Label className="flex items-center gap-1">
+                    <span>{property.name}</span>
+                    <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono">{property.type}</Badge>
+                  </Label>
+                  <SchemaFieldRenderer
+                    field={property}
+                    value={(block as unknown as Record<string, unknown>)[property.name]}
+                    onChange={(propertyValue) => updateBlock(index, { [property.name]: propertyValue })}
+                    depth={1}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label>{codeField?.description || 'Code'}</Label>
+            <Textarea
+              value={block.code || ''}
+              onChange={(event) => updateBlock(index, { code: event.target.value })}
+              placeholder={codeField?.placeholder || 'Code hier einfügen...'}
+              rows={12}
+              className="font-mono text-sm"
+            />
+          </div>
+        </Card>
+      ))}
+
+      <Button type="button" size="sm" variant="outline" className="w-full border-dashed" onClick={addBlock}>
+        <Plus className="h-4 w-4 mr-2" />
+        Code-Variante hinzufügen
+      </Button>
+    </div>
+  );
+};
+
 // ─── Generic Schema Field Renderer ───────────────────────────────────────────
 
 interface SchemaFieldRendererProps {
@@ -246,6 +454,14 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
     const blocks = Array.isArray(value) ? (value as ContentBlock[]) : [];
     return (
       <ContentBlocksEditor fieldName={field.name} blocks={blocks} onChange={onChange} />
+    );
+  }
+
+  // CodeBlock[] → code variants editor
+  if (field.type === 'CodeBlock[]') {
+    const blocks = Array.isArray(value) ? (value as CodeBlockItem[]) : [];
+    return (
+      <CodeBlocksEditor field={field} blocks={blocks} onChange={onChange} />
     );
   }
 
@@ -536,7 +752,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
     const f = optionalFields.find((x) => x.name === fieldName);
     if (f) {
       let empty: unknown = '';
-      if (f.type === 'ContentBlock[]' || f.type === 'array') empty = [];
+      if (f.type === 'ContentBlock[]' || f.type === 'CodeBlock[]' || f.type === 'array') empty = [];
       else if (f.type === 'object') empty = {};
       else if (f.type === 'boolean') empty = false;
       else if (f.type === 'number') empty = 0;
