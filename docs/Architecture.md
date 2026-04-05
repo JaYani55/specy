@@ -147,8 +147,8 @@ Run with `npm run setup`. An interactive CLI wizard ([@clack/prompts](https://gi
 
 | Step | Function | What it does |
 | :--- | :--- | :--- |
-| 1 | `stepLogin()` | Runs `wrangler login` if not already authenticated. Auto-detects account ID from `wrangler whoami`. |
-| 2 | `detectAccountId()` | Reads or prompts for the Cloudflare Account ID. |
+| 1 | `stepLogin()` | Runs `wrangler login` if not already authenticated. |
+| 2 | `detectAccountId()` | Lists Cloudflare account memberships from `wrangler whoami` and lets the user choose one, or enter an Account ID manually. |
 | 3 | `stepSecretsStore()` | Lists existing Secrets Stores via `wrangler secrets-store store list`. Creates one named `service-cms` if none exist. |
 | 4 | `patchWranglerJsonc()` | Copies `wrangler.default.jsonc` → `wrangler.jsonc` and substitutes `CF_ACCOUNT_ID` + `SECRETS_STORE_ID`. |
 | 5 | `stepApiToken()` | Prompts for a Cloudflare API token and stores it as a Worker secret via `wrangler secret put CF_API_TOKEN`. |

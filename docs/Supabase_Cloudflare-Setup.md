@@ -58,7 +58,7 @@ The wizard leaves the terminal window open after completion so you can review th
 
 ```
 Step 1  Cloudflare authentication    wrangler login (skipped if already authenticated)
-Step 2  Account ID                   Auto-detected from wrangler whoami, or entered manually
+Step 2  Account ID                   Select from wrangler whoami memberships, or enter manually
 Step 3  Secrets Store                List / create / select a Cloudflare Secrets Store
 Step 4  Patch wrangler.jsonc         Copies wrangler.default.jsonc → wrangler.jsonc,
                                      substitutes CF_ACCOUNT_ID + SECRETS_STORE_ID

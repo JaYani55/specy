@@ -91,6 +91,54 @@ function bailOnCancel(value) {
   return value;
 }
 
+function parseWhoamiAccounts(raw) {
+  if (!raw) return { email: null, accounts: [] };
+
+  try {
+    const data = JSON.parse(raw);
+    return {
+      email: data.email ?? null,
+      accounts: Array.isArray(data.accounts) ? data.accounts : [],
+    };
+  } catch {
+    return { email: null, accounts: [] };
+  }
+}
+
+async function promptForAccount(accounts, message) {
+  if (accounts.length === 0) return null;
+
+  if (accounts.length === 1) {
+    const account = accounts[0];
+    log.success(`Detected account: ${pc.bold(account.name)} (${pc.dim(account.id)})`);
+    return account.id;
+  }
+
+  return bailOnCancel(
+    await select({
+      message,
+      options: [
+        ...accounts.map((account) => ({
+          label: `${pc.bold(account.name)}  ${pc.dim(account.id)}`,
+          value: account.id,
+        })),
+        { label: pc.dim('✏  Enter Account ID manually'), value: '__manual__' },
+      ],
+    }),
+  );
+}
+
+async function askAccountId() {
+  return bailOnCancel(
+    await text({
+      message: 'Cloudflare Account ID:',
+      placeholder: 'e.g. a1b2c3d4e5f6…  (dash.cloudflare.com → right sidebar)',
+      validate: (v) =>
+        v.trim().length < 8 ? 'Looks too short — paste the full Account ID.' : undefined,
+    }),
+  );
+}
+
 // ── Step helpers ───────────────────────────────────────────────────────────
 
 async function stepLogin() {
@@ -100,21 +148,17 @@ async function stepLogin() {
   s.stop('');
 
   if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      const account = data.accounts?.[0];
-      if (account) {
-        log.success(
-          `Already authenticated as ${pc.bold(data.email ?? 'user')}`,
-        );
-        const use = bailOnCancel(
-          await confirm({
-            message: `Use account  ${pc.cyan(account.name)}  (${pc.dim(account.id)})?`,
-          }),
-        );
-        if (use) return account.id;
-      }
-    } catch { /* fall through */ }
+    const { email } = parseWhoamiAccounts(raw);
+    log.success(`Already authenticated as ${pc.bold(email ?? 'user')}`);
+
+    const reuse = bailOnCancel(
+      await confirm({
+        message: 'Reuse this Cloudflare login?',
+        initialValue: true,
+      }),
+    );
+
+    if (reuse) return;
   }
 
   log.step('Running ' + pc.cyan('wrangler login') + '…');
@@ -122,33 +166,26 @@ async function stepLogin() {
   if (!ok) {
     log.warn('wrangler login exited with a non-zero code — continuing anyway.');
   }
-  return null; // accountId will be fetched / asked below
 }
 
-async function detectAccountId(previousId) {
-  if (previousId) return previousId;
+async function prepareWranglerConfigForAccount(accountId) {
+  patchWranglerJsonc(accountId, 'REPLACE_WITH_YOUR_SECRETS_STORE_ID');
+}
 
+async function detectAccountId() {
   // Try to auto-detect after login
   const raw = wranglerSilent('whoami', '--json');
   if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      const account = data.accounts?.[0];
-      if (account) {
-        log.success(`Detected account: ${pc.bold(account.name)} (${pc.dim(account.id)})`);
-        return account.id;
-      }
-    } catch { /* fall through */ }
+    const { accounts } = parseWhoamiAccounts(raw);
+    const choice = await promptForAccount(
+      accounts,
+      'Which Cloudflare account should this installation use?',
+    );
+
+    if (choice && choice !== '__manual__') return choice;
   }
 
-  return bailOnCancel(
-    await text({
-      message: 'Cloudflare Account ID:',
-      placeholder: 'e.g. a1b2c3d4e5f6…  (dash.cloudflare.com → right sidebar)',
-      validate: (v) =>
-        v.trim().length < 8 ? 'Looks too short — paste the full Account ID.' : undefined,
-    }),
-  );
+  return askAccountId();
 }
 
 async function stepSecretsStore() {
@@ -1007,11 +1044,16 @@ async function main() {
 
   // ── 1. Login ──────────────────────────────────────────────────────────────
   log.step(pc.bold('Step 1 — Cloudflare authentication'));
-  const immediateAccountId = await stepLogin();
+  await stepLogin();
 
   // ── 2. Account ID ─────────────────────────────────────────────────────────
   log.step(pc.bold('Step 2 — Account ID'));
-  const accountId = await detectAccountId(immediateAccountId);
+  const accountId = await detectAccountId();
+
+  const ac = spinner();
+  ac.start('Preparing wrangler.jsonc for the selected Cloudflare account…');
+  await prepareWranglerConfigForAccount(accountId);
+  ac.stop(pc.green('wrangler.jsonc prepared with selected account ✓'));
 
   // ── 3. Secrets Store ──────────────────────────────────────────────────────
   log.step(pc.bold('Step 3 — Secrets Store'));
@@ -1019,7 +1061,7 @@ async function main() {
 
   // ── 4. Patch wrangler.jsonc ───────────────────────────────────────────────
   const ps = spinner();
-  ps.start('Patching wrangler.jsonc…');
+  ps.start('Writing the selected Secrets Store to wrangler.jsonc…');
   patchWranglerJsonc(accountId, storeId);
   ps.stop(pc.green('wrangler.jsonc updated ✓'));
 

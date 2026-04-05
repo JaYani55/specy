@@ -3,6 +3,7 @@
   "main": "api/index.ts",
   "compatibility_date": "2026-02-19",
   "compatibility_flags": ["nodejs_compat"],
+  "account_id": "REPLACE_WITH_YOUR_CF_ACCOUNT_ID",
 
   // ╔══════════════════════════════════════════════════════════════════════════╗
   // ║                        FIRST-TIME SETUP                                 ║
