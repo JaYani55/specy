@@ -1,8 +1,8 @@
-== Service-CMS Project Notice ==
+== Specy Project Notice ==
 
-Software: Service-CMS (including derivatives ServiceCMS, Server-CMS, and ServerCMS)
+Software: Specy (including legacy references to Service-CMS and Server-CMS)
 Copyright 2026, Jan-Alban Rathjen (also known as 'Jay Rathjen'), 
-acting in the name of the Service-CMS Project Authors.
+acting in the name of the Specy Project Authors.
 
 Licensed under the European Union Public Licence v. 1.2 (EUPL).
 Project Website: https://pluracon.org
@@ -10,14 +10,11 @@ Project Website: https://pluracon.org
 == Project Stewardship & Governance ==
 
 Jan-Alban Rathjen ("Jay Rathjen") serves as the Founding Steward and Project 
-Lead of the Service-CMS Project. The Steward maintains the exclusive right 
+Lead of the Specy Project. The Steward maintains the exclusive right 
 to manage project assets, including the authority to transfer all 
-copyrights, trademarks, and management responsibilities to a non-profit 
-foundation or a successor legal entity at their sole discretion.
-
-The Steward is committed to transferring the Service-CMS trademarks and 
-names to a neutral, independent legal entity once the project has 
-sufficiently organized itself to ensure long-term sustainability.
+copyrights, trademarks, and management responsibilities to a successor 
+legal entity or a non-profit foundation at their sole discretion, should 
+it serve the long-term sustainability and growth of the project.
 
 == Attribution & Integrity (EUPL Art. 4) ==
 
@@ -26,12 +23,13 @@ of the software (including providing access via a network/SaaS) MUST
 retain this NOTICE file and all original copyright and attribution notices.
 
 If the software is used in a web-hosted environment (SaaS), a visible link 
-to the contributor list (e.g., via /info/legal) must be maintained to 
-ensure the "Communication to the Public" requirements of the EUPL are met.
+to the legal and contributor information (e.g., via /info/legal) must be 
+maintained to ensure the "Communication to the Public" requirements 
+of the EUPL are met.
 
 Core Contributors:
-- Mira Weitner
 - Jay Rathjen
+- Mira Weitner
 
 == Permissions & Trademarks ==
 
@@ -39,6 +37,12 @@ Core Contributors:
    Any derivative work distributed or made available over a network must 
    be licensed under the EUPL or a compatible license as listed in the 
    EUPL Appendix.
-2. Trademarks: The names "Service-CMS" and derivatives remain trademarks of 
-   the Project Steward until the formal transfer to a legal entity. Use 
-   of these names is permitted only for factual attribution.
+2. Trademarks: The name "Specy" and associated logos are trademarks held by 
+   the Project Steward. Use of these names is permitted for factual 
+   attribution and interoperability descriptions, provided it does not 
+   imply official endorsement by the project.
+3. Modular Extensions: Pursuant to Art. 9 EUPL and Recital 10, software 
+   modules (plugins) that interact with the Specy core via defined 
+   interfaces (Hooks/Providers) without modifying the core source code 
+   are considered separate works and may be licensed under different terms, 
+   including proprietary licenses.
