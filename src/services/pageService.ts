@@ -1,7 +1,42 @@
 import { supabase } from '@/lib/supabase';
-import type { PageSchema, PageRecord, PageBuilderData, TLDGroup } from '@/types/pagebuilder';
+import type { PageSchema, PageSchemaTemplate, PageRecord, PageBuilderData, TLDGroup } from '@/types/pagebuilder';
 
 import { API_URL } from '@/lib/apiUrl';
+
+export interface RevalidationSecretStatus {
+  configured: boolean;
+  secret_name: string | null;
+  legacy_plaintext: boolean;
+  registration_status: string;
+  frontend_url: string | null;
+  revalidation_endpoint: string | null;
+  management_available?: boolean;
+  readonly_fallback?: boolean;
+  warning?: string | null;
+}
+
+export interface CreateSchemaTemplateInput {
+  name: string;
+  slug?: string;
+  description?: string;
+  icon?: string;
+  schema: Record<string, unknown>;
+  llm_instructions?: string;
+  source_schema_id?: string;
+  external_source_url?: string;
+}
+
+async function createAuthenticatedHeaders(extraHeaders?: HeadersInit): Promise<Headers> {
+  const headers = new Headers(extraHeaders);
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return headers;
+}
 
 // --- Slug Utilities ---
 
@@ -16,6 +51,39 @@ const generateSlug = (name: string): string => {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+};
+
+const normalizeSlug = (value: string): string => {
+  const normalized = generateSlug(value);
+  return normalized || 'page';
+};
+
+const ensureUniquePageSlug = async (requestedSlug: string, pageId?: string): Promise<string> => {
+  const baseSlug = normalizeSlug(requestedSlug);
+  let candidate = baseSlug;
+  let suffix = 2;
+
+  while (true) {
+    let query = supabase
+      .from('pages')
+      .select('id')
+      .eq('slug', candidate)
+      .limit(1);
+
+    if (pageId) {
+      query = query.neq('id', pageId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) {
+      return candidate;
+    }
+
+    candidate = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
 };
 
 const generateRegistrationCode = (): string => {
@@ -38,6 +106,70 @@ export const getSchemas = async (): Promise<PageSchema[]> => {
 
   if (error) throw new Error(error.message);
   return data as PageSchema[];
+};
+
+export const getSchemaTemplates = async (): Promise<PageSchemaTemplate[]> => {
+  if (!API_URL) {
+    return [];
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/templates`, {
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to load schema templates' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to load schema templates');
+  }
+
+  const body = await response.json() as { templates?: PageSchemaTemplate[] };
+  return body.templates ?? [];
+};
+
+export const createSchemaTemplate = async (input: CreateSchemaTemplateInput): Promise<PageSchemaTemplate> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/templates`, {
+    method: 'POST',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }),
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to create schema template' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to create schema template');
+  }
+
+  const body = await response.json() as { template: PageSchemaTemplate };
+  return body.template;
+};
+
+export const importSchemaTemplate = async (url: string): Promise<PageSchemaTemplate> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/templates/import`, {
+    method: 'POST',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }),
+    body: JSON.stringify({ url }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to import schema template' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to import schema template');
+  }
+
+  const body = await response.json() as { template: PageSchemaTemplate };
+  return body.template;
 };
 
 export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_count: number }> => {
@@ -133,18 +265,23 @@ export const deleteSchema = async (id: string): Promise<void> => {
   if (error) throw new Error(error.message);
 };
 
-export const unhookSchema = async (id: string): Promise<void> => {
-  const { error } = await supabase
-    .from('page_schemas')
-    .update({
-      registration_status: 'pending',
-      frontend_url: null,
-      revalidation_endpoint: null,
-      revalidation_secret: null,
-    })
-    .eq('id', id);
+export const unhookSchema = async (schemaSlug: string): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
 
-  if (error) throw new Error(error.message);
+  const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/unhook`, {
+    method: 'POST',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to unhook schema' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to unhook schema');
+  }
 };
 
 export const startSchemaRegistration = async (id: string): Promise<PageSchema> => {
@@ -221,9 +358,10 @@ export const savePage = async (
   pageId: string | undefined,
   content: Record<string, unknown>,
   pageName: string,
-  schemaId: string
+  schemaId: string,
+  requestedSlug?: string,
 ): Promise<{ id: string; slug: string }> => {
-  const slug = generateSlug(pageName);
+  const slug = await ensureUniquePageSlug(requestedSlug || pageName, pageId);
 
   if (pageId) {
     // Update existing page
@@ -395,7 +533,7 @@ export const saveProductPage = async (
 
   if (existingMentorProductError) throw new Error(existingMentorProductError.message);
 
-  const slug = generateSlug(productName);
+  const slug = await ensureUniquePageSlug(productName, existingMentorProduct?.product_page_id ?? undefined);
 
   if (existingMentorProduct?.product_page_id) {
     const { error } = await supabase
@@ -473,5 +611,58 @@ export const triggerRevalidation = async (schemaSlug: string, pageSlug: string):
     return await response.json();
   } catch {
     return { success: false, message: 'Failed to reach API' };
+  }
+};
+
+export const getRevalidationSecretStatus = async (schemaSlug: string): Promise<RevalidationSecretStatus> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/revalidation-secret/status`, {
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to load revalidation secret status' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to load revalidation secret status');
+  }
+
+  return response.json() as Promise<RevalidationSecretStatus>;
+};
+
+export const setRevalidationSecret = async (schemaSlug: string, secret: string): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/revalidation-secret`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }),
+    body: JSON.stringify({ secret }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to save revalidation secret' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to save revalidation secret');
+  }
+};
+
+export const deleteRevalidationSecret = async (schemaSlug: string): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/revalidation-secret`, {
+    method: 'DELETE',
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to delete revalidation secret' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to delete revalidation secret');
   }
 };

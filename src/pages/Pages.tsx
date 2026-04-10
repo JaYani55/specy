@@ -165,13 +165,15 @@ Each ContentBlock has { id, type } + type-specific fields:
 
 ── File: app/api/revalidate/route.ts ──
   // The CMS calls this endpoint via POST when content is saved.
-  // It sends: POST /api/revalidate?secret=<secret>&path=<page_slug>
+  // It sends: POST /api/revalidate?path=<page_slug>
+  //           Authorization: Bearer <secret>
 
   import { revalidatePath } from 'next/cache';
   import { NextRequest, NextResponse } from 'next/server';
 
   export async function POST(req: NextRequest) {
-    const secret = req.nextUrl.searchParams.get('secret');
+    const authHeader = req.headers.get('authorization');
+    const secret = authHeader?.replace(/^Bearer\s+/i, '') ?? null;
     const path   = req.nextUrl.searchParams.get('path');   // page_slug from CMS
 
     if (secret !== process.env.REVALIDATION_SECRET) {
@@ -211,13 +213,15 @@ Each ContentBlock has { id, type } + type-specific fields:
 
 ── File: src/routes/api/revalidate/[slug]/+server.ts ──
   // The CMS calls this endpoint via POST when content is saved.
-  // It sends: POST /api/revalidate/<page_slug>?secret=<secret>
+  // It sends: POST /api/revalidate/<page_slug>
+  //           Authorization: Bearer <secret>
 
   import { json, error } from '@sveltejs/kit';
   import type { RequestHandler } from './$types';
 
-  export const POST: RequestHandler = async ({ params, url, platform }) => {
-    const secret = url.searchParams.get('secret');
+  export const POST: RequestHandler = async ({ params, request, platform }) => {
+    const authHeader = request.headers.get('authorization');
+    const secret = authHeader?.replace(/^Bearer\s+/i, '') ?? null;
 
     if (secret !== process.env.REVALIDATION_SECRET) {
       throw error(401, 'Invalid secret');
@@ -250,7 +254,7 @@ Once deployed, call the CMS registration endpoint from your frontend
     "code": "<registration_code>",          // shown in CMS
     "frontend_url": "https://your-site.com",
     "revalidation_endpoint": "/api/revalidate",
-    "revalidation_secret": "<shared_secret>", // also set in .env
+    "revalidation_secret": "<shared_secret>", // stored by the CMS, not persisted in plaintext
     "slug_structure": "/:slug"               // URL pattern — see section 4.5
   }
 
@@ -264,7 +268,8 @@ Success response (200):
 After registration the CMS will:
   • Set schema status → "registered"
   • Show the domain in the Pages dashboard with a health ping
-  • Call POST {frontend_url}{revalidation_endpoint}?secret={secret}&path={page_slug}
+  • Call POST {frontend_url}{revalidation_endpoint}?path={page_slug}
+    with Authorization: Bearer {shared_secret}
     whenever content for this schema is published or updated`;
 
     // ── Section: slug_structure ───────────────────────────────────────────
@@ -302,7 +307,8 @@ ${isNext ? `  • Add a ?draft=true query param and check it in your page compon
 
 ── Revalidation path format ──
 The CMS calls your revalidation endpoint with:
-  POST {revalidation_endpoint}?secret={secret}&path={page_slug}
+  POST {revalidation_endpoint}?path={page_slug}
+  Authorization: Bearer {secret}
 
 Here "path" is the bare slug (e.g. "my-page"), NOT the full URL path.
 Your revalidation handler should prepend the route prefix if needed:
@@ -736,7 +742,7 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, onNavigate, on
 
     setIsUnhooking(true);
     try {
-      await Promise.all(group.schemas.map(s => unhookSchema(s.id)));
+      await Promise.all(group.schemas.map(s => unhookSchema(s.slug)));
       onRefresh();
     } catch (err) {
       console.error('Unhook failed', err);

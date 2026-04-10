@@ -121,11 +121,13 @@ interface PageBuilderFormProps {
   initialData?: PageBuilderData | null;
   productId?: string;
   productName?: string;
+  productSlug?: string;
+  productStatus?: 'draft' | 'published' | 'archived';
   schema?: PageSchema;
   schemaSlug?: string;
 }
 
-export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, productId, productName, schema, schemaSlug }) => {
+export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, productId, productName, productSlug, productStatus, schema, schemaSlug }) => {
   // All hooks must be declared unconditionally (Rules of Hooks).
   // Schema-driven rendering delegates to SchemaPageBuilderForm below.
   const [isSaving, setIsSaving] = useState(false);
@@ -154,6 +156,8 @@ export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, p
         pageId={productId}
         initialData={initialData as unknown as Record<string, unknown> | null}
         initialName={productName}
+        initialSlug={productSlug}
+        initialStatus={productStatus}
       />
     );
   }

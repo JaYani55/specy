@@ -2,12 +2,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Plus, Settings, ArrowLeft, Loader2, FileText, Globe,
-  Pencil, Trash2, ExternalLink, Eye, MoreVertical
+  Pencil, Trash2, ExternalLink, Eye, MoreVertical, KeyRound, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,10 +26,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { getSchema, getPagesBySchema, deletePage, updatePageStatus, checkDomainHealthDirect, startSchemaRegistration } from '@/services/pageService';
+import {
+  getSchema,
+  getPagesBySchema,
+  deletePage,
+  updatePageStatus,
+  checkDomainHealthDirect,
+  startSchemaRegistration,
+  triggerRevalidation,
+  getRevalidationSecretStatus,
+  setRevalidationSecret,
+  deleteRevalidationSecret,
+  type RevalidationSecretStatus,
+} from '@/services/pageService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 
 const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -40,6 +55,8 @@ const PagesSchemaDetail: React.FC = () => {
   const { schemaSlug } = useParams<{ schemaSlug: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
+  const permissions = usePermissions();
+  const canManageRevalidationSecret = permissions.hasRole('admin');
 
   const [schema, setSchema] = useState<(PageSchema & { page_count: number }) | null>(null);
   const [pages, setPages] = useState<PageRecord[]>([]);
@@ -48,6 +65,10 @@ const PagesSchemaDetail: React.FC = () => {
   const [health, setHealth] = useState<'online' | 'offline' | 'checking' | null>(null);
   const [deletePageId, setDeletePageId] = useState<string | null>(null);
   const [isStartingRegistration, setIsStartingRegistration] = useState(false);
+  const [revalidationSecretStatus, setRevalidationSecretStatus] = useState<RevalidationSecretStatus | null>(null);
+  const [revalidationSecretInput, setRevalidationSecretInput] = useState('');
+  const [isSavingRevalidationSecret, setIsSavingRevalidationSecret] = useState(false);
+  const [isDeletingRevalidationSecret, setIsDeletingRevalidationSecret] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!schemaSlug) return;
@@ -58,6 +79,7 @@ const PagesSchemaDetail: React.FC = () => {
 
       const pagesData = await getPagesBySchema(schemaData.id);
       setPages(pagesData);
+      setRevalidationSecretStatus(null);
 
       // Check domain health for registered schemas
       if (schemaData.registration_status === 'registered' && schemaData.frontend_url) {
@@ -65,13 +87,19 @@ const PagesSchemaDetail: React.FC = () => {
         checkDomainHealthDirect(schemaData.frontend_url).then(result => {
           setHealth(result.status);
         });
+
+        if (canManageRevalidationSecret) {
+          getRevalidationSecretStatus(schemaData.slug)
+            .then((status) => setRevalidationSecretStatus(status))
+            .catch(() => setRevalidationSecretStatus(null));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load schema');
     } finally {
       setIsLoading(false);
     }
-  }, [schemaSlug]);
+  }, [canManageRevalidationSecret, schemaSlug]);
 
   useEffect(() => {
     fetchData();
@@ -105,12 +133,71 @@ const PagesSchemaDetail: React.FC = () => {
   };
 
   const handleStatusChange = async (pageId: string, status: 'draft' | 'published' | 'archived') => {
+    const currentPage = pages.find((page) => page.id === pageId) ?? null;
+
     try {
       await updatePageStatus(pageId, status);
       setPages(prev => prev.map(p => p.id === pageId ? { ...p, status, is_draft: status === 'draft' } : p));
       toast.success(language === 'en' ? `Status changed to ${status}` : `Status geändert zu ${status}`);
+
+      if (status === 'published' && currentPage?.slug && schema.registration_status === 'registered') {
+        try {
+        const rev = await triggerRevalidation(schema.slug, currentPage.slug);
+        if (rev.success) {
+          toast.success(language === 'en'
+            ? `ISR triggered for /${currentPage.slug}`
+            : `ISR für /${currentPage.slug} ausgelöst`);
+        } else {
+          toast.warning(language === 'en'
+            ? `ISR revalidation failed: ${rev.message}`
+            : `ISR-Revalidierung fehlgeschlagen: ${rev.message}`);
+        }
+        } catch {
+          toast.warning(language === 'en'
+            ? 'Page published, but ISR endpoint could not be reached'
+            : 'Seite veröffentlicht, aber der ISR-Endpunkt konnte nicht erreicht werden');
+        }
+      }
     } catch {
       toast.error(language === 'en' ? 'Failed to update status' : 'Fehler beim Aktualisieren');
+    }
+  };
+
+  const handleSaveRevalidationSecret = async () => {
+    if (!schema) return;
+
+    const secret = revalidationSecretInput.trim();
+    if (!secret) {
+      toast.error(language === 'en' ? 'Secret cannot be empty' : 'Secret darf nicht leer sein');
+      return;
+    }
+
+    setIsSavingRevalidationSecret(true);
+    try {
+      await setRevalidationSecret(schema.slug, secret);
+      setRevalidationSecretInput('');
+      const status = await getRevalidationSecretStatus(schema.slug);
+      setRevalidationSecretStatus(status);
+      toast.success(language === 'en' ? 'Revalidation secret saved' : 'Revalidation-Secret gespeichert');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save revalidation secret');
+    } finally {
+      setIsSavingRevalidationSecret(false);
+    }
+  };
+
+  const handleDeleteRevalidationSecret = async () => {
+    if (!schema) return;
+
+    setIsDeletingRevalidationSecret(true);
+    try {
+      await deleteRevalidationSecret(schema.slug);
+      setRevalidationSecretStatus((current) => current ? { ...current, configured: false, secret_name: null, legacy_plaintext: false } : null);
+      toast.success(language === 'en' ? 'Revalidation secret removed' : 'Revalidation-Secret entfernt');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete revalidation secret');
+    } finally {
+      setIsDeletingRevalidationSecret(false);
     }
   };
 
@@ -208,10 +295,10 @@ const PagesSchemaDetail: React.FC = () => {
       )}
 
       {/* Domain Info Panel */}
-      {schema.registration_status === 'registered' && schema.frontend_url && (
+      {schema.registration_status === 'registered' && schema.frontend_url && canManageRevalidationSecret && (
         <Card>
-          <CardContent className="py-4">
-            <div className="flex items-center gap-6 text-sm">
+          <CardContent className="py-4 space-y-4">
+            <div className="flex items-center gap-6 text-sm flex-wrap">
               <div className="flex items-center gap-2">
                 <Globe className="h-4 w-4 text-muted-foreground" />
                 <span className="font-medium">Domain:</span>
@@ -239,6 +326,88 @@ const PagesSchemaDetail: React.FC = () => {
                   </div>
                 </>
               )}
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium">
+                      {language === 'en' ? 'Revalidation Secret' : 'Revalidation-Secret'}
+                    </span>
+                    {revalidationSecretStatus?.configured ? (
+                      <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 gap-1">
+                        <ShieldCheck className="h-3 w-3" />
+                        {language === 'en' ? 'Configured' : 'Konfiguriert'}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1">
+                        <ShieldAlert className="h-3 w-3" />
+                        {language === 'en' ? 'Missing' : 'Fehlt'}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {language === 'en'
+                      ? 'Stored server-side and sent as Authorization: Bearer during revalidation. The value is write-only.'
+                      : 'Wird serverseitig gespeichert und bei der Revalidation als Authorization: Bearer gesendet. Der Wert ist nur schreibbar.'}
+                  </p>
+                  {revalidationSecretStatus?.warning && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      {revalidationSecretStatus.warning}
+                    </p>
+                  )}
+                  {revalidationSecretStatus?.secret_name && (
+                    <p className="text-xs text-muted-foreground mt-1 font-mono">
+                      {revalidationSecretStatus.secret_name}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-[1fr_auto_auto] md:items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="revalidation-secret-input">
+                    {revalidationSecretStatus?.configured
+                      ? (language === 'en' ? 'Replace secret' : 'Secret ersetzen')
+                      : (language === 'en' ? 'Set secret' : 'Secret setzen')}
+                  </Label>
+                  <Input
+                    id="revalidation-secret-input"
+                    type="password"
+                    value={revalidationSecretInput}
+                    onChange={(event) => setRevalidationSecretInput(event.target.value)}
+                    placeholder={language === 'en' ? 'Enter a shared secret' : 'Gemeinsames Secret eingeben'}
+                    autoComplete="off"
+                    disabled={revalidationSecretStatus?.management_available === false}
+                  />
+                </div>
+                <Button
+                  onClick={handleSaveRevalidationSecret}
+                  disabled={isSavingRevalidationSecret || revalidationSecretStatus?.management_available === false}
+                >
+                  {isSavingRevalidationSecret && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {revalidationSecretStatus?.configured
+                    ? (language === 'en' ? 'Rotate Secret' : 'Secret rotieren')
+                    : (language === 'en' ? 'Save Secret' : 'Secret speichern')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    !revalidationSecretStatus?.configured ||
+                    isDeletingRevalidationSecret ||
+                    revalidationSecretStatus?.management_available === false
+                  }
+                  onClick={handleDeleteRevalidationSecret}
+                >
+                  {isDeletingRevalidationSecret && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {language === 'en' ? 'Clear' : 'Löschen'}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

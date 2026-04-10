@@ -3,6 +3,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPTransport } from '@hono/mcp';
 import { z } from 'zod';
 import { createSupabaseClient, type Env } from '../lib/supabase';
+import { createSupabaseAdminClient } from '../lib/supabase';
+import {
+  buildRevalidationSecretName,
+  getRevalidationSecretNamespace,
+  upsertManagedSecret,
+} from '../lib/managedSecrets';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
@@ -171,7 +177,7 @@ async function createMcpServerWithTools(env: Env, baseUrl: string) {
     async ({ slug, code, frontend_url, revalidation_endpoint, revalidation_secret, slug_structure }) => {
       const { data: schema, error } = await supabase
         .from('page_schemas')
-        .select('id, registration_code, registration_status')
+        .select('id, slug, registration_code, registration_status, revalidation_secret_name')
         .eq('slug', slug)
         .single();
 
@@ -187,14 +193,33 @@ async function createMcpServerWithTools(env: Env, baseUrl: string) {
         return { content: [{ type: 'text' as const, text: 'Invalid registration code.' }] };
       }
 
-      const { error: updateError } = await supabase
+      const secretName = revalidation_secret?.trim()
+        ? (schema.revalidation_secret_name || buildRevalidationSecretName(schema.id))
+        : schema.revalidation_secret_name;
+
+      if (revalidation_secret?.trim() && secretName) {
+        await upsertManagedSecret(c.env, {
+          name: secretName,
+          namespace: getRevalidationSecretNamespace(),
+          value: revalidation_secret.trim(),
+          metadata: {
+            schema_id: schema.id,
+            schema_slug: schema.slug,
+            frontend_url,
+          },
+        });
+      }
+
+      const admin = await createSupabaseAdminClient(c.env);
+      const { error: updateError } = await admin
         .from('page_schemas')
         .update({
           registration_status: 'registered',
           registration_code: null,
           frontend_url,
           revalidation_endpoint: revalidation_endpoint || null,
-          revalidation_secret: revalidation_secret || null,
+          revalidation_secret: null,
+          revalidation_secret_name: secretName ?? null,
           slug_structure: slug_structure || '/:slug',
         })
         .eq('id', schema.id);

@@ -39,7 +39,7 @@ import {
 import { Save, Eye, Loader2, ExternalLink, Plus, Trash2, ChevronDown, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { savePage, triggerRevalidation } from '@/services/pageService';
-import type { PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
+import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
 import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
 import { ImageUploader } from './ImageUploader';
 import { JsonImporter } from './JsonImporter';
@@ -684,6 +684,8 @@ interface SchemaPageBuilderFormProps {
   pageId?: string;
   initialData?: Record<string, unknown> | null;
   initialName?: string;
+  initialSlug?: string;
+  initialStatus?: PageRecord['status'];
 }
 
 export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
@@ -692,6 +694,8 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   pageId,
   initialData,
   initialName,
+  initialSlug,
+  initialStatus,
 }) => {
   const fields = parseSchemaFields(schema.schema as Record<string, unknown>);
   const requiredFields = fields.filter((f) => f.required);
@@ -699,7 +703,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
 
   // ── Form state
   const [pageName, setPageName]           = useState(initialName || '');
-  const [pageSlug, setPageSlug]           = useState(() => (initialName ? generateSlug(initialName) : ''));
+  const [pageSlug, setPageSlug]           = useState(() => (initialSlug || (initialName ? generateSlug(initialName) : '')));
   const [slugEdited, setSlugEdited]       = useState(false);
   const [formData, setFormData]           = useState<Record<string, unknown>>(() =>
     initialData ? { ...initialData } : buildInitialData(fields)
@@ -799,12 +803,11 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
         if (activeOptional.has(f.name)) content[f.name] = formData[f.name];
       }
 
-      const result = await savePage(pageId, content, pageName, schema.id);
+      const result = await savePage(pageId, content, pageName, schema.id, pageSlug);
       setSavedSlug(result.slug);
       toast.success(`Seite "${pageName}" gespeichert als /${result.slug}`);
 
-      // Trigger ISR revalidation if schema is registered
-      if (schema.registration_status === 'registered' && result.slug) {
+      if (schema.registration_status === 'registered' && initialStatus === 'published' && result.slug) {
         try {
           const rev = await triggerRevalidation(schemaSlug, result.slug);
           setRevalResult(rev);
@@ -818,6 +821,8 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
           setRevalResult({ success: false, message: msg });
           toast.warning(`Seite gespeichert — ISR-Fehler: ${msg}`);
         }
+      } else {
+        setRevalResult(null);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler beim Speichern');

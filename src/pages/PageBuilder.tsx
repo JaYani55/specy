@@ -89,6 +89,8 @@ const PageBuilder: React.FC = () => {
         initialData={initialData}
         productId={isSchemaMode ? pageRecord?.id : id}
         productName={productName}
+        productSlug={isSchemaMode ? pageRecord?.slug : undefined}
+        productStatus={isSchemaMode ? pageRecord?.status : undefined}
         schema={schema ?? undefined}
         schemaSlug={schemaSlug}
       />

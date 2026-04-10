@@ -130,10 +130,39 @@ export interface PageSchema {
   frontend_url: string | null;
   revalidation_endpoint: string | null;
   revalidation_secret: string | null;
+  revalidation_secret_name: string | null;
   slug_structure: string;
   is_default: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface PageSchemaTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  schema: Record<string, unknown>;
+  llm_instructions: string | null;
+  source_schema_id: string | null;
+  external_source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SchemaTemplateDefinition {
+  id: string;
+  name: string;
+  nameDe: string;
+  slug: string;
+  description: string;
+  descriptionDe: string;
+  icon: string;
+  schema: Record<string, unknown>;
+  llm_instructions?: string;
+  source: 'bundled' | 'stored';
+  external_source_url?: string | null;
 }
 
 export interface PageRecord {

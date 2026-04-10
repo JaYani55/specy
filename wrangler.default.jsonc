@@ -25,32 +25,34 @@
   // ║                                                                          ║
   // ║  3. Replace EVERY value marked  <<<  below, then copy to wrangler.jsonc. ║
   // ║                                                                          ║
-  // ║  4. Set your CF API token (never stored in this file):                   ║
+  // ║  4. Set Worker secrets (never stored in this file):                      ║
   // ║     npx wrangler secret put CF_API_TOKEN                                 ║
-  // ║     Token needs:  Account → Secrets Store → Edit                         ║
+  // ║     npx wrangler secret put SUPABASE_PUBLISHABLE_KEY                     ║
+  // ║     npx wrangler secret put SECRETS_ENCRYPTION_KEY                       ║
+  // ║     CF_API_TOKEN needs: Account → Secrets Store → Edit                   ║
   // ║                                                                          ║
-  // ║  5. Add your Supabase secrets to the store:                              ║
-  // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
-  // ║       --name SUPABASE_URL --scopes workers --remote                      ║
-  // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
-  // ║       --name SUPABASE_PUBLISHABLE_KEY --scopes workers --remote          ║
+  // ║  5. Add the Supabase admin secret to the Secrets Store:                  ║
   // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
   // ║       --name SUPABASE_SECRET_KEY --scopes workers --remote               ║
-  // ║     (or use the /verwaltung/connections UI after first deploy)           ║
   // ║                                                                          ║
-  // ║  6. MEDIA STORAGE — choose one provider:                                 ║
+  // ║  6. Put non-sensitive runtime config in vars below:                      ║
+  // ║     SUPABASE_URL                                                         ║
+  // ║     STORAGE_PROVIDER                                                     ║
+  // ║     STORAGE_BUCKET                                                       ║
+  // ║     R2_PUBLIC_URL                                                        ║
   // ║                                                                          ║
-  // ║  Option A — Supabase Storage (default, uses existing credentials):       ║
-  // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
-  // ║       --name STORAGE_PROVIDER --scopes workers --remote   (value: supabase) ║
-  // ║     npx wrangler secrets-store secret create <STORE_ID> \               ║
-  // ║       --name STORAGE_BUCKET --scopes workers --remote     (value: booking_media) ║
+  // ║  7. MEDIA STORAGE — choose one provider:                                 ║
+  // ║                                                                          ║
+  // ║  Option A — Supabase Storage (default):                                  ║
+  // ║     STORAGE_PROVIDER = supabase                                          ║
+  // ║     STORAGE_BUCKET   = booking_media                                     ║
   // ║                                                                          ║
   // ║  Option B — Cloudflare R2:                                               ║
-  // ║     a) Replace bucket_name in the r2_buckets section below  <<<         ║
-  // ║     b) Create secrets:                                                   ║
-  // ║        STORAGE_PROVIDER  → r2                                            ║
-  // ║        R2_PUBLIC_URL     → https://pub-xxx.r2.dev (or custom domain)     ║
+  // ║     a) Set STORAGE_PROVIDER = r2 and R2_PUBLIC_URL below                 ║
+  // ║     b) Replace bucket_name in the r2_buckets section below  <<<         ║
+  // ║     c) Uncomment the r2_buckets section                                  ║
+  // ║                                                                          ║
+  // ║  8. Apply database migrations, then build and deploy.                    ║
   // ╚══════════════════════════════════════════════════════════════════════════╝
 
   // ── Static SPA assets (Vite build output) ───────────────────────────────────
@@ -72,7 +74,8 @@
     // <<< REPLACE: Your Secrets Store UUID (see step 2 above)
     "SECRETS_STORE_ID": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
 
-    // Written by the setup wizard (wrangler.jsonc is git-ignored, never committed)
+    // Written by the setup wizard (wrangler.jsonc is git-ignored, never committed).
+    // These are non-sensitive runtime settings and intentionally stay in vars.
     "SUPABASE_URL":      "REPLACE_WITH_SUPABASE_URL",
     "STORAGE_PROVIDER": "REPLACE_WITH_STORAGE_PROVIDER",
     "STORAGE_BUCKET":   "REPLACE_WITH_STORAGE_BUCKET",
@@ -92,7 +95,8 @@
   "secrets_store_secrets": [
     {
       // Supabase secret key — bypasses RLS, stored in Secrets Store only.
-      // All other credentials are Worker vars/secrets (see vars section above).
+      // The publishable key and managed-secret encryption key are Worker secrets.
+      // SUPABASE_URL and storage settings stay in vars above.
       "binding": "SS_SUPABASE_SECRET_KEY",
       // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
       "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
@@ -101,6 +105,8 @@
   ]
 
   // ── Worker secrets (CLI only — never commit these) ───────────────────────────
+  // Local wrangler dev should mirror these in .dev.vars where needed.
   // CF_API_TOKEN             → npx wrangler secret put CF_API_TOKEN
+  // SECRETS_ENCRYPTION_KEY   → npx wrangler secret put SECRETS_ENCRYPTION_KEY
   // SUPABASE_PUBLISHABLE_KEY → npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
 }

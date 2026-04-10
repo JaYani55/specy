@@ -15,6 +15,7 @@
 import { Hono } from 'hono';
 import { requireAppRole } from '../lib/auth';
 import { Env, createSupabaseClient, createSupabaseAdminClient } from '../lib/supabase';
+import { getStorageConfig } from '../lib/systemConfig';
 
 // File operations (list files, upload, delete) use the publishable key — bucket
 // policies govern access so no service key is needed for those.
@@ -46,9 +47,10 @@ function getBearerToken(headerValue: string | undefined): string | undefined {
 
 // ── helper: resolve the active storage config ──────────────────────────────
 async function resolveMediaConfig(env: Env): Promise<MediaConfig & { r2PublicUrl: string | null }> {
-  const provider = (env.STORAGE_PROVIDER || '') as 'supabase' | 'r2' | '';
-  const bucket   = env.STORAGE_BUCKET   || '';
-  const r2PublicUrl = env.R2_PUBLIC_URL || '';
+  const systemConfig = await getStorageConfig(env);
+  const provider = systemConfig.provider;
+  const bucket = systemConfig.bucket;
+  const r2PublicUrl = systemConfig.r2PublicUrl;
 
   if (!provider || !bucket) {
     return { provider: 'unconfigured', bucket: null, configured: false, r2PublicUrl: null };

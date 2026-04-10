@@ -66,6 +66,8 @@ export interface Env {
   // Used by the /api/secrets routes to call the CF REST API.
   // Set via: npx wrangler secret put CF_API_TOKEN
   CF_API_TOKEN?: string;
+  // Used by the managed secret provider to encrypt dynamic secrets stored in the database.
+  SECRETS_ENCRYPTION_KEY?: string;
   // Set via vars in wrangler.jsonc (non-sensitive)
   CF_ACCOUNT_ID?: string;
   SECRETS_STORE_ID?: string;

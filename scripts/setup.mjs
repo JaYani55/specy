@@ -31,6 +31,7 @@ import {
   cancel,
 } from '@clack/prompts';
 import { execSync, spawnSync } from 'child_process';
+import { randomBytes } from 'crypto';
 import { readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -67,6 +68,10 @@ function wranglerInteractive(...args) {
     shell: true,
   });
   return result.status === 0;
+}
+
+function generateWorkerSecret() {
+  return randomBytes(32).toString('hex');
 }
 
 /**
@@ -407,6 +412,17 @@ async function stepSupabaseSecrets(storeId) {
     ws.stop(pc.yellow('Skipped — run manually: npx wrangler secret put SUPABASE_PUBLISHABLE_KEY'));
   }
 
+  // ── Store SECRETS_ENCRYPTION_KEY as Worker secret ─────────────────────
+  const ek = spinner();
+  ek.start(`Storing ${pc.yellow('SECRETS_ENCRYPTION_KEY')} as Worker secret…`);
+  const encryptionKey = generateWorkerSecret();
+  const ekOk = putWorkerSecret('SECRETS_ENCRYPTION_KEY', encryptionKey);
+  if (ekOk) {
+    ek.stop(pc.green('SECRETS_ENCRYPTION_KEY stored as Worker secret ✓'));
+  } else {
+    ek.stop(pc.yellow('Skipped — run manually: npx wrangler secret put SECRETS_ENCRYPTION_KEY'));
+  }
+
   // ── Store SUPABASE_SECRET_KEY in Secrets Store ──────────────────────────
   const ss2 = spinner();
   ss2.start(`Storing ${pc.yellow('SUPABASE_SECRET_KEY')} in Secrets Store…`);
@@ -437,8 +453,8 @@ async function stepSupabaseSecrets(storeId) {
   // ── Write .dev.vars for local `wrangler dev` ───────────────────────────
   const dv = spinner();
   dv.start('Writing .dev.vars for local wrangler dev…');
-  writeDevVarsFile(supabasePublishableKey);
-  dv.stop(pc.green('.dev.vars written ✓  (SUPABASE_PUBLISHABLE_KEY)'));
+  writeDevVarsFile(supabasePublishableKey, encryptionKey);
+  dv.stop(pc.green('.dev.vars written ✓  (SUPABASE_PUBLISHABLE_KEY + SECRETS_ENCRYPTION_KEY)'));
 
   return { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl };
 }
@@ -630,13 +646,14 @@ function writeEnvFile(supabaseUrl, supabasePublishableKey) {
  * Mirrors the values stored via `wrangler secret put` in production.
  * The file is git-ignored and regenerated on every setup run.
  */
-function writeDevVarsFile(supabasePublishableKey) {
+function writeDevVarsFile(supabasePublishableKey, encryptionKey) {
   const devVarsPath = join(ROOT, '.dev.vars');
   const contents = [
     '# Local secrets for `wrangler dev` — do not commit (git-ignored)',
     '# These mirror the Worker secrets set via `wrangler secret put` in production.',
     '# See: https://developers.cloudflare.com/workers/testing/local-development/#secrets',
     `SUPABASE_PUBLISHABLE_KEY=${supabasePublishableKey.trim()}`,
+    `SECRETS_ENCRYPTION_KEY=${encryptionKey.trim()}`,
   ].join('\n') + '\n';
   writeFileSync(devVarsPath, contents, 'utf8');
 }
@@ -853,6 +870,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     'staff_registry.sql',
     'products.sql',
     'page_schemas.sql',
+    'page_schema_templates.sql',
+    'managed_secrets.sql',
+    'system_config.sql',
     'forms.sql',
     'forms_answers.sql',
     'forms_published_default.sql',

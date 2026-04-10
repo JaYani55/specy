@@ -25,7 +25,7 @@ export interface CfStore {
 // ── Known secrets manifest ──────────────────────────────────────────────────
 // Defines every secret the application knows about, grouped by category.
 
-export type SecretCategory = 'Database' | 'Storage' | 'Worker' | 'Custom';
+export type SecretCategory = 'Database' | 'Worker' | 'Custom';
 
 export interface SecretDefinition {
   name: string;
@@ -41,25 +41,15 @@ export interface SecretDefinition {
   binding?: string;
 }
 
+export interface SystemConfigDefinition {
+  key: 'provider' | 'bucket' | 'r2PublicUrl';
+  label: string;
+  description: string;
+  required: boolean;
+  placeholder?: string;
+}
+
 export const SECRETS_MANIFEST: SecretDefinition[] = [
-  {
-    name: 'SUPABASE_URL',
-    category: 'Database',
-    label: 'Supabase URL',
-    description: 'Your Supabase project URL. Found in your Supabase dashboard under Settings → API.',
-    required: true,
-    placeholder: 'https://<project-ref>.supabase.co',
-    binding: 'SS_SUPABASE_URL',
-  },
-  {
-    name: 'SUPABASE_PUBLISHABLE_KEY',
-    category: 'Database',
-    label: 'Supabase Publishable Key',
-    description: 'Your Supabase publishable key. Row-level security enforces access control — safe to expose to the Worker.',
-    required: true,
-    placeholder: 'sb_publishable_...',
-    binding: 'SS_SUPABASE_PUBLISHABLE_KEY',
-  },
   {
     name: 'SUPABASE_SECRET_KEY',
     category: 'Database',
@@ -69,35 +59,37 @@ export const SECRETS_MANIFEST: SecretDefinition[] = [
     placeholder: 'sb_secret_...',
     binding: 'SS_SUPABASE_SECRET_KEY',
   },
-  // ── Storage ───────────────────────────────────────────────────────────────
+];
+
+export const STORAGE_CONFIG_MANIFEST: SystemConfigDefinition[] = [
   {
-    name: 'STORAGE_PROVIDER',
-    category: 'Storage',
+    key: 'provider',
     label: 'Storage Provider',
-    description: 'Which object-storage backend to use for the media library. "supabase" uses Supabase Storage; "r2" uses a Cloudflare R2 bucket (must also be configured in wrangler.jsonc).',
+    description: 'Which object-storage backend to use for the media library. "supabase" uses Supabase Storage; "r2" uses a Cloudflare R2 bucket binding.',
     required: true,
     placeholder: 'supabase',
-    binding: 'SS_STORAGE_PROVIDER',
   },
   {
-    name: 'STORAGE_BUCKET',
-    category: 'Storage',
+    key: 'bucket',
     label: 'Storage Bucket',
-    description: 'Bucket / container name for media uploads. For Supabase Storage this is the bucket created in your Supabase dashboard. For R2 this must match the R2 bucket name in wrangler.jsonc.',
+    description: 'Bucket or container name for media uploads. For R2, this must match the Worker bucket binding configuration.',
     required: true,
     placeholder: 'booking_media',
-    binding: 'SS_STORAGE_BUCKET',
   },
   {
-    name: 'R2_PUBLIC_URL',
-    category: 'Storage',
+    key: 'r2PublicUrl',
     label: 'R2 Public URL',
-    description: 'Public CDN URL prefix for your R2 bucket (e.g. https://pub-xxx.r2.dev). Only required when STORAGE_PROVIDER is "r2".',
+    description: 'Public CDN URL prefix for your R2 bucket. Only required when the provider is "r2".',
     required: false,
     placeholder: 'https://pub-<hash>.r2.dev',
-    binding: 'SS_R2_PUBLIC_URL',
   },
 ];
+
+export interface StorageConfigSettings {
+  provider: 'supabase' | 'r2' | '';
+  bucket: string;
+  r2PublicUrl: string;
+}
 
 // ── API calls ────────────────────────────────────────────────────────────────
 
@@ -142,6 +134,33 @@ export async function getEnvStatus(): Promise<EnvStatusEntry[]> {
   if (!res.ok) return [];
   const data = await res.json() as { status: EnvStatusEntry[] };
   return data.status ?? [];
+}
+
+export async function getStorageConfigSettings(): Promise<StorageConfigSettings> {
+  const res = await fetch(`${API_URL}/api/config/storage`, {
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { storage: StorageConfigSettings };
+  return data.storage;
+}
+
+export async function updateStorageConfigSettings(input: StorageConfigSettings): Promise<void> {
+  const res = await fetch(`${API_URL}/api/config/storage`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }),
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
 }
 
 export async function listStores(): Promise<CfStore[]> {

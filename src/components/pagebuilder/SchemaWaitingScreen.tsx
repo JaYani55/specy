@@ -95,14 +95,16 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
       prompt += `
   4. Implement ISR in Next.js App Router.
     - Use app/[slug]/page.tsx or the matching route for your slug_structure.
-    - Expose POST /api/revalidate?secret=<secret>&path=<page_slug>
+    - Expose POST /api/revalidate?path=<page_slug>
+    - Read Authorization: Bearer <secret> for authentication
     - Revalidate the full route path derived from slug_structure.
   `;
      } else {
       prompt += `
   4. Implement revalidation / cache invalidation in SvelteKit.
     - Use src/routes/[slug]/+page.server.ts or the matching route for your slug_structure.
-    - Expose POST /api/revalidate/<page_slug>?secret=<secret> or an equivalent route.
+    - Expose POST /api/revalidate/<page_slug> or POST /api/revalidate?path=<page_slug>.
+    - Read Authorization: Bearer <secret> for authentication.
     - Invalidate the full route path derived from slug_structure.
   `;
      }

@@ -57,14 +57,20 @@ import {
   getEnvStatus,
   upsertSecret,
   deleteSecret,
+  getStorageConfigSettings,
+  updateStorageConfigSettings,
   getMediaConfig,
   testMediaConnection,
   SECRETS_MANIFEST,
+  STORAGE_CONFIG_MANIFEST,
   type CfSecret,
   type SecretDefinition,
   type MediaConfig,
   type EnvStatusEntry,
+  type StorageConfigSettings,
 } from '@/services/connectionsService';
+
+const OPERATIONAL_CONFIG_SECRET_NAMES = new Set(['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'STORAGE_PROVIDER', 'STORAGE_BUCKET', 'R2_PUBLIC_URL']);
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +84,10 @@ interface EditState {
   value: string;
   comment: string;
   showValue: boolean;
+  saving: boolean;
+}
+
+interface StorageConfigState extends StorageConfigSettings {
   saving: boolean;
 }
 
@@ -135,6 +145,12 @@ const VerwaltungConnections: React.FC = () => {
   const [cfSecrets, setCfSecrets] = useState<CfSecret[]>([]);
   const [envStatusMap, setEnvStatusMap] = useState<Record<string, boolean>>({});
   const [apiError, setApiError] = useState<string | null>(null);
+  const [storageConfig, setStorageConfig] = useState<StorageConfigState>({
+    provider: '',
+    bucket: '',
+    r2PublicUrl: '',
+    saving: false,
+  });
 
   // Media storage live status
   const [mediaConfig, setMediaConfig] = useState<MediaConfig | null>(null);
@@ -185,6 +201,15 @@ const VerwaltungConnections: React.FC = () => {
     }
   }, []);
 
+  const loadStorageConfig = useCallback(async () => {
+    try {
+      const config = await getStorageConfigSettings();
+      setStorageConfig((current) => ({ ...current, ...config, saving: false }));
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Failed to load storage configuration');
+    }
+  }, []);
+
   const loadMediaStatus = useCallback(async () => {
     try {
       const cfg = await getMediaConfig();
@@ -196,8 +221,9 @@ const VerwaltungConnections: React.FC = () => {
 
   useEffect(() => {
     loadSecrets();
+    loadStorageConfig();
     loadMediaStatus();
-  }, [loadSecrets, loadMediaStatus]);
+  }, [loadSecrets, loadStorageConfig, loadMediaStatus]);
 
   // Build merged list: manifest entry + CF secrets store status + env-var status
   const secretsWithStatus: SecretWithStatus[] = SECRETS_MANIFEST.map((def) => ({
@@ -279,9 +305,31 @@ const VerwaltungConnections: React.FC = () => {
     }
   };
 
+  const saveStorageConfig = async () => {
+    if (!storageConfig.provider || !storageConfig.bucket.trim()) {
+      toast.error('Provider and bucket are required');
+      return;
+    }
+
+    setStorageConfig((current) => ({ ...current, saving: true }));
+    try {
+      await updateStorageConfigSettings({
+        provider: storageConfig.provider,
+        bucket: storageConfig.bucket,
+        r2PublicUrl: storageConfig.r2PublicUrl,
+      });
+      toast.success('Storage configuration saved');
+      await loadStorageConfig();
+      await loadMediaStatus();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save storage configuration');
+      setStorageConfig((current) => ({ ...current, saving: false }));
+    }
+  };
+
   // Extra CF secrets not in the manifest
   const extraCfSecrets = cfSecrets.filter(
-    (s) => !SECRETS_MANIFEST.some((m) => m.name === s.name),
+    (s) => !SECRETS_MANIFEST.some((m) => m.name === s.name) && !OPERATIONAL_CONFIG_SECRET_NAMES.has(s.name),
   );
 
   // ── Summary stats ───────────────────────────────────────────────────────
@@ -310,7 +358,7 @@ const VerwaltungConnections: React.FC = () => {
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Connections</h1>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  BYODB / BYOK — manage secrets stored in Cloudflare Secrets Store
+                  Manage runtime secrets separately from non-sensitive system configuration
                 </p>
               </div>
             </div>
@@ -356,11 +404,57 @@ const VerwaltungConnections: React.FC = () => {
             <Card>
               <CardContent className="pt-5 pb-4">
                 <div className="text-2xl font-bold">{cfSecrets.length}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Total in store</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Managed secrets in store</div>
               </CardContent>
             </Card>
           </div>
         )}
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <HardDrive className="h-4 w-4" />
+              System Configuration
+            </CardTitle>
+            <CardDescription>
+              Non-sensitive runtime settings are managed separately from Cloudflare-backed secrets.
+              These values control media storage behavior and are stored as system configuration.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {STORAGE_CONFIG_MANIFEST.map((field) => (
+              <div key={field.key} className="space-y-1.5">
+                <Label htmlFor={`storage-config-${field.key}`}>{field.label}</Label>
+                <Input
+                  id={`storage-config-${field.key}`}
+                  value={storageConfig[field.key]}
+                  onChange={(event) =>
+                    setStorageConfig((current) => ({ ...current, [field.key]: event.target.value }))
+                  }
+                  placeholder={field.placeholder}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">{field.description}</p>
+              </div>
+            ))}
+            <div className="flex items-center gap-2">
+              <Button onClick={saveStorageConfig} disabled={storageConfig.saving}>
+                {storageConfig.saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save configuration
+              </Button>
+              <Button variant="outline" onClick={loadStorageConfig} disabled={storageConfig.saving}>
+                Reload configuration
+              </Button>
+            </div>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                Bootstrap values such as <code>SUPABASE_URL</code> and <code>SUPABASE_PUBLISHABLE_KEY</code> still come from deployment configuration.
+                They are intentionally no longer shown as editable secrets in this page.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
 
         {/* ── Manifest secrets (grouped by category) ── */}
         {categories.map((category) => {
@@ -374,9 +468,7 @@ const VerwaltungConnections: React.FC = () => {
                 </CardTitle>
                 <CardDescription>
                   {category === 'Database'
-                    ? 'Your own Supabase database credentials (BYODB). Stored securely in Cloudflare Secrets Store and injected into the Worker at runtime.'
-                    : category === 'Storage'
-                    ? 'Media storage configuration. Set STORAGE_PROVIDER to "supabase" or "r2" to activate the media library. See the connection test below after saving.'
+                    ? 'Sensitive server-side credentials. These are write-only values managed separately from plain runtime configuration.'
                     : 'API keys and tokens used by the Worker.'}
                 </CardDescription>
               </CardHeader>
@@ -652,6 +744,10 @@ const VerwaltungConnections: React.FC = () => {
               Secrets are stored in your <strong>Cloudflare Secrets Store</strong> — encrypted at rest,
               injected into the Worker at runtime via bindings declared in <code>wrangler.jsonc</code>.
               Values are <strong>write-only</strong>: they can be set or deleted, but never read back through this UI.
+            </p>
+            <p>
+              Non-sensitive operational settings such as storage provider and bucket now belong to the separate system configuration section.
+              They are no longer treated as Cloudflare-managed secrets.
             </p>
             <p>
               To bind a new secret to the Worker, add an entry to <code>secrets_store_secrets</code> in

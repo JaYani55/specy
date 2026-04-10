@@ -40,29 +40,19 @@ interface CloudflareApiResponse<T> {
 }
 
 type SecretStatusName =
-  | 'SUPABASE_URL'
-  | 'SUPABASE_PUBLISHABLE_KEY'
   | 'SUPABASE_SECRET_KEY'
-  | 'STORAGE_PROVIDER'
-  | 'STORAGE_BUCKET'
-  | 'R2_PUBLIC_URL'
-  | 'CF_API_TOKEN';
+  | 'CF_API_TOKEN'
+  | 'SECRETS_ENCRYPTION_KEY';
 
 type SecretEnvKey =
-  | 'SUPABASE_URL'
-  | 'SUPABASE_PUBLISHABLE_KEY'
-  | 'STORAGE_PROVIDER'
-  | 'STORAGE_BUCKET'
-  | 'R2_PUBLIC_URL'
-  | 'CF_API_TOKEN';
+  | 'CF_API_TOKEN'
+  | 'SECRETS_ENCRYPTION_KEY';
 
 type SecretStoreBindingKey =
-  | 'SS_SUPABASE_URL'
-  | 'SS_SUPABASE_PUBLISHABLE_KEY'
-  | 'SS_SUPABASE_SECRET_KEY'
-  | 'SS_STORAGE_PROVIDER'
-  | 'SS_STORAGE_BUCKET'
-  | 'SS_R2_PUBLIC_URL';
+  | 'SS_SUPABASE_SECRET_KEY';
+
+const SECRET_NAME_PATTERN = /^[A-Z0-9_]+$/;
+const RESERVED_MANAGED_PREFIXES = ['REVALIDATION_'];
 
 function getCloudflareErrorMessage<T>(json: CloudflareApiResponse<T>, fallback = 'CF API error') {
   return json.errors?.[0]?.message ?? fallback;
@@ -77,6 +67,7 @@ function jsonError(body: unknown, status: number) {
 function cfHeaders(token: string) {
   return {
     'Authorization': `Bearer ${token}`,
+    'Accept': 'application/json',
     'Content-Type': 'application/json',
   };
 }
@@ -87,6 +78,18 @@ function missingConfig(env: Env) {
     return 'CF_ACCOUNT_ID is not configured in wrangler.jsonc vars';
   if (!env.SECRETS_STORE_ID || env.SECRETS_STORE_ID === '<YOUR_SECRETS_STORE_ID>')
     return 'SECRETS_STORE_ID is not configured in wrangler.jsonc vars';
+  return null;
+}
+
+function validateSecretName(secretName: string): string | null {
+  if (!SECRET_NAME_PATTERN.test(secretName)) {
+    return 'Secret name must contain only uppercase letters, numbers, and underscores';
+  }
+
+  if (RESERVED_MANAGED_PREFIXES.some((prefix) => secretName.startsWith(prefix))) {
+    return `Secret names starting with ${RESERVED_MANAGED_PREFIXES.join(', ')} are reserved for the managed secret system`;
+  }
+
   return null;
 }
 
@@ -117,18 +120,14 @@ secrets.get('/', async (c) => {
 
 /**
  * GET /api/secrets/env-status
- * Returns which known secrets/env-vars have a non-empty value bound in this Worker.
- * Checks both plain env vars (wrangler.jsonc vars) and Secrets Store bindings.
+ * Returns which sensitive runtime secrets have a non-empty value bound in this Worker.
+ * Checks both Worker secrets and Secrets Store bindings.
  * Values are NEVER returned — only boolean presence.
  */
 const KNOWN_KEYS: Array<{ name: SecretStatusName; envKey?: SecretEnvKey; ssKey?: SecretStoreBindingKey }> = [
-  { name: 'SUPABASE_URL',            envKey: 'SUPABASE_URL',            ssKey: 'SS_SUPABASE_URL' },
-  { name: 'SUPABASE_PUBLISHABLE_KEY', envKey: 'SUPABASE_PUBLISHABLE_KEY', ssKey: 'SS_SUPABASE_PUBLISHABLE_KEY' },
   { name: 'SUPABASE_SECRET_KEY',                                      ssKey: 'SS_SUPABASE_SECRET_KEY' },
-  { name: 'STORAGE_PROVIDER',        envKey: 'STORAGE_PROVIDER',  ssKey: 'SS_STORAGE_PROVIDER' },
-  { name: 'STORAGE_BUCKET',          envKey: 'STORAGE_BUCKET',    ssKey: 'SS_STORAGE_BUCKET' },
-  { name: 'R2_PUBLIC_URL',           envKey: 'R2_PUBLIC_URL',     ssKey: 'SS_R2_PUBLIC_URL' },
   { name: 'CF_API_TOKEN',            envKey: 'CF_API_TOKEN' },
+  { name: 'SECRETS_ENCRYPTION_KEY',  envKey: 'SECRETS_ENCRYPTION_KEY' },
 ];
 
 secrets.get('/env-status', (c) => {
@@ -190,6 +189,11 @@ secrets.post('/:name', async (c) => {
   if (configErr) return c.json({ error: configErr }, 503);
 
   const secretName = c.req.param('name');
+  const secretNameError = validateSecretName(secretName);
+  if (secretNameError) {
+    return c.json({ error: secretNameError }, 400);
+  }
+
   let body: { value: string; comment?: string };
   try {
     // Explicitly read as text and parse to see if it's really valid
@@ -216,9 +220,9 @@ secrets.post('/:name', async (c) => {
   let res: Response;
 
   if (existing) {
-    // Update by ID
+    // Cloudflare Secrets Store updates use PATCH with a single object body.
     res = await fetch(`${storeBase}/${existing.id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       headers: cfHeaders(c.env.CF_API_TOKEN!),
       body: JSON.stringify({
         value: body.value,
@@ -226,16 +230,18 @@ secrets.post('/:name', async (c) => {
       }),
     });
   } else {
-    // Create new
+    // Cloudflare Secrets Store creation expects an array payload.
     res = await fetch(storeBase, {
       method: 'POST',
       headers: cfHeaders(c.env.CF_API_TOKEN!),
-      body: JSON.stringify({
-        name: secretName,
-        value: body.value,
-        scopes: ['workers'],
-        comment: body.comment || '',
-      }),
+      body: JSON.stringify([
+        {
+          name: secretName,
+          value: body.value,
+          scopes: ['workers'],
+          comment: body.comment || '',
+        },
+      ]),
     });
   }
 
@@ -264,6 +270,11 @@ secrets.delete('/:name', async (c) => {
   if (configErr) return c.json({ error: configErr }, 503);
 
   const secretName = c.req.param('name');
+  const secretNameError = validateSecretName(secretName);
+  if (secretNameError) {
+    return c.json({ error: secretNameError }, 400);
+  }
+
   const storeBase = `${CF_API_BASE}/accounts/${c.env.CF_ACCOUNT_ID}/secrets_store/stores/${c.env.SECRETS_STORE_ID}/secrets`;
 
   // Look up the secret ID first

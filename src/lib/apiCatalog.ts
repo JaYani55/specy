@@ -135,7 +135,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     method: 'POST',
     path: '/api/schemas/:slug/register',
     summary: 'Register an external frontend for a schema',
-    description: 'Completes the schema registration handshake by validating the one-time registration code and storing frontend and revalidation metadata.',
+    description: 'Completes the schema registration handshake by validating the one-time registration code, storing frontend metadata, and moving any provided revalidation secret into the server-managed secret system.',
     auth: 'public',
     mountsAt: '/api/schemas',
     sourceFile: 'api/routes/schemas.ts',
@@ -145,7 +145,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
       { name: 'code', in: 'body', required: true, type: 'string', description: 'Registration code issued by the CMS.' },
       { name: 'frontend_url', in: 'body', required: true, type: 'string', description: 'Base URL of the consuming frontend.' },
       { name: 'revalidation_endpoint', in: 'body', required: false, type: 'string', description: 'Relative revalidation endpoint path.' },
-      { name: 'revalidation_secret', in: 'body', required: false, type: 'string', description: 'Shared secret for outbound ISR calls.' },
+      { name: 'revalidation_secret', in: 'body', required: false, type: 'string', description: 'Shared secret for outbound ISR calls. Stored server-side; not persisted in plaintext on page_schemas.' },
       { name: 'slug_structure', in: 'body', required: false, type: 'string', description: 'Frontend URL pattern, defaults to /:slug.' },
     ],
     requestExample: `{
@@ -172,8 +172,8 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
 }`,
       },
     ],
-    sideEffects: ['Updates page_schemas.registration_status and clears registration_code.'],
-    tables: ['page_schemas'],
+    sideEffects: ['Updates page_schemas.registration_status and clears registration_code.', 'Stores revalidation secrets in the managed secret system when provided.'],
+    tables: ['page_schemas', 'managed_secrets'],
   },
   {
     id: 'schema-revalidate',
@@ -786,7 +786,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     method: 'GET',
     path: '/api/secrets/env-status',
     summary: 'Check whether expected secrets are bound',
-    description: 'Returns boolean presence for known worker env vars and Secrets Store bindings. Used for setup and observability.',
+    description: 'Returns boolean presence for sensitive worker secrets and Secrets Store bindings. Used for setup and observability.',
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
@@ -797,7 +797,8 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
         description: 'Presence-only status map.',
         example: `{
   "status": [
-    { "name": "SUPABASE_URL", "hasValue": true, "source": "secrets-store" }
+    { "name": "SUPABASE_SECRET_KEY", "hasValue": true, "source": "secrets-store" },
+    { "name": "SECRETS_ENCRYPTION_KEY", "hasValue": true, "source": "env-var" }
   ]
 }`,
       },

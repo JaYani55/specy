@@ -13,17 +13,50 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   createSchema,
+  createSchemaTemplate,
+  getSchemaTemplates,
   updateSchema,
   getSchema,
   startSchemaRegistration,
 } from '@/services/pageService';
-import type { SchemaFieldDefinition, PageSchema } from '@/types/pagebuilder';
+import type { SchemaFieldDefinition, PageSchema, PageSchemaTemplate, SchemaTemplateDefinition } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
 import { toast } from 'sonner';
 import { SCHEMA_TEMPLATES, type SchemaTemplate } from '@/config/schemaTemplates';
 
 const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentBlock[]', 'CodeBlock[]', 'media'] as const;
 const VALID_SCHEMA_TYPES = new Set<string>(FIELD_TYPES);
+
+const toStoredTemplateDefinition = (template: PageSchemaTemplate): SchemaTemplateDefinition => ({
+  id: template.id,
+  slug: template.slug,
+  name: template.name,
+  nameDe: template.name,
+  description: template.description || '',
+  descriptionDe: template.description || '',
+  icon: template.icon || '🧩',
+  schema: template.schema,
+  llm_instructions: template.llm_instructions || undefined,
+  source: 'stored',
+  external_source_url: template.external_source_url,
+});
+
+const mergeTemplates = (
+  bundled: SchemaTemplateDefinition[],
+  stored: SchemaTemplateDefinition[],
+): SchemaTemplateDefinition[] => {
+  const merged = new Map<string, SchemaTemplateDefinition>();
+
+  for (const template of bundled) {
+    merged.set(template.slug, template);
+  }
+
+  for (const template of stored) {
+    merged.set(template.slug, template);
+  }
+
+  return [...merged.values()];
+};
 
 interface EditorSchemaFieldDefinition extends Omit<SchemaFieldDefinition, 'properties' | 'items'> {
   editorId: string;
@@ -590,6 +623,8 @@ const SchemaEditor: React.FC = () => {
   const [existingSchema, setExistingSchema] = useState<PageSchema | null>(null);
   const [schemaJsonInput, setSchemaJsonInput] = useState('');
   const [schemaJsonResult, setSchemaJsonResult] = useState<SchemaJsonParseResult | null>(null);
+  const [availableTemplates, setAvailableTemplates] = useState<SchemaTemplateDefinition[]>(SCHEMA_TEMPLATES);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
 
   useEffect(() => {
     if (isEditing && schemaSlug) {
@@ -609,6 +644,12 @@ const SchemaEditor: React.FC = () => {
         .finally(() => setIsLoading(false));
     }
   }, [isEditing, schemaSlug, navigate]);
+
+  useEffect(() => {
+    getSchemaTemplates()
+      .then((templates) => setAvailableTemplates(mergeTemplates(SCHEMA_TEMPLATES, templates.map(toStoredTemplateDefinition))))
+      .catch(() => setAvailableTemplates(SCHEMA_TEMPLATES));
+  }, []);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -662,7 +703,40 @@ const SchemaEditor: React.FC = () => {
     }
   };
 
-  const applyTemplate = (template: typeof SCHEMA_TEMPLATES[0]) => {
+  const handleCreateTemplate = async () => {
+    if (!name.trim()) {
+      toast.error(language === 'en' ? 'Name is required before creating a template' : 'Name ist erforderlich, bevor eine Vorlage erstellt werden kann');
+      return;
+    }
+
+    if (fields.length === 0) {
+      toast.error(language === 'en' ? 'Add at least one field before creating a template' : 'Füge mindestens ein Feld hinzu, bevor du eine Vorlage erstellst');
+      return;
+    }
+
+    setIsSavingTemplate(true);
+    try {
+      const createdTemplate = await createSchemaTemplate({
+        name,
+        description,
+        schema: generatedSchema,
+        llm_instructions: llmInstructions,
+        source_schema_id: existingSchema?.id,
+      });
+
+      const templateDefinition = toStoredTemplateDefinition(createdTemplate);
+      setAvailableTemplates((current) => mergeTemplates(current, [templateDefinition]));
+      toast.success(language === 'en'
+        ? `Template "${createdTemplate.name}" created`
+        : `Vorlage "${createdTemplate.name}" erstellt`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create template');
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  const applyTemplate = (template: SchemaTemplateDefinition) => {
     setName(language === 'en' ? template.name : template.nameDe);
     setDescription(language === 'en' ? template.description : template.descriptionDe);
     setFields(jsonSchemaToFields(template.schema));
@@ -721,7 +795,7 @@ const SchemaEditor: React.FC = () => {
       {/* Templates Selection (only when creating new) */}
       {!isEditing && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {SCHEMA_TEMPLATES.map((template) => (
+          {availableTemplates.map((template) => (
             <Card
               key={template.id}
               className="hover:border-primary cursor-pointer transition-colors border-2 border-transparent"
@@ -731,7 +805,9 @@ const SchemaEditor: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <span className="text-2xl">{template.icon}</span>
                   <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-                    {language === 'en' ? 'Template' : 'Vorlage'}
+                    {template.source === 'stored'
+                      ? (language === 'en' ? 'Saved Template' : 'Gespeicherte Vorlage')
+                      : (language === 'en' ? 'Template' : 'Vorlage')}
                   </Badge>
                 </div>
                 <CardTitle className="text-base mt-2">
@@ -742,6 +818,11 @@ const SchemaEditor: React.FC = () => {
                 <p className="text-xs text-muted-foreground line-clamp-2">
                   {language === 'en' ? template.description : template.descriptionDe}
                 </p>
+                {template.external_source_url && (
+                  <p className="text-[11px] text-muted-foreground mt-2 line-clamp-1">
+                    {template.external_source_url}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -1016,6 +1097,19 @@ const SchemaEditor: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={handleCreateTemplate} disabled={isSavingTemplate}>
+            {isSavingTemplate ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                {language === 'en' ? 'Creating Template...' : 'Vorlage wird erstellt...'}
+              </>
+            ) : (
+              <>
+                <FileJson className="h-4 w-4 mr-2" />
+                {language === 'en' ? 'Save as Template' : 'Als Vorlage speichern'}
+              </>
+            )}
+          </Button>
           <Button variant="outline" onClick={() => navigate('/pages')}>
             {language === 'en' ? 'Cancel' : 'Abbrechen'}
           </Button>
