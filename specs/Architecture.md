@@ -155,7 +155,7 @@ Run with `npm run setup`. An interactive CLI wizard ([@clack/prompts](https://gi
 | :--- | :--- | :--- |
 | 1 | `stepLogin()` | Runs `wrangler login` if not already authenticated. |
 | 2 | `detectAccountId()` | Lists Cloudflare account memberships from `wrangler whoami` and lets the user choose one, or enter an Account ID manually. |
-| 3 | `stepSecretsStore()` | Lists existing Secrets Stores via `wrangler secrets-store store list`. Creates one named `service-cms` if none exist. |
+| 3 | `stepSecretsStore()` | Lists existing Secrets Stores via `wrangler secrets-store store list`. Creates one named `specy` if none exist. |
 | 4 | `patchWranglerJsonc()` | Copies `wrangler.default.jsonc` → `wrangler.jsonc` and substitutes `CF_ACCOUNT_ID` + `SECRETS_STORE_ID`. |
 | 5 | `stepApiToken()` | Prompts for a Cloudflare API token and stores it as a Worker secret via `wrangler secret put CF_API_TOKEN`. |
 | 6 | `stepSupabaseSecrets()` | Collects Supabase URL, publishable key, secret key, and storage config. Stores: `SUPABASE_PUBLISHABLE_KEY` as a Worker secret; `SUPABASE_SECRET_KEY` in the Secrets Store. Calls `writeEnvFile()` to write `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` for Vite build-time substitution. |

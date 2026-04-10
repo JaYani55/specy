@@ -1,5 +1,5 @@
 {
-  "name": "service-cms",
+  "name": "specy",
   "main": "api/index.ts",
   "compatibility_date": "2026-02-19",
   "compatibility_flags": ["nodejs_compat"],
@@ -19,7 +19,7 @@
   // ║     or: npx wrangler whoami                                              ║
   // ║                                                                          ║
   // ║  2. Create a Secrets Store (first time only):                            ║
-  // ║     npx wrangler secrets-store store create service-cms --remote         ║
+  // ║     npx wrangler secrets-store store create specy --remote               ║
   // ║     Copy the returned store UUID.                                        ║
   // ║     or: npx wrangler secrets-store store list                            ║
   // ║                                                                          ║

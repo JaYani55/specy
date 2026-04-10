@@ -61,7 +61,7 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
     const agentPrompt = useMemo(() => {
      const isNext = selectedFramework === 'nextjs';
 
-     let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for the Service-CMS schema "${schema.name}".
+     let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for the Specy schema "${schema.name}".
 
   Schema slug: ${schema.slug}
   Specification URL: ${specUrl}

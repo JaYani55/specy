@@ -40,7 +40,7 @@ plugins.get('/', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
 
   return c.json({
-    service: 'service-cms-api',
+    service: 'specy-api',
     description: 'Registered plugins for this CMS instance.',
     install_docs: `${baseUrl}/docs/Plugin_Development.md`,
     plugins: ((data ?? []) as PluginRow[]).map((p) => ({

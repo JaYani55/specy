@@ -1,6 +1,6 @@
 # Supabase + Cloudflare Workers — Setup Guide
 
-Complete reference for deploying service-cms on Cloudflare Workers with Supabase as the database and auth backend. The interactive wizard (`npm run setup` / `setup.bat`) automates every step described here.
+Complete reference for deploying specy on Cloudflare Workers with Supabase as the database and auth backend. The interactive wizard (`npm run setup` / `setup.bat`) automates every step described here.
 
 ---
 
@@ -85,7 +85,7 @@ Step 10 Deploy                       wrangler deploy
 
 ## 4. Credential & Secret Storage Strategy
 
-Service-cms uses three different storage mechanisms depending on the sensitivity and access pattern of each value:
+Specy uses three different storage mechanisms depending on the sensitivity and access pattern of each value:
 
 | Value | Storage | Where accessed | Why |
 | :--- | :--- | :--- | :--- |
@@ -336,7 +336,7 @@ npx wrangler login
 npx wrangler whoami  # note your Account ID
 
 # Create Secrets Store
-npx wrangler secrets-store store create service-cms --remote
+npx wrangler secrets-store store create specy --remote
 # Note the returned store UUID
 ```
 

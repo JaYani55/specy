@@ -2,7 +2,7 @@
 /**
  * scripts/setup.mjs
  *
- * Interactive first-time setup wizard for service-cms on Cloudflare Workers.
+ * Interactive first-time setup wizard for specy on Cloudflare Workers.
  *
  * Steps:
  *  1. Cloudflare login  (wrangler login)
@@ -202,13 +202,13 @@ async function stepSecretsStore() {
   if (stores.length > 0) {
     const choice = bailOnCancel(
       await select({
-        message: 'Which Secrets Store should service-cms use?',
+        message: 'Which Secrets Store should specy use?',
         options: [
           ...stores.map((st) => ({
             label: `${pc.bold(st.name)}  ${pc.dim(st.id)}`,
             value: st.id,
           })),
-          { label: pc.cyan('+ Create a new store named "service-cms"'), value: '__new__' },
+          { label: pc.cyan('+ Create a new store named "specy"'), value: '__new__' },
           { label: pc.dim('✏  Enter Store ID manually'),              value: '__manual__' },
         ],
       }),
@@ -220,7 +220,7 @@ async function stepSecretsStore() {
 
   const doCreate = bailOnCancel(
     await confirm({
-      message: 'No Secrets Stores found. Create one named "service-cms"?',
+      message: 'No Secrets Stores found. Create one named "specy"?',
     }),
   );
   return doCreate ? createStore() : askStoreId();
@@ -228,8 +228,8 @@ async function stepSecretsStore() {
 
 async function createStore() {
   const s = spinner();
-  s.start('Creating Secrets Store "service-cms" (–remote)…');
-  const out = wranglerSilent('secrets-store', 'store', 'create', 'service-cms', '--remote');
+  s.start('Creating Secrets Store "specy" (–remote)…');
+  const out = wranglerSilent('secrets-store', 'store', 'create', 'specy', '--remote');
   s.stop('');
 
   if (out) {
@@ -1026,7 +1026,7 @@ async function main() {
   console.clear();
 
   intro(
-    pc.bgBlue(pc.white(pc.bold('  service-cms  '))) +
+    pc.bgBlue(pc.white(pc.bold('  specy  '))) +
     pc.dim('  first-time setup'),
   );
 

@@ -22,7 +22,7 @@ interface SchemaListRow {
 
 async function createMcpServerWithTools(env: Env, baseUrl: string) {
   const server = new McpServer({
-    name: 'service-cms',
+    name: 'specy',
     version: '1.0.0',
   });
 
@@ -278,7 +278,7 @@ mcpRoute.all('/', async (c) => {
   // Browsers/REST clients hitting GET /mcp without SSE headers
   if (c.req.method === 'GET' && !c.req.header('accept')?.includes('text/event-stream')) {
     return c.json({
-      service: 'service-cms-mcp',
+      service: 'specy-mcp',
       protocol: 'MCP (Model Context Protocol)',
       transport: 'Streamable HTTP (SSE)',
       status: 'active',

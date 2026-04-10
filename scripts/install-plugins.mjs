@@ -305,7 +305,7 @@ function getZipUrl(owner, repo, ref = 'HEAD') {
 }
 
 function githubHeaders() {
-  const h = { 'User-Agent': 'service-cms-plugin-installer/1.0', 'Accept': 'application/vnd.github+json' };
+  const h = { 'User-Agent': 'specy-plugin-installer/1.0', 'Accept': 'application/vnd.github+json' };
   if (process.env.GITHUB_TOKEN) h['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
   return h;
 }

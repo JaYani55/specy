@@ -26,7 +26,7 @@ app.use('*', cors({
 app.get('/', (c) => {
   const baseUrl = new URL(c.req.url).origin;
   return c.json({
-    service: 'service-cms-api',
+    service: 'specy-api',
     status: 'ok',
     timestamp: new Date().toISOString(),
     endpoints: {

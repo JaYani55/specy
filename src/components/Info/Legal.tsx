@@ -16,17 +16,17 @@ const Legal = () => {
     <>
       <h1 className="text-4xl font-extrabold mb-2 text-center">Legal Notice</h1>
       <p className={`text-center mb-8 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-        Service-CMS — Copyright, Attribution, and Licensing
+        Specy — Copyright, Attribution, and Licensing
       </p>
 
       <div className={sectionClass}>
         <h2 className={headingClass}>Copyright</h2>
         <p className="leading-relaxed">
-          Service-CMS (including derivatives ServiceCMS, Server-CMS, and ServerCMS)
+          Specy (including legacy references to Service-CMS, ServiceCMS, Server-CMS, and ServerCMS)
           <br />
           Copyright 2026, Jan-Alban Rathjen (also known as &apos;Jay Rathjen&apos;),
           <br />
-          acting in the name of the Service-CMS Project Authors.
+          acting in the name of the Specy Project Authors.
         </p>
         <p className={`mt-3 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           Project Website:{' '}
@@ -45,13 +45,13 @@ const Legal = () => {
         <h2 className={headingClass}>Project Stewardship &amp; Governance</h2>
         <p className="leading-relaxed mb-3">
           Jan-Alban Rathjen (&quot;Jay Rathjen&quot;) serves as the Founding Steward and Project
-          Lead of the Service-CMS Project. The Steward maintains the exclusive right to manage
+          Lead of the Specy Project. The Steward maintains the exclusive right to manage
           project assets, including the authority to transfer all copyrights, trademarks, and
           management responsibilities to a non-profit foundation or a successor legal entity at
           their sole discretion.
         </p>
         <p className="leading-relaxed">
-          The Steward is committed to transferring the Service-CMS trademarks and names to a
+          The Steward is committed to transferring the Specy trademarks and names to a
           neutral, independent legal entity once the project has sufficiently organized itself to
           ensure long-term sustainability.
         </p>
@@ -92,7 +92,7 @@ const Legal = () => {
           </li>
           <li>
             <span className="font-medium text-inherit">Trademark:</span>{' '}
-            The names &ldquo;Service-CMS&rdquo; and its derivatives remain trademarks of the Project
+            The names &ldquo;Specy&rdquo; and its derivatives remain trademarks of the Project
             Steward until formal transfer to a legal entity. Their use is permitted only for
             factual attribution.
           </li>

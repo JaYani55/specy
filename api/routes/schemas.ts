@@ -31,7 +31,7 @@ schemas.get('/', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
 
   return c.json({
-    service: 'service-cms-api',
+    service: 'specy-api',
     description: 'Available page schemas. Use the spec_url to fetch the full LLM-readable specification for any schema.',
     mcp_endpoint: `${baseUrl}/mcp`,
     schemas: ((data ?? []) as SchemaRow[]).map((s) => ({

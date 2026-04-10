@@ -2,7 +2,7 @@
 
 ## Overview
 
-The service-CMS pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
+The Specy pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
 
 This architecture enables:
 - **Multi-frontend support**: One CMS powering multiple frontends (Next.js, SvelteKit, etc.)
@@ -18,7 +18,7 @@ This architecture enables:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Service-CMS (React SPA)                  │
+│                        Specy (React SPA)                        │
 │                                                                 │
 │  /pages                         Schema Hub (list all schemas)   │
 │  /pages/schema/new              Schema Editor (create new)      │
@@ -545,7 +545,7 @@ Block IDs generated as: `${prefix}-${Date.now()}-${Math.random().toString(36).su
 
 ## Overview
 
-The service-CMS pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
+The Specy pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
 
 This architecture enables:
 - **Multi-frontend support**: One CMS powering multiple frontends (Next.js, SvelteKit, etc.)
@@ -559,7 +559,7 @@ This architecture enables:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Service-CMS (React SPA)                  │
+│                        Specy (React SPA)                        │
 │                                                                 │
 │  /pages                    Schema Hub (list all schemas)        │
 │  /pages/schema/new         Schema Editor (create new)           │

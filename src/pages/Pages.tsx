@@ -73,7 +73,7 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, 
     const isNext = framework === 'nextjs';
 
     // ── Section: discovery ──────────────────────────────────────────────────
-    let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for the Service-CMS.
+    let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for Specy.
 
 ════════════════════════════════════════════════════
   1. DISCOVERY
@@ -84,7 +84,7 @@ Start by fetching the schema index:
 
 Response shape:
   {
-    service: "service-cms-api",
+    service: "specy-api",
     mcp_endpoint: "${API_URL}/mcp",
     schemas: [
       {

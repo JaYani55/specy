@@ -1,7 +1,7 @@
 # YATDA Plugin — Iteration Feedback Report
 
 **Date:** 2026-03-19  
-**Reviewer:** service-cms maintainer  
+**Reviewer:** specy maintainer  
 **Plugin version under review:** 1.0.0  
 **Status:** Feedback for next iteration
 

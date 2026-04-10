@@ -52,7 +52,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
         status: 200,
         description: 'Discovery payload with API entrypoints.',
         example: `{
-  "service": "service-cms-api",
+  "service": "specy-api",
   "status": "ok",
   "timestamp": "2026-04-06T12:00:00.000Z",
   "endpoints": {
@@ -84,7 +84,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
         status: 200,
         description: 'Schema discovery list.',
         example: `{
-  "service": "service-cms-api",
+  "service": "specy-api",
   "description": "Available page schemas.",
   "schemas": [
     {
@@ -438,7 +438,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
         status: 200,
         description: 'Plugin registry snapshot.',
         example: `{
-  "service": "service-cms-api",
+  "service": "specy-api",
   "plugins": [{ "slug": "sample-plugin", "version": "1.0.0" }]
 }`,
       },
@@ -819,7 +819,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
         status: 200,
         description: 'Secrets Store list.',
         example: `{
-  "stores": [{ "id": "store-id", "name": "service-cms" }]
+  "stores": [{ "id": "store-id", "name": "specy" }]
 }`,
       },
     ],
