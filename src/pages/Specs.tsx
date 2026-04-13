@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Bot, ExternalLink, FileCode2, FilePlus2, Globe, Loader2, Pencil, Search, Shield, Tag, Trash2 } from 'lucide-react';
+import { Bot, Copy, ExternalLink, FileCode2, FilePlus2, Globe, Loader2, Pencil, Search, Shield, Tag, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTheme } from '@/contexts/ThemeContext';
+import { API_URL } from '@/lib/apiUrl';
 import { deleteSpec, getSpecs, updateSpec } from '@/services/specService';
 import type { SpecRecord } from '@/types/specs';
 
@@ -25,6 +26,10 @@ const Specs = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | SpecRecord['status']>('all');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'private'>('all');
+  const [copiedValue, setCopiedValue] = useState<'mcp' | 'discovery' | null>(null);
+
+  const mcpEndpointUrl = `${API_URL}/mcp`;
+  const mcpDiscoveryUrl = `${API_URL}/.well-known/mcp.json`;
 
   const loadSpecs = useCallback(async () => {
     try {
@@ -94,6 +99,17 @@ const Specs = () => {
     }
   };
 
+  const handleCopy = async (value: string, key: 'mcp' | 'discovery') => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedValue(key);
+      window.setTimeout(() => setCopiedValue((current) => (current === key ? null : current)), 2000);
+      toast.success(language === 'en' ? 'Copied.' : 'Kopiert.');
+    } catch {
+      toast.error(language === 'en' ? 'Copy failed.' : 'Kopieren fehlgeschlagen.');
+    }
+  };
+
   const emptyState = (
     <AdminCard className="border-dashed">
       <div className="flex min-h-[280px] flex-col items-center justify-center gap-4 text-center">
@@ -133,6 +149,49 @@ const Specs = () => {
         </div>
       )}
     >
+      <AdminCard>
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">
+              {language === 'en' ? 'Connect An Agent To MCP' : 'Agent mit MCP verbinden'}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {language === 'en'
+                ? 'Use the configured public API domain for direct MCP connection. The discovery document is optional, but useful for clients that want a self-describing HTTP entrypoint.'
+                : 'Verwende die konfigurierte öffentliche API-Domain für die direkte MCP-Verbindung. Das Discovery-Dokument ist optional, aber hilfreich für Clients mit selbstbeschreibendem HTTP-Einstiegspunkt.'}
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">MCP HTTP URL</label>
+              <div className="flex gap-2">
+                <Input readOnly value={mcpEndpointUrl} />
+                <Button type="button" variant="outline" onClick={() => void handleCopy(mcpEndpointUrl, 'mcp')}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  {copiedValue === 'mcp'
+                    ? (language === 'en' ? 'Copied' : 'Kopiert')
+                    : (language === 'en' ? 'Copy' : 'Kopieren')}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">MCP Discovery URL</label>
+              <div className="flex gap-2">
+                <Input readOnly value={mcpDiscoveryUrl} />
+                <Button type="button" variant="outline" onClick={() => void handleCopy(mcpDiscoveryUrl, 'discovery')}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  {copiedValue === 'discovery'
+                    ? (language === 'en' ? 'Copied' : 'Kopiert')
+                    : (language === 'en' ? 'Copy' : 'Kopieren')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </AdminCard>
+
       <AdminCard>
         <div className="grid gap-4 md:grid-cols-[1.2fr_0.4fr_0.4fr]">
           <div className="space-y-2">

@@ -54,7 +54,8 @@ export interface DiscoverableSpecSummary extends SchemaSpecSummary {
     name: string;
     registration_status: string | null;
     frontend_url: string | null;
-  };
+  } | null;
+  discovery_scope: 'schema' | 'global';
 }
 
 export interface SchemaSpecBundle {
@@ -113,6 +114,12 @@ function mapSpecRow(row: Record<string, unknown>): LlmSpecRow {
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
+}
+
+function isGlobalDiscoverableSpec(spec: LlmSpecRow): boolean {
+  return spec.status === 'published'
+    && spec.is_public
+    && Boolean(spec.metadata && spec.metadata.global_discovery === true);
 }
 
 async function ensureUniqueSpecSlug(client: Client, requested: string): Promise<string> {
@@ -362,7 +369,7 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
   const specIds = Array.from(new Set(attachmentRows.map((attachment) => attachment.spec_id)));
   const schemaIds = Array.from(new Set(attachmentRows.map((attachment) => attachment.schema_id)));
 
-  const [{ data: specs, error: specsError }, { data: schemas, error: schemasError }] = await Promise.all([
+  const [{ data: specs, error: specsError }, { data: schemas, error: schemasError }, { data: globalSpecs, error: globalSpecsError }] = await Promise.all([
     client
       .from('llm_specs')
       .select('*')
@@ -371,6 +378,11 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
       .from('page_schemas')
       .select('id, slug, name, registration_status, frontend_url')
       .in('id', schemaIds),
+    client
+      .from('llm_specs')
+      .select('*')
+      .eq('status', 'published')
+      .eq('is_public', true),
   ]);
 
   if (specsError) {
@@ -379,6 +391,10 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
 
   if (schemasError) {
     throw new Error(schemasError.message);
+  }
+
+  if (globalSpecsError) {
+    throw new Error(globalSpecsError.message);
   }
 
   const specMap = new Map(
@@ -398,7 +414,7 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
     }] as const),
   );
 
-  return attachmentRows
+  const attachedDiscoverableSpecs = attachmentRows
     .map((attachment) => {
       const spec = specMap.get(attachment.spec_id);
       const schema = schemaMap.get(attachment.schema_id);
@@ -421,11 +437,51 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
         enabled: attachment.enabled,
         is_main: attachment.is_main,
         sort_order: attachment.sort_order,
+        discovery_scope: 'schema',
         schema,
       } as DiscoverableSpecSummary;
     })
-    .filter((entry): entry is DiscoverableSpecSummary => entry !== null)
+    .filter((entry): entry is DiscoverableSpecSummary => entry !== null);
+
+  const globallyDiscoverableSpecs = ((globalSpecs ?? []) as Record<string, unknown>[])
+    .map((row) => mapSpecRow(row))
+    .filter(isGlobalDiscoverableSpec)
+    .map((spec) => ({
+      id: spec.id,
+      slug: spec.slug,
+      name: spec.name,
+      description: spec.description,
+      status: spec.status,
+      is_public: spec.is_public,
+      llm_instructions: spec.llm_instructions,
+      definition: spec.definition,
+      tags: spec.tags ?? [],
+      metadata: spec.metadata,
+      updated_at: spec.updated_at,
+      enabled: true,
+      is_main: false,
+      sort_order: -1,
+      discovery_scope: 'global',
+      schema: null,
+    }) satisfies DiscoverableSpecSummary);
+
+  const deduped = new Map<string, DiscoverableSpecSummary>();
+  [...attachedDiscoverableSpecs, ...globallyDiscoverableSpecs].forEach((spec) => {
+    if (!deduped.has(spec.id)) {
+      deduped.set(spec.id, spec);
+    }
+  });
+
+  return [...deduped.values()]
     .sort((left, right) => {
+      if (left.discovery_scope !== right.discovery_scope) {
+        return left.discovery_scope === 'global' ? -1 : 1;
+      }
+
+      if (!left.schema || !right.schema) {
+        return left.name.localeCompare(right.name);
+      }
+
       if (left.schema.slug === right.schema.slug) {
         if (left.is_main !== right.is_main) {
           return left.is_main ? -1 : 1;

@@ -36,8 +36,42 @@ app.get('/', (c) => {
       specs: `${baseUrl}/api/specs`,
       plugins: `${baseUrl}/api/plugins`,
       mcp: `${baseUrl}/mcp`,
+      mcp_discovery: `${baseUrl}/.well-known/mcp.json`,
     },
     description: 'Start at /api/specs for unified agent-readable tool discovery, /api/schemas for schema-centric discovery, or connect via /mcp for MCP tool integration.',
+  });
+});
+
+app.get('/.well-known/mcp.json', (c) => {
+  const baseUrl = new URL(c.req.url).origin;
+  return c.json({
+    name: 'specy',
+    description: 'Specy MCP server exposed over Streamable HTTP for schema discovery, spec discovery, and frontend registration workflows.',
+    version: '1.0.0',
+    documentation_url: `${baseUrl}/specs/Specs_MCP_Exposition.md`,
+    server: {
+      url: `${baseUrl}/mcp`,
+      transport: 'streamable-http',
+      protocol: 'mcp',
+      capabilities: {
+        tools: true,
+        resources: false,
+        prompts: false,
+      },
+    },
+    discovery: {
+      root_url: `${baseUrl}/`,
+      specs_url: `${baseUrl}/api/specs`,
+      schemas_url: `${baseUrl}/api/schemas`,
+    },
+    tools: [
+      'list_available_tools',
+      'get_spec_definition',
+      'list_schemas',
+      'get_schema_spec',
+      'register_frontend',
+      'check_health',
+    ],
   });
 });
 

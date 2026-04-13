@@ -58,6 +58,7 @@ async function createMcpServerWithTools(env: Env, baseUrl: string) {
               slug: spec.slug,
               name: spec.name,
               description: spec.description,
+              discovery_scope: spec.discovery_scope,
               schema: spec.schema,
               is_main: spec.is_main,
               detail_url: `${baseUrl}/api/specs/${spec.slug}`,
@@ -380,11 +381,19 @@ mcpRoute.all('/', async (c) => {
   if (c.req.method === 'GET' && !c.req.header('accept')?.includes('text/event-stream')) {
     return c.json({
       service: 'specy-mcp',
+      name: 'specy',
+      version: '1.0.0',
       protocol: 'MCP (Model Context Protocol)',
-      transport: 'Streamable HTTP (SSE)',
+      transport: 'Streamable HTTP',
+      endpoint: `${baseUrl}/mcp`,
+      discovery_url: `${baseUrl}/.well-known/mcp.json`,
       status: 'active',
-      description: 'This is an MCP endpoint. Connect using an MCP-compatible client (like Claude Desktop or another AI agent) to use the available tools.',
-      tools: ['list_available_tools', 'get_spec_definition', 'list_schemas', 'get_schema_spec', 'register_frontend', 'check_health']
+      description: 'This is the Specy MCP endpoint. Connect using an MCP-compatible client over Streamable HTTP and initialize against this URL.',
+      methods: {
+        post: 'Send JSON-RPC MCP requests to this endpoint.',
+        get: 'Open an optional SSE stream or fetch this discovery payload.',
+      },
+      tools: ['list_available_tools', 'get_spec_definition', 'list_schemas', 'get_schema_spec', 'register_frontend', 'check_health'],
     });
   }
 

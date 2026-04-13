@@ -849,6 +849,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   //  plugins.sql               — needs set_current_timestamp_updated_at (preamble)
   //  plugins_config_schema.sql — additive update for existing installations
   //  mentorbooking_products.sql — needs products (FK)
+  //  llm_specs.sql             — standalone spec registry table
+  //  page_schema_specs.sql     — needs page_schemas + llm_specs
+  //  llm_specs_default_specy_schema_docs.sql — seeds the global Specy schema-authoring MCP spec
   //  pages.sql                 — renames products→pages; renames FK on mentorbooking_products
   //                              (must run AFTER mentorbooking_products so the FK to rename exists)
   //  mentorbooking_events.sql  — needs companies + staff_registry + mentorbooking_products + event functions
@@ -879,6 +882,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     'plugins.sql',
     'plugins_config_schema.sql',
     'mentorbooking_products.sql',
+    'llm_specs.sql',
+    'page_schema_specs.sql',
+    'llm_specs_default_specy_schema_docs.sql',
     'pages.sql',
     'mentorbooking_events.sql',
     'mentorbooking_events_archive.sql',

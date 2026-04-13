@@ -37,6 +37,7 @@ specs.get('/', async (c) => {
         slug: entry.slug,
         name: entry.name,
         description: entry.description,
+        discovery_scope: entry.discovery_scope,
         schema: entry.schema,
         is_main: entry.is_main,
         tags: entry.tags,
