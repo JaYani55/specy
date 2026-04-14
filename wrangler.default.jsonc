@@ -1,5 +1,5 @@
 {
-  "name": "specy",
+  "name": "service-cms",
   "main": "api/index.ts",
   "compatibility_date": "2026-02-19",
   "compatibility_flags": ["nodejs_compat"],
@@ -19,7 +19,7 @@
   // ║     or: npx wrangler whoami                                              ║
   // ║                                                                          ║
   // ║  2. Create a Secrets Store (first time only):                            ║
-  // ║     npx wrangler secrets-store store create specy --remote               ║
+  // ║     npx wrangler secrets-store store create service-cms --remote         ║
   // ║     Copy the returned store UUID.                                        ║
   // ║     or: npx wrangler secrets-store store list                            ║
   // ║                                                                          ║
@@ -52,7 +52,8 @@
   // ║     b) Replace bucket_name in the r2_buckets section below  <<<         ║
   // ║     c) Uncomment the r2_buckets section                                  ║
   // ║                                                                          ║
-  // ║  8. Apply database migrations, then build and deploy.                    ║
+  // ║  8. Apply database migrations, sync Supabase Edge Function secrets,      ║
+  // ║     deploy send_email, then build and deploy the Worker.                 ║
   // ╚══════════════════════════════════════════════════════════════════════════╝
 
   // ── Static SPA assets (Vite build output) ───────────────────────────────────

@@ -2,7 +2,7 @@
 setlocal
 
 echo.
-echo  specy setup
+echo  service-cms setup
 echo  -----------------
 echo.
 

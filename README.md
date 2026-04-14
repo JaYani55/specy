@@ -10,10 +10,12 @@ npm install
 ```
 
 ### 2. Run Setup Wizard
-This interactive script guides you through Cloudflare login, environment configuration, and initial deployment.
+This interactive script guides you through Cloudflare login, Worker and Supabase secret wiring, database migrations, Supabase Edge Function deployment, the first admin account, and the initial Cloudflare deploy.
 ```sh
 npm run setup
 ```
+
+On Windows you can also use `setup.bat`. On Unix-like systems you can use `./setup.sh`.
 
 ### 3. Local Development
 Start the frontend and backend services:
@@ -77,6 +79,16 @@ npm run build
 # Deploy API to Cloudflare
 npm run deploy:api
 ```
+
+## New Install Verification
+
+After `npm run setup`, verify these outcomes before handing the system over:
+
+1. The wizard reports successful database migrations and auth hook registration, or prints the exact manual fallback if the hook API call failed.
+2. The wizard reports `send_email` deployed and the admin UI mail test succeeds under `/verwaltung/connections`.
+3. Submitting a configured form creates a row in `forms_answers` and corresponding rows in `mail_delivery_jobs` / `mail_delivery_events`.
+4. The deployed Worker has the three runtime secrets bound: `CF_API_TOKEN`, `SUPABASE_PUBLISHABLE_KEY`, and `SECRETS_ENCRYPTION_KEY`.
+5. If the setup run had to retry Worker secrets after the first deploy, the follow-up redeploy completed successfully.
 
 ## Updating A Live Deployment
 Use the updater when you want to pull the latest code from the canonical GitHub remote, run integrity checks, rebuild, and redeploy in one step.

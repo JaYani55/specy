@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — specy first-time setup launcher (Linux / macOS)
+# setup.sh — service-cms first-time setup launcher (Linux / macOS)
 #
 # Usage:  bash setup.sh
 #    or:  chmod +x setup.sh && ./setup.sh
@@ -21,7 +21,7 @@ error()   { echo -e "  ${RED}[ERROR]${RESET} $*" >&2; }
 
 # ── Header ───────────────────────────────────────────────────────────────────
 echo ""
-echo -e "  ${BOLD}specy setup${RESET}"
+echo -e "  ${BOLD}service-cms setup${RESET}"
 echo    "  -----------------"
 echo ""
 

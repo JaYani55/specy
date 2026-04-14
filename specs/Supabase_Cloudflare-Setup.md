@@ -1,6 +1,6 @@
 # Supabase + Cloudflare Workers — Setup Guide
 
-Complete reference for deploying specy on Cloudflare Workers with Supabase as the database and auth backend. The interactive wizard (`npm run setup` / `setup.bat`) automates every step described here.
+Complete reference for deploying service-cms on Cloudflare Workers with Supabase as the database and auth backend. The interactive wizard (`npm run setup` / `setup.bat`) automates every step described here.
 
 ---
 
@@ -189,23 +189,39 @@ Create a PAT at [supabase.com/dashboard/account/tokens](https://supabase.com/das
 Applied in strict dependency order by `stepMigrations()`:
 
 ```
- 1  preamble.sql                     — app_enum type + all trigger functions (must be first)
- 2  user_profile.sql                 — no deps
- 3  roles.sql                        — needs app_enum (preamble)
- 4  employers.sql                    — needs user_profile
- 5  user_roles.sql                   — needs roles + user_profile
- 6  mentor_groups.sql                — standalone
- 7  products.sql                     — needs trigger functions (preamble)
- 8  page_schemas.sql                 — needs trigger functions (preamble)
- 9  mentorbooking_products.sql       — needs products (FK)
-10  pages.sql                        — renames products→pages; renames FK on mentorbooking_products
-11  mentorbooking_events.sql         — needs employers + mentorbooking_products + event trigger fns
-12  mentorbooking_events_archive.sql — needs employers + mentorbooking_products
-13  mentorbooking_notifications.sql  — needs user_profile
-14  agent_logs.sql                   — needs page_schemas
-15  Auth/Access_hook.sql             — JWT claims hook fn + GRANT/REVOKE (must be last)
-16  storage.sql (Supabase only)      — generated from storage.default.sql with your bucket name;
-                                       skipped when STORAGE_PROVIDER=r2
+ 1  preamble.sql
+ 2  user_profile.sql
+ 3  roles.sql
+ 4  employers.sql
+ 5  user_roles.sql
+ 6  mentor_groups.sql
+ 7  companies.sql
+ 8  staff_registry.sql
+ 9  products.sql
+10  page_schemas.sql
+11  page_schema_templates.sql
+12  managed_secrets.sql
+13  system_config.sql
+14  forms.sql
+15  forms_answers.sql
+16  forms_notifications.sql
+17  forms_notification_recipient_rls_fix.sql
+18  mail_delivery.sql
+19  forms_published_default.sql
+20  plugins.sql
+21  plugins_config_schema.sql
+22  mentorbooking_products.sql
+23  llm_specs.sql
+24  page_schema_specs.sql
+25  llm_specs_default_specy_schema_docs.sql
+26  pages.sql
+27  mentorbooking_events.sql
+28  mentorbooking_events_archive.sql
+29  mentorbooking_notifications.sql
+30  agent_logs.sql
+31  agent_logs_hardening.sql
+32  Auth/Access_hook.sql
+33  storage.sql (Supabase only)      — generated from storage.default.sql with your bucket name; skipped when STORAGE_PROVIDER=r2
 ```
 
 All migrations are idempotent — safe to re-run. The wizard checks whether the `pages` table exists before asking to run migrations, and offers to skip if the schema is already present.
@@ -361,7 +377,10 @@ cp wrangler.default.jsonc wrangler.jsonc
 ```bash
 npx wrangler secret put CF_API_TOKEN
 npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+npx wrangler secret put SECRETS_ENCRYPTION_KEY
 ```
+
+If this is the first time the Worker has ever been deployed and Wrangler rejects the secret write because the Worker does not exist yet, complete the first `wrangler deploy`, then run the failed `wrangler secret put ...` commands again and redeploy once more. The setup wizard now retries this automatically after the first deploy.
 
 ### 10.4 Secrets Store secret
 
@@ -406,6 +425,8 @@ npx -y supabase functions deploy send_email --use-api --project-ref <project-ref
 Remove-Item $deployRoot -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
+The function reads `SUPABASE_URL` from the hosted Supabase Edge runtime and expects `APP_SUPABASE_SECRET_KEY` plus `SECRETS_ENCRYPTION_KEY` to be synced before deploy. `functions/config.toml` ships with `verify_jwt = false` because the Worker invokes the function server-to-server with the Supabase secret key rather than an end-user JWT.
+
 ### 10.9 Build and deploy
 
 ```bash
@@ -449,7 +470,7 @@ The PAT does not have sufficient permissions or has expired. Create a new PAT at
 
 ### `wrangler secret put` fails
 
-The Worker must exist before secrets can be stored. Run a `wrangler deploy` (with placeholder values if necessary) to create the Worker, then re-run `npm run setup`.
+On a brand-new installation, Wrangler may reject a secret write until the first Worker deploy exists. The setup wizard now retries these writes automatically after the initial deploy and performs a follow-up deploy when the retry succeeds. If it still fails, run the reported `wrangler secret put ...` command manually and deploy again.
 
 ### Supabase Edge Function deploy fails with `Could not find npm package 'nodemailer'`
 

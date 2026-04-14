@@ -2,7 +2,7 @@
 /**
  * scripts/setup.mjs
  *
- * Interactive first-time setup wizard for specy on Cloudflare Workers.
+ * Interactive first-time setup wizard for service-cms on Cloudflare Workers.
  *
  * Steps:
  *  1. Cloudflare login  (wrangler login)
@@ -458,7 +458,17 @@ async function stepSupabaseSecrets(storeId) {
   writeDevVarsFile(supabasePublishableKey, encryptionKey);
   dv.stop(pc.green('.dev.vars written ✓  (SUPABASE_PUBLISHABLE_KEY + SECRETS_ENCRYPTION_KEY)'));
 
-  return { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl, encryptionKey };
+  return {
+    supabaseUrl,
+    supabasePublishableKey,
+    supabasePublishableKeyStored: wpOk,
+    supabaseSecretKey,
+    storageProvider,
+    storageBucket,
+    r2PublicUrl,
+    encryptionKey,
+    encryptionKeyStored: ekOk,
+  };
 }
 
 function patchWranglerJsonc(accountId, storeId) {
@@ -701,6 +711,49 @@ async function stepApiToken() {
     if (result.stderr) log.warn(result.stderr.trim());
   } else {
     s.stop(pc.green('CF_API_TOKEN stored as Worker secret ✓'));
+  }
+
+  return {
+    token: token.trim(),
+    stored: result.status === 0,
+  };
+}
+
+async function retryWorkerSecretsAfterDeploy(secretEntries, deploySucceeded) {
+  const pending = secretEntries.filter((entry) => !entry.stored);
+  if (pending.length === 0) return;
+
+  if (!deploySucceeded) {
+    log.warn(
+      'Some Worker secrets were not stored before deploy. Because the initial deploy did not complete, ' +
+      'retry them manually or re-run npm run setup after the Worker exists.',
+    );
+    return;
+  }
+
+  log.step(pc.bold('Post-deploy Worker secret retry'));
+  const recovered = [];
+
+  for (const entry of pending) {
+    const s = spinner();
+    s.start(`Retrying Worker secret ${pc.yellow(entry.name)} after initial deploy…`);
+    const ok = putWorkerSecret(entry.name, entry.value);
+    if (ok) {
+      s.stop(pc.green(`${entry.name} stored after initial deploy ✓`));
+      recovered.push(entry.name);
+    } else {
+      s.stop(pc.yellow(`${entry.name} still not stored — set it manually or re-run setup.`));
+    }
+  }
+
+  if (recovered.length === 0) return;
+
+  log.step('Redeploying so the newly stored Worker secrets are bound to the live deployment…');
+  const ok = wranglerInteractive('deploy');
+  if (!ok) {
+    log.warn('Redeploy after post-deploy secret retry exited with a non-zero code.');
+  } else {
+    log.success(`Redeployed successfully after storing: ${recovered.join(', ')}`);
   }
 }
 
@@ -1123,7 +1176,7 @@ async function stepDeploy() {
   );
   if (!go) {
     log.info('Skipped deploy. Run ' + pc.cyan('npm run deploy') + ' when ready.');
-    return;
+    return false;
   }
 
   log.step('Deploying — this may take ~30 seconds…');
@@ -1133,6 +1186,8 @@ async function stepDeploy() {
   } else {
     log.success('Deployed successfully ✓');
   }
+
+  return ok;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -1141,7 +1196,7 @@ async function main() {
   console.clear();
 
   intro(
-    pc.bgBlue(pc.white(pc.bold('  specy  '))) +
+    pc.bgBlue(pc.white(pc.bold('  service-cms  '))) +
     pc.dim('  first-time setup'),
   );
 
@@ -1199,11 +1254,21 @@ async function main() {
 
   // ── 5. CF_API_TOKEN ───────────────────────────────────────────────────────
   log.step(pc.bold('Step 4 — CF_API_TOKEN'));
-  await stepApiToken();
+  const apiTokenState = await stepApiToken();
 
   // ── 6. Supabase + Storage credentials ────────────────────────────────────
   log.step(pc.bold('Step 5 — Supabase & storage credentials'));
-  const { supabaseUrl, supabaseSecretKey, storageProvider, storageBucket, r2PublicUrl, encryptionKey } = await stepSupabaseSecrets(storeId);
+  const {
+    supabaseUrl,
+    supabasePublishableKey,
+    supabasePublishableKeyStored,
+    supabaseSecretKey,
+    storageProvider,
+    storageBucket,
+    r2PublicUrl,
+    encryptionKey,
+    encryptionKeyStored,
+  } = await stepSupabaseSecrets(storeId);
 
   // Patch wrangler.jsonc vars with Supabase + storage values
   const vs = spinner();
@@ -1232,7 +1297,13 @@ async function main() {
 
   // ── 11. Deploy ────────────────────────────────────────────────────────────
   log.step(pc.bold('Step 10 — Deploy'));
-  await stepDeploy();
+  const deploySucceeded = await stepDeploy();
+
+  await retryWorkerSecretsAfterDeploy([
+    { name: 'CF_API_TOKEN', value: apiTokenState.token, stored: apiTokenState.stored },
+    { name: 'SUPABASE_PUBLISHABLE_KEY', value: supabasePublishableKey, stored: supabasePublishableKeyStored },
+    { name: 'SECRETS_ENCRYPTION_KEY', value: encryptionKey, stored: encryptionKeyStored },
+  ], deploySucceeded);
 
   // ── Done ──────────────────────────────────────────────────────────────────
   outro(
