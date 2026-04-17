@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Bot, CheckCircle2, FileCode2, Lightbulb, Loader2, Save, Sparkles } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bot, CheckCircle2, FileCode2, Lightbulb, Loader2, Save, Sparkles, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -233,7 +233,9 @@ const SpecEditor = () => {
     toast.success(language === 'en' ? `Loaded template: ${template.name}` : `Vorlage geladen: ${template.name}`);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (nextStatus?: SpecRecord['status']) => {
+    const targetStatus = nextStatus ?? status;
+
     if (!name.trim()) {
       toast.error(language === 'en' ? 'Name is required.' : 'Name ist erforderlich.');
       return;
@@ -255,7 +257,7 @@ const SpecEditor = () => {
       description: description || null,
       definition: parsedDefinition.value,
       llm_instructions: llmInstructions || null,
-      status,
+      status: targetStatus,
       is_public: isPublic,
       is_main_template: isMainTemplate,
       tags: tagsText.split(',').map((entry) => entry.trim()).filter(Boolean),
@@ -267,7 +269,12 @@ const SpecEditor = () => {
       const savedSpec = existingSpec
         ? await updateSpec(existingSpec.id, payload)
         : await createSpec(payload);
-      toast.success(language === 'en' ? 'Spec saved.' : 'Spec gespeichert.');
+      setStatus(savedSpec.status);
+      toast.success(
+        targetStatus === 'published'
+          ? (language === 'en' ? 'Spec published.' : 'Spec veröffentlicht.')
+          : (language === 'en' ? 'Spec saved.' : 'Spec gespeichert.'),
+      );
       navigate(`/specs/${savedSpec.slug}`, { replace: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to save spec.');
@@ -301,6 +308,12 @@ const SpecEditor = () => {
               {language === 'en' ? 'Back' : 'Zurück'}
             </Link>
           </Button>
+          {status !== 'published' ? (
+            <Button variant="secondary" onClick={() => void handleSave('published')} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              {language === 'en' ? 'Publish spec' : 'Spec veröffentlichen'}
+            </Button>
+          ) : null}
           <Button onClick={() => void handleSave()} disabled={isSaving}>
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             {language === 'en' ? 'Save spec' : 'Spec speichern'}

@@ -15,9 +15,23 @@ import {
   normalizeSchemaIntegrationRequirements,
   validateSlugStructure,
 } from '../lib/schemaRouting';
-import { getDiscoverableSpecBySlug, listDiscoverableSpecs } from '../lib/specRegistry';
+import {
+  getDiscoverableSpecBySlug,
+  listDiscoverableSpecs,
+  listMcpExposedDiscoverableSpecs,
+  type DiscoverableSpecSummary,
+} from '../lib/specRegistry';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
+
+const BUILT_IN_MCP_TOOLS = [
+  'list_available_tools',
+  'get_spec_definition',
+  'list_schemas',
+  'get_schema_spec',
+  'register_frontend',
+  'check_health',
+] as const;
 
 interface SchemaListRow {
   slug: string;
@@ -28,6 +42,29 @@ interface SchemaListRow {
   frontend_url: string | null;
   slug_structure?: string | null;
   integration_requirements?: Record<string, unknown> | null;
+}
+
+function buildSpecToolDescription(spec: DiscoverableSpecSummary): string {
+  const summary = spec.description?.trim() || `Load the ${spec.name} specification.`;
+  return `${summary} Returns the full spec definition and LLM instructions for this discoverable spec.`;
+}
+
+function buildSpecToolPayload(spec: DiscoverableSpecSummary, baseUrl: string) {
+  return {
+    spec: {
+      slug: spec.slug,
+      name: spec.name,
+      description: spec.description,
+      discovery_scope: spec.discovery_scope,
+      schema: spec.schema,
+      definition: spec.definition,
+      llm_instructions: spec.llm_instructions,
+      tags: spec.tags,
+      metadata: spec.metadata,
+      updated_at: spec.updated_at,
+      detail_url: `${baseUrl}/api/specs/${spec.slug}`,
+    },
+  };
 }
 
 // ─── MCP Server Factory ─────────────────────────────────────────────────────
@@ -366,6 +403,28 @@ async function createMcpServerWithTools(env: Env, baseUrl: string) {
     },
   );
 
+  const exposedSpecs = await listMcpExposedDiscoverableSpecs(env);
+  const registeredToolNames = new Set<string>(BUILT_IN_MCP_TOOLS);
+
+  exposedSpecs.forEach((spec) => {
+    if (registeredToolNames.has(spec.slug)) {
+      return;
+    }
+
+    registeredToolNames.add(spec.slug);
+    server.tool(
+      spec.slug,
+      buildSpecToolDescription(spec),
+      {},
+      async () => ({
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify(buildSpecToolPayload(spec, baseUrl), null, 2),
+        }],
+      }),
+    );
+  });
+
   return server;
 }
 
@@ -379,6 +438,12 @@ mcpRoute.all('/', async (c) => {
 
   // Browsers/REST clients hitting GET /mcp without SSE headers
   if (c.req.method === 'GET' && !c.req.header('accept')?.includes('text/event-stream')) {
+    const exposedSpecs = await listMcpExposedDiscoverableSpecs(c.env);
+    const toolNames = Array.from(new Set([
+      ...BUILT_IN_MCP_TOOLS,
+      ...exposedSpecs.map((spec) => spec.slug),
+    ]));
+
     return c.json({
       service: 'specy-mcp',
       name: 'specy',
@@ -393,7 +458,7 @@ mcpRoute.all('/', async (c) => {
         post: 'Send JSON-RPC MCP requests to this endpoint.',
         get: 'Open an optional SSE stream or fetch this discovery payload.',
       },
-      tools: ['list_available_tools', 'get_spec_definition', 'list_schemas', 'get_schema_spec', 'register_frontend', 'check_health'],
+      tools: toolNames,
     });
   }
 

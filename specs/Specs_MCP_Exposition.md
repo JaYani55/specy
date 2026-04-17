@@ -27,7 +27,7 @@ In practical terms:
 - A schema owns frontend registration.
 - A schema can have one main spec and zero or more additional specs.
 - Public agent discovery happens through the Specs registry, not through one route per spec.
-- MCP currently exposes specs as tools, not as MCP resources.
+- MCP exposes built-in registry tools and can also register discoverable specs as direct MCP tools when `metadata.mcp_exposed = true`.
 
 ## 2. High-Level Model
 
@@ -119,12 +119,17 @@ Public discovery only shows specs that satisfy all of the following:
 - the spec is public
 - the parent schema is registered
 
+Direct MCP tool registration adds one more condition:
+
+- the spec metadata must include `mcp_exposed = true`
+
 This behavior is used by:
 
 - `GET /api/specs` without auth
 - `GET /api/specs/:slug` without auth
 - MCP tool `list_available_tools`
 - MCP tool `get_spec_definition`
+- dynamic MCP tool registration for exposed specs
 
 ### 4.2 Schema-centric legacy/spec projection
 
@@ -190,6 +195,7 @@ Once a schema is registered and the attached specs are public/published:
 
 - REST discovery starts returning them
 - MCP discovery starts returning them
+- specs with `metadata.mcp_exposed = true` are also registered as direct MCP tools using their spec slug as the tool name
 
 No server restart is required because exposure is driven by database state.
 

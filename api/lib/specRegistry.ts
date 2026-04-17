@@ -492,6 +492,15 @@ export async function listDiscoverableSpecs(env: Env): Promise<DiscoverableSpecS
     });
 }
 
+export function isMcpExposedDiscoverableSpec(spec: DiscoverableSpecSummary): boolean {
+  return Boolean(spec.metadata && spec.metadata.mcp_exposed === true);
+}
+
+export async function listMcpExposedDiscoverableSpecs(env: Env): Promise<DiscoverableSpecSummary[]> {
+  const specs = await listDiscoverableSpecs(env);
+  return specs.filter(isMcpExposedDiscoverableSpec);
+}
+
 export async function getDiscoverableSpecBySlug(env: Env, slug: string): Promise<DiscoverableSpecSummary | null> {
   const specs = await listDiscoverableSpecs(env);
   return specs.find((spec) => spec.slug === slug) ?? null;

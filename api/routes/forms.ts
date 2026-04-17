@@ -115,7 +115,7 @@ const buildNotificationContent = (input: {
   const text = [
     `Hallo ${input.recipientLabel},`,
     '',
-    `fuer das Formular \"${input.form.name}\" wurde eine neue Antwort gespeichert.`,
+    `fuer das Formular "${input.form.name}" wurde eine neue Antwort gespeichert.`,
     '',
     `Antwort-ID: ${input.answerId}`,
     `Formular-Slug: ${input.form.slug}`,
@@ -204,7 +204,7 @@ const resolveStaffRecipients = async (
         label: typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim() : 'Staff',
         kind: 'staff' as const,
         staffId: row.id as string,
-      };
+      } as NotificationRecipient;
     })
     .filter((recipient): recipient is NotificationRecipient => recipient !== null);
 };
