@@ -176,6 +176,7 @@ const SpecEditor = () => {
   const [llmInstructions, setLlmInstructions] = useState('');
   const [status, setStatus] = useState<SpecRecord['status']>('draft');
   const [isPublic, setIsPublic] = useState(false);
+  const [isMcpExposed, setIsMcpExposed] = useState(false);
   const [isMainTemplate, setIsMainTemplate] = useState(false);
   const [tagsText, setTagsText] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('generic-tool');
@@ -198,6 +199,7 @@ const SpecEditor = () => {
         setLlmInstructions(spec.llm_instructions ?? '');
         setStatus(spec.status);
         setIsPublic(spec.is_public);
+        setIsMcpExposed(Boolean(spec.metadata?.mcp_exposed));
         setIsMainTemplate(spec.is_main_template);
         setTagsText(spec.tags.join(', '));
       } catch (error) {
@@ -261,7 +263,10 @@ const SpecEditor = () => {
       is_public: isPublic,
       is_main_template: isMainTemplate,
       tags: tagsText.split(',').map((entry) => entry.trim()).filter(Boolean),
-      metadata: existingSpec?.metadata ?? {},
+      metadata: {
+        ...(existingSpec?.metadata ?? {}),
+        mcp_exposed: isMcpExposed,
+      },
     };
 
     try {
@@ -384,6 +389,20 @@ const SpecEditor = () => {
                 </div>
               </div>
 
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label>{language === 'en' ? 'MCP Mode' : 'MCP Modus'}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en' ? 'Expose this spec as a top-level MCP tool when published and public.' : 'Exponiere diese Spec als Top-Level MCP-Tool, wenn sie veröffentlicht und öffentlich ist.'}
+                    </p>
+                  </div>
+                  <Switch checked={isMcpExposed} onCheckedChange={setIsMcpExposed} />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-lg border p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>

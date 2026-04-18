@@ -59,11 +59,18 @@
   // ── Static SPA assets (Vite build output) ───────────────────────────────────
   // Workers serves the React SPA from dist/ and falls back to index.html
   // for all unmatched routes (SPA client-side routing).
-  // The Worker script (api/index.ts) handles /api/* routes first.
+  // Run the Worker first only for API and MCP paths so the SPA cannot
+  // swallow machine-facing endpoints like /api/*, /mcp, or /.well-known/*.
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/mcp",
+      "/mcp/*",
+      "/.well-known/*"
+    ]
   },
 
   "vars": {

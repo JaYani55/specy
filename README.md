@@ -71,6 +71,8 @@ The API provides two main entry points for automation:
 1. **REST Discovery**: `http://localhost:8787/api/schemas` lists all available page schemas and their specifications.
 2. **MCP Endpoint**: `http://localhost:8787/mcp` provides a Model Context Protocol interface for AI agents (like Claude Desktop) to discover, read, and register schemas automatically.
 
+In production, Cloudflare static assets are configured with selective worker-first routing for `/api/*`, `/mcp`, `/mcp/*`, and `/.well-known/*`. This keeps the SPA asset-first for normal frontend requests while guaranteeing that API and MCP discovery endpoints always reach the Worker.
+
 ## Production
 ```sh
 # Build Frontend
