@@ -121,6 +121,9 @@ The updater performs these checks by default:
 - Verifies `origin` points to `https://github.com/JaYani55/specy.git`
 - Refuses to pull over tracked local changes unless `--allow-dirty` is passed
 - Confirms `wrangler.jsonc` exists and no placeholder setup values remain
+- Prompts for a Supabase personal access token (PAT) so it can compare core migrations and managed Supabase Edge Functions against the target instance
+- Re-applies any missing core migrations, records their checksums in `public.system_config`, and blocks deploy if historical migration drift is detected
+- Re-deploys managed Supabase Edge Functions that changed in core and records their checksums in `public.system_config`
 - Runs `npm install`, `npm run lint`, `npm run build`, and `npm run deploy`
 
 You can run the integrity checks without pulling or deploying via:
@@ -128,3 +131,15 @@ You can run the integrity checks without pulling or deploying via:
 ```sh
 npm run cf:update:check
 ```
+
+To preview pending Supabase/core changes without applying them, use:
+
+```sh
+npm run cf:update:dry-run
+```
+
+Notes:
+
+- The updater uses a Supabase PAT (`sbp_...` or `sb_pat_...`) for migration/function state checks and metadata writes.
+- If `SUPABASE_SECRET_KEY` and `SECRETS_ENCRYPTION_KEY` are present in the local shell, the updater also re-syncs those two Supabase Edge Function secrets before deploying changed functions.
+- If the instance has no `core_update` records yet, the updater treats the first run as a bootstrap sync and records the current core migration/function checksums after they are applied.

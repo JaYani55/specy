@@ -9,6 +9,7 @@
     "deploy": "wrangler deploy",
     "deploy:api": "wrangler deploy api/index.ts",
     "cf:update": "node scripts/cf-update.mjs",
+    "cf:update:dry-run": "node scripts/cf-update.mjs --dry-run --skip-build --skip-deploy",
     "cf:update:check": "node scripts/cf-update.mjs --skip-pull --skip-install --skip-deploy",
     "build": "vite build",
     "build:dev": "vite build --mode development",

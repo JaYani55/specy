@@ -4,6 +4,20 @@ import { existsSync, readFileSync } from 'fs';
 import { dirname, join, normalize, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { confirm, isCancel, password } from '@clack/prompts';
+import {
+  analyzeCoreUpdates,
+  buildFunctionManifest,
+  buildMigrationManifest,
+  CORE_EDGE_FUNCTIONS,
+  deployEdgeFunction,
+  extractProjectRef,
+  fetchCoreUpdateState,
+  registerAuthHook,
+  runSqlQuery,
+  syncEdgeFunctionSecrets,
+  upsertCoreUpdateRecords,
+} from './lib/core-update.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -12,11 +26,14 @@ const EXPECTED_REMOTE = 'https://github.com/JaYani55/specy.git';
 const args = new Set(process.argv.slice(2));
 const options = {
   allowDirty: args.has('--allow-dirty'),
+  dryRun: args.has('--dry-run'),
   skipPull: args.has('--skip-pull'),
   skipInstall: args.has('--skip-install'),
   skipLint: args.has('--skip-lint'),
   skipBuild: args.has('--skip-build'),
   skipDeploy: args.has('--skip-deploy'),
+  skipMigrations: args.has('--skip-migrations'),
+  skipFunctions: args.has('--skip-functions'),
   help: args.has('--help') || args.has('-h'),
 };
 
@@ -57,15 +74,27 @@ function printHeader() {
   console.log('');
 }
 
+function bailOnCancel(value, message) {
+  if (isCancel(value)) {
+    warn(message);
+    process.exit(0);
+  }
+
+  return value;
+}
+
 function printHelp() {
   printHeader();
   console.log('  Usage: node scripts/cf-update.mjs [options]');
   console.log('');
   console.log('  Options:');
   console.log('    --allow-dirty   Continue even when tracked git files are modified');
+  console.log('    --dry-run       Preview Supabase/core update actions and stop before build/deploy');
   console.log('    --skip-pull     Skip git fetch/pull and only run integrity checks/deploy');
   console.log('    --skip-install  Skip npm install');
   console.log('    --skip-lint     Skip npm run lint');
+  console.log('    --skip-migrations  Skip Supabase core migration checks and apply');
+  console.log('    --skip-functions   Skip Supabase Edge Function checks and deploy');
   console.log('    --skip-build    Skip npm run build and dist verification');
   console.log('    --skip-deploy   Stop after integrity checks and build');
   console.log('    --help, -h      Show this help');
@@ -176,6 +205,229 @@ function ensureWranglerConfig() {
   ok('wrangler.jsonc looks configured.');
 }
 
+function readConfiguredVar(rawConfig, key) {
+  const uncommented = rawConfig
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+
+  const match = uncommented.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`));
+  return match?.[1]?.trim() || '';
+}
+
+function readSupabaseConfig() {
+  const raw = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8');
+  const supabaseUrl = process.env.SUPABASE_URL || readConfiguredVar(raw, 'SUPABASE_URL');
+  const storageProvider = process.env.STORAGE_PROVIDER || readConfiguredVar(raw, 'STORAGE_PROVIDER') || 'supabase';
+  const storageBucket = process.env.STORAGE_BUCKET || readConfiguredVar(raw, 'STORAGE_BUCKET') || 'booking_media';
+
+  return {
+    supabaseUrl,
+    storageProvider,
+    storageBucket,
+  };
+}
+
+async function promptForSupabasePat() {
+  const existing = (process.env.SUPABASE_ACCESS_TOKEN || '').trim();
+  if (existing) {
+    ok('Using Supabase PAT from SUPABASE_ACCESS_TOKEN.');
+    return existing;
+  }
+
+  const token = bailOnCancel(
+    await password({
+      message: 'Supabase personal access token (sbp_... / sb_pat_...):',
+      validate: (value) => {
+        const trimmed = value.trim();
+        if (trimmed.length < 10) {
+          return 'Token looks too short.';
+        }
+        if (!trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_pat_')) {
+          return 'Use a Supabase PAT, not the publishable or secret key.';
+        }
+        return undefined;
+      },
+    }),
+    'Supabase update check cancelled.',
+  );
+
+  return token.trim();
+}
+
+function printSupabasePlan(plan) {
+  if (plan.bootstrapRequired) {
+    warn('No core update metadata found in Supabase. This run will treat current core migrations/functions as a bootstrap sync.');
+  }
+
+  if (plan.pendingMigrations.length > 0) {
+    info(`Pending migrations (${plan.pendingMigrations.length}): ${plan.pendingMigrations.map((item) => item.name).join(', ')}`);
+  } else {
+    ok('No pending core migrations.');
+  }
+
+  if (plan.pendingFunctions.length > 0) {
+    info(`Pending Edge Functions (${plan.pendingFunctions.length}): ${plan.pendingFunctions.map((item) => item.name).join(', ')}`);
+  } else {
+    ok('No pending Supabase Edge Function updates.');
+  }
+
+  if (plan.driftedMigrations.length > 0) {
+    warn(`Historical migration drift detected: ${plan.driftedMigrations.map((item) => item.name).join(', ')}`);
+  }
+}
+
+function buildStateRecord(item, head) {
+  return {
+    key: item.id,
+    value: {
+      name: item.name,
+      checksum: item.checksum,
+      updatedAt: new Date().toISOString(),
+      commit: head,
+    },
+  };
+}
+
+async function applyPendingMigrations(plan, projectRef, pat, head) {
+  for (const migration of plan.pendingMigrations) {
+    info(`Applying migration ${migration.name}...`);
+    await runSqlQuery(projectRef, pat, migration.sql);
+    await upsertCoreUpdateRecords(projectRef, pat, [buildStateRecord(migration, head)]);
+    ok(`Applied ${migration.name}.`);
+  }
+
+  if (plan.pendingMigrations.length > 0) {
+    ok('Recorded migration update state.');
+    try {
+      await registerAuthHook(projectRef, pat);
+      ok('Supabase auth hook registration verified.');
+    } catch (error) {
+      warn(`Auth hook registration check failed: ${error.message}`);
+    }
+  }
+}
+
+async function applyPendingFunctions(plan, projectRef, pat, head) {
+  if (plan.pendingFunctions.length === 0) {
+    return;
+  }
+
+  const supabaseSecretKey = (process.env.SUPABASE_SECRET_KEY || '').trim();
+  const encryptionKey = (process.env.SECRETS_ENCRYPTION_KEY || '').trim();
+  const canSyncSecrets = Boolean(supabaseSecretKey && encryptionKey);
+
+  if (canSyncSecrets) {
+    info('Syncing Supabase Edge Function secrets before deploy...');
+    await syncEdgeFunctionSecrets(ROOT, projectRef, pat, {
+      APP_SUPABASE_SECRET_KEY: supabaseSecretKey,
+      SECRETS_ENCRYPTION_KEY: encryptionKey,
+    });
+    ok('Supabase Edge Function secrets synced.');
+  } else {
+    warn('Skipping Edge Function secret sync because SUPABASE_SECRET_KEY and/or SECRETS_ENCRYPTION_KEY are not set in the local environment.');
+  }
+
+  for (const fn of plan.pendingFunctions) {
+    info(`Deploying Supabase Edge Function ${fn.name}...`);
+    await deployEdgeFunction(ROOT, fn.name, projectRef, pat);
+    await upsertCoreUpdateRecords(projectRef, pat, [{
+      key: fn.id,
+      value: {
+        name: fn.name,
+        checksum: fn.checksum,
+        requiredSecrets: fn.requiredSecrets,
+        updatedAt: new Date().toISOString(),
+        commit: head,
+      },
+    }]);
+    ok(`Deployed ${fn.name}.`);
+  }
+
+  ok('Recorded Edge Function update state.');
+}
+
+async function runSupabaseUpdatePhase() {
+  if (options.skipMigrations && options.skipFunctions) {
+    warn('Skipping all Supabase update checks as requested.');
+    return { shouldStop: false };
+  }
+
+  const { supabaseUrl, storageProvider, storageBucket } = readSupabaseConfig();
+  if (!supabaseUrl) {
+    warn('SUPABASE_URL is not configured in wrangler.jsonc. Skipping Supabase update checks.');
+    return { shouldStop: false };
+  }
+
+  const projectRef = extractProjectRef(supabaseUrl);
+  if (!projectRef) {
+    warn('Could not derive the Supabase project ref from SUPABASE_URL. Skipping Supabase update checks.');
+    return { shouldStop: false };
+  }
+
+  const pat = await promptForSupabasePat();
+  const migrations = options.skipMigrations
+    ? []
+    : buildMigrationManifest(ROOT, storageProvider, storageBucket);
+  const functions = options.skipFunctions
+    ? []
+    : buildFunctionManifest(ROOT);
+
+  info(`Checking Supabase core state for project ${projectRef}...`);
+  const remote = await fetchCoreUpdateState(projectRef, pat);
+  const plan = analyzeCoreUpdates(migrations, functions, remote.state);
+  printSupabasePlan(plan);
+
+  if (plan.driftedMigrations.length > 0) {
+    fail('Refusing to continue because historical core migrations were modified after being recorded in this instance. Review the migration drift before deploying.');
+  }
+
+  if (plan.pendingMigrations.length === 0 && plan.pendingFunctions.length === 0) {
+    return { shouldStop: options.dryRun };
+  }
+
+  if (options.dryRun) {
+    warn('Dry run requested. Stopping before applying Supabase, build, or deploy changes.');
+    return { shouldStop: true };
+  }
+
+  const proceed = bailOnCancel(
+    await confirm({
+      message: 'Apply the pending Supabase core updates before build/deploy?',
+      initialValue: true,
+    }),
+    'Supabase update phase cancelled.',
+  );
+
+  if (!proceed) {
+    warn('Supabase core updates were not applied. Stopping before build/deploy.');
+    return { shouldStop: true };
+  }
+
+  const head = capture('git', ['rev-parse', 'HEAD']);
+  await applyPendingMigrations(plan, projectRef, pat, head);
+  await applyPendingFunctions(plan, projectRef, pat, head);
+  await upsertCoreUpdateRecords(projectRef, pat, [
+    {
+      key: 'deployment:core_commit',
+      value: {
+        commit: head,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    {
+      key: 'deployment:functions',
+      value: {
+        functions: CORE_EDGE_FUNCTIONS.map((item) => item.name),
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  ]);
+
+  ok('Supabase core update phase completed.');
+  return { shouldStop: false };
+}
+
 function updateFromGit() {
   const branch = capture('git', ['branch', '--show-current']);
   if (!branch) {
@@ -223,7 +475,7 @@ function deploy() {
   ok('Cloudflare deploy finished successfully.');
 }
 
-function main() {
+async function main() {
   if (options.help) {
     printHelp();
     return;
@@ -259,6 +511,14 @@ function main() {
     warn('Skipping lint as requested.');
   }
 
+  const supabasePhase = await runSupabaseUpdatePhase();
+  if (supabasePhase.shouldStop) {
+    console.log('');
+    ok('Update analysis completed.');
+    console.log('');
+    return;
+  }
+
   if (!options.skipBuild) {
     runBuild();
   } else {
@@ -276,4 +536,6 @@ function main() {
   console.log('');
 }
 
-main();
+main().catch((error) => {
+  fail(error instanceof Error ? error.message : String(error));
+});
