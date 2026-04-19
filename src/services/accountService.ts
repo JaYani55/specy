@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { API_URL } from '@/lib/apiUrl';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ export interface AccountUser {
   Username: string | null;
   pfp_url: string | null;
   created_at: string | null;
-  email?: string;
+  email?: string | null;
   roles: Role[];
 }
 
@@ -42,6 +43,18 @@ interface UserRoleRow {
   role_id: number;
   roles: Role | null;
 }
+
+const getAuthToken = async (): Promise<string | null> => {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+};
+
+const buildApiHeaders = async (): Promise<HeadersInit> => {
+  const token = await getAuthToken();
+  return token
+    ? { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    : { Accept: 'application/json' };
+};
 
 // ─── Role CRUD ───────────────────────────────────────────────────────
 
@@ -147,6 +160,19 @@ export const fetchAccounts = async (): Promise<AccountUser[]> => {
     created_at: p.created_at,
     roles: rolesByUser.get(p.user_id) || [],
   }));
+};
+
+export const fetchAdminAccounts = async (): Promise<AccountUser[]> => {
+  const response = await fetch(`${API_URL}/api/accounts`, {
+    headers: await buildApiHeaders(),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(payload?.error || 'Failed to load accounts.');
+  }
+
+  return await response.json() as AccountUser[];
 };
 
 // ─── Role Assignment ────────────────────────────────────────────────

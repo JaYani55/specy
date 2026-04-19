@@ -4,7 +4,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useNavigate } from 'react-router-dom';
 import {
   fetchRoles,
-  fetchAccounts,
+  fetchAdminAccounts,
   assignRole,
   removeRole,
   createAccount,
@@ -128,7 +128,7 @@ const VerwaltungAccounts: React.FC = () => {
       setLoading(true);
       const [rolesData, accountsData] = await Promise.all([
         fetchRoles(),
-        fetchAccounts(),
+        fetchAdminAccounts(),
       ]);
       setRoles(rolesData);
       setAccounts(accountsData);
@@ -429,14 +429,14 @@ const VerwaltungAccounts: React.FC = () => {
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-gray-900 dark:text-white truncate">
+                            <div className="min-w-0">
+                              <p className="font-medium text-gray-900 dark:text-white truncate">
                                 {account.Username || (de ? 'Kein Benutzername' : 'No username')}
-                              </span>
+                              </p>
                               {account.email && (
-                                <span className="text-sm text-gray-500 dark:text-gray-400 truncate hidden sm:inline">
+                                <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">
                                   {account.email}
-                                </span>
+                                </p>
                               )}
                             </div>
                             <div className="flex flex-wrap gap-1 mt-1">
@@ -482,6 +482,14 @@ const VerwaltungAccounts: React.FC = () => {
                         {isExpanded && (
                           <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 space-y-3">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                  {de ? 'E-Mail' : 'Email'}:
+                                </span>
+                                <p className="text-gray-700 dark:text-gray-300 mt-0.5 break-all">
+                                  {account.email || '-'}
+                                </p>
+                              </div>
                               <div>
                                 <span className="text-gray-500 dark:text-gray-400">
                                   {de ? 'Benutzer-ID' : 'User ID'}:
