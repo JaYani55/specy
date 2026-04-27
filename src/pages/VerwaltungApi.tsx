@@ -8,20 +8,25 @@ import {
   Eye,
   FileJson,
   KeyRound,
+  Loader2,
   Search,
   Shield,
   Waypoints,
 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { API_CATALOG, API_TAGS, type ApiEndpointDefinition } from '@/lib/apiCatalog';
+import { AGENT_LOGGER_ENDPOINTS, API_CATALOG, API_TAGS, buildLoggingEndpointKey, type ApiEndpointDefinition } from '@/lib/apiCatalog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { getLoggingConfigSettings, updateLoggingConfigSettings } from '@/services/connectionsService';
+import { toast } from 'sonner';
 
 const methodClasses: Record<ApiEndpointDefinition['method'], string> = {
   GET: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
@@ -229,6 +234,15 @@ const VerwaltungApi: React.FC = () => {
   const { language } = useTheme();
   const [query, setQuery] = useState('');
   const [activeTag, setActiveTag] = useState('all');
+  const [selectedLogKeys, setSelectedLogKeys] = useState<string[]>([]);
+  const [loggingLoading, setLoggingLoading] = useState(true);
+  const [loggingSaving, setLoggingSaving] = useState(false);
+
+  const loggableEndpoints = useMemo(() => AGENT_LOGGER_ENDPOINTS, []);
+  const allLoggableKeys = useMemo(
+    () => loggableEndpoints.map((endpoint) => buildLoggingEndpointKey(endpoint)),
+    [loggableEndpoints],
+  );
 
   useEffect(() => {
     if (!permissions.canManageAccounts || !permissions.userRoles.includes('super-admin')) {
@@ -236,19 +250,99 @@ const VerwaltungApi: React.FC = () => {
     }
   }, [navigate, permissions.canManageAccounts, permissions.userRoles]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLoggingConfig = async () => {
+      setLoggingLoading(true);
+      try {
+        const logging = await getLoggingConfigSettings();
+        if (cancelled) return;
+
+        const validKeys = new Set(allLoggableKeys);
+        const nextKeys = logging.mode === 'all'
+          ? allLoggableKeys
+          : logging.enabledEndpointKeys.filter((entry) => validKeys.has(entry));
+        setSelectedLogKeys(nextKeys);
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedLogKeys(allLoggableKeys);
+          toast.error(error instanceof Error ? error.message : 'Failed to load logging settings');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoggingLoading(false);
+        }
+      }
+    };
+
+    void loadLoggingConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allLoggableKeys]);
+
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://cms.example.com';
 
   const counts = useMemo(() => {
     const mutable = API_CATALOG.filter((endpoint) => endpoint.method !== 'GET').length;
     const authProtected = API_CATALOG.filter((endpoint) => endpoint.auth !== 'public').length;
-    const logged = API_CATALOG.filter((endpoint) => endpoint.logging !== 'none').length;
+    const logged = loggingLoading ? allLoggableKeys.length : selectedLogKeys.length;
     return {
       total: API_CATALOG.length,
       mutable,
       authProtected,
       logged,
     };
-  }, []);
+  }, [allLoggableKeys.length, loggingLoading, selectedLogKeys.length]);
+
+  const selectedLogKeySet = useMemo(() => new Set(selectedLogKeys), [selectedLogKeys]);
+
+  const toggleLogKey = (endpointKey: string, checked: boolean) => {
+    setSelectedLogKeys((current) => {
+      if (checked) {
+        return current.includes(endpointKey) ? current : [...current, endpointKey];
+      }
+
+      return current.filter((entry) => entry !== endpointKey);
+    });
+  };
+
+  const saveLoggingConfig = async () => {
+    setLoggingSaving(true);
+    try {
+      const isAllSelected = selectedLogKeys.length === allLoggableKeys.length;
+      const saved = await updateLoggingConfigSettings({
+        mode: isAllSelected ? 'all' : 'custom',
+        enabledEndpointKeys: selectedLogKeys,
+      });
+
+      setSelectedLogKeys(saved.mode === 'all' ? allLoggableKeys : saved.enabledEndpointKeys);
+      toast.success(language === 'de' ? 'Logging-Einstellungen gespeichert' : 'Logging settings saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save logging settings');
+    } finally {
+      setLoggingSaving(false);
+    }
+  };
+
+  const reloadLoggingConfig = async () => {
+    setLoggingLoading(true);
+    try {
+      const logging = await getLoggingConfigSettings();
+      const validKeys = new Set(allLoggableKeys);
+      setSelectedLogKeys(
+        logging.mode === 'all'
+          ? allLoggableKeys
+          : logging.enabledEndpointKeys.filter((entry) => validKeys.has(entry)),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to reload logging settings');
+    } finally {
+      setLoggingLoading(false);
+    }
+  };
 
   const filteredEndpoints = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -408,6 +502,86 @@ const VerwaltungApi: React.FC = () => {
           </CardContent>
         </Card>
 
+        <Card className="border-slate-200 dark:border-slate-800">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle>{language === 'de' ? 'Verbosity Settings' : 'Verbosity Settings'}</CardTitle>
+                <CardDescription>
+                  {language === 'de'
+                    ? 'Super-Admin-Allowlist fuer agentLogger. Die Liste wird aus dem API-Katalog gefiltert und zeigt nur Endpunkte, die tatsaechlich durch die Kommunikationslogs laufen koennen.'
+                    : 'Super-admin allowlist for agentLogger. The list is filtered from the API catalog and only shows endpoints that can actually flow into the communication logs.'}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setSelectedLogKeys(allLoggableKeys)} disabled={loggingLoading || loggingSaving}>
+                  {language === 'de' ? 'Alle aktivieren' : 'Enable all'}
+                </Button>
+                <Button variant="outline" onClick={() => setSelectedLogKeys([])} disabled={loggingLoading || loggingSaving}>
+                  {language === 'de' ? 'Alle deaktivieren' : 'Disable all'}
+                </Button>
+                <Button variant="outline" onClick={reloadLoggingConfig} disabled={loggingLoading || loggingSaving}>
+                  {loggingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {language === 'de' ? 'Neu laden' : 'Reload'}
+                </Button>
+                <Button onClick={saveLoggingConfig} disabled={loggingLoading || loggingSaving}>
+                  {loggingSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {language === 'de' ? 'Speichern' : 'Save'}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+              <Badge variant="secondary">{selectedLogKeys.length} / {allLoggableKeys.length}</Badge>
+              <span>
+                {language === 'de'
+                  ? 'Secrets- und Log-Endpunkte sind absichtlich ausgeschlossen. Aenderungen werden nach kurzer Middleware-Cache-Zeit wirksam.'
+                  : 'Secrets and log-management endpoints are intentionally excluded. Changes become effective after the short middleware cache TTL.'}
+              </span>
+            </div>
+
+            {loggingLoading ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {language === 'de' ? 'Lade Logging-Allowlist ...' : 'Loading logging allowlist ...'}
+              </div>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-2">
+                {loggableEndpoints.map((endpoint) => {
+                  const endpointKey = buildLoggingEndpointKey(endpoint);
+                  return (
+                    <label
+                      key={endpoint.id}
+                      htmlFor={`log-endpoint-${endpoint.id}`}
+                      className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-950/40 dark:hover:border-slate-700"
+                    >
+                      <Checkbox
+                        id={`log-endpoint-${endpoint.id}`}
+                        checked={selectedLogKeySet.has(endpointKey)}
+                        onCheckedChange={(checked) => toggleLogKey(endpointKey, checked === true)}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className={methodClasses[endpoint.method]}>
+                            {endpoint.method}
+                          </Badge>
+                          <Badge variant="secondary">{endpoint.tag}</Badge>
+                          <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{endpoint.path}</span>
+                        </div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{endpoint.summary}</div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{endpoint.description}</p>
+                        <Label htmlFor={`log-endpoint-${endpoint.id}`} className="sr-only">{endpoint.summary}</Label>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="grid gap-4 lg:grid-cols-3">
           <Card className="border-slate-200 dark:border-slate-800">
             <CardHeader className="pb-3">
@@ -416,6 +590,7 @@ const VerwaltungApi: React.FC = () => {
             <CardContent className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
               <div>• {language === 'de' ? 'agentLogger sitzt vor /api/* und /mcp*.' : 'agentLogger sits in front of /api/* and /mcp*.'}</div>
               <div>• {language === 'de' ? 'Die Log-Endpunkte werden vor /api/schemas montiert, damit /api/schemas/logs nicht erneut geloggt wird.' : 'The log endpoints are mounted before /api/schemas so /api/schemas/logs does not recursively re-log itself.'}</div>
+              <div>• {language === 'de' ? 'Super-Admins koennen ueber die Verbosity Settings einzelne agentLogger-Endpunkte gezielt ein- oder ausschalten.' : 'Super-admins can selectively enable or disable individual agentLogger endpoints through Verbosity Settings.'}</div>
             </CardContent>
           </Card>
           <Card className="border-slate-200 dark:border-slate-800">

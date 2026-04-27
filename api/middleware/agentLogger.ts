@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
+import { getLoggingConfig, type LoggingConfigValues } from '../lib/systemConfig';
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -17,6 +18,55 @@ const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|api[-_]?key|
 const MAX_LOG_STRING_LENGTH = 512;
 const MAX_LOG_ARRAY_ITEMS = 50;
 const MAX_LOG_DEPTH = 4;
+const LOGGING_CONFIG_TTL_MS = 30_000;
+
+let loggingConfigCache:
+  | {
+      expiresAt: number;
+      value: LoggingConfigValues;
+    }
+  | null = null;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function pathPatternToRegex(pathPattern: string): RegExp {
+  const escaped = escapeRegex(pathPattern).replace(/\\:[^/]+/g, '[^/]+');
+  return new RegExp(`^${escaped}$`);
+}
+
+async function getCachedLoggingConfig(env: Env): Promise<LoggingConfigValues> {
+  const now = Date.now();
+  if (loggingConfigCache && loggingConfigCache.expiresAt > now) {
+    return loggingConfigCache.value;
+  }
+
+  const value = await getLoggingConfig(env);
+  loggingConfigCache = {
+    value,
+    expiresAt: now + LOGGING_CONFIG_TTL_MS,
+  };
+  return value;
+}
+
+async function shouldLogRequest(env: Env, method: string, pathname: string): Promise<boolean> {
+  const loggingConfig = await getCachedLoggingConfig(env);
+  if (loggingConfig.mode !== 'custom') {
+    return true;
+  }
+
+  return loggingConfig.enabledEndpointKeys.some((entry) => {
+    const separatorIndex = entry.indexOf(' ');
+    if (separatorIndex <= 0) {
+      return false;
+    }
+
+    const entryMethod = entry.slice(0, separatorIndex).toUpperCase();
+    const pathPattern = entry.slice(separatorIndex + 1);
+    return entryMethod === method.toUpperCase() && pathPatternToRegex(pathPattern).test(pathname);
+  });
+}
 
 function shouldSkipBodyLogging(pathname: string): boolean {
   return /^\/api\/forms\/(share\/[^/]+\/answers|[^/]+\/answers)$/.test(pathname)
@@ -63,17 +113,22 @@ function sanitizeLogValue(value: unknown, depth = 0): JsonValue {
  */
 export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const url = new URL(c.req.url);
-  const path = url.pathname + url.search;
+  const pathname = url.pathname;
+  const path = pathname + url.search;
 
   // Skip logging for the logs management endpoints themselves (avoid recursion)
   // and for sensitive secrets/connections management to prevent token leaks.
-  if (url.pathname.startsWith('/api/schemas/logs') || url.pathname.startsWith('/api/secrets')) {
+  if (pathname.startsWith('/api/schemas/logs') || pathname.startsWith('/api/secrets')) {
+    return next();
+  }
+
+  if (!(await shouldLogRequest(c.env, c.req.method, pathname))) {
     return next();
   }
 
   const start = Date.now();
   const method = c.req.method;
-  const skipBodyLogging = shouldSkipBodyLogging(url.pathname);
+  const skipBodyLogging = shouldSkipBodyLogging(pathname);
 
   // Extract IP and user-agent
   const ip = c.req.header('cf-connecting-ip')

@@ -107,6 +107,11 @@ export interface MailSecretStatus {
   resendApiKeyConfigured: boolean;
 }
 
+export interface LoggingConfigSettings {
+  mode: 'all' | 'custom';
+  enabledEndpointKeys: string[];
+}
+
 // ── API calls ────────────────────────────────────────────────────────────────
 
 export interface EnvStatusEntry {
@@ -177,6 +182,44 @@ export async function updateStorageConfigSettings(input: StorageConfigSettings):
     const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
+}
+
+const normalizeLoggingConfig = (logging: Partial<LoggingConfigSettings>): LoggingConfigSettings => ({
+  mode: logging.mode === 'custom' ? 'custom' : 'all',
+  enabledEndpointKeys: Array.isArray(logging.enabledEndpointKeys)
+    ? logging.enabledEndpointKeys.filter((entry): entry is string => typeof entry === 'string')
+    : [],
+});
+
+export async function getLoggingConfigSettings(): Promise<LoggingConfigSettings> {
+  const res = await fetch(`${API_URL}/api/config/logging`, {
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as { logging: Partial<LoggingConfigSettings> };
+  return normalizeLoggingConfig(data.logging ?? {});
+}
+
+export async function updateLoggingConfigSettings(input: LoggingConfigSettings): Promise<LoggingConfigSettings> {
+  const res = await fetch(`${API_URL}/api/config/logging`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as { logging: Partial<LoggingConfigSettings> };
+  return normalizeLoggingConfig(data.logging ?? {});
 }
 
 const normalizeMailConfig = (mail: Partial<MailConfigSettings>): MailConfigSettings => ({

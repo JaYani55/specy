@@ -3,7 +3,7 @@ import { requireAppRole } from '../lib/auth';
 import type { Env } from '../lib/supabase';
 import { buildMailSecretName, getMailSecretNamespace, getManagedSecretMetadata, upsertManagedSecret } from '../lib/managedSecrets';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { getMailConfig, getStorageConfig, upsertMailConfig, upsertStorageConfig } from '../lib/systemConfig';
+import { getLoggingConfig, getMailConfig, getStorageConfig, upsertLoggingConfig, upsertMailConfig, upsertStorageConfig } from '../lib/systemConfig';
 
 const config = new Hono<{ Bindings: Env }>();
 
@@ -18,6 +18,11 @@ interface MailConfigPayload {
   smtpUsername?: string;
   smtpPassword?: string;
   resendApiKey?: string;
+}
+
+interface LoggingConfigPayload {
+  mode?: 'all' | 'custom';
+  enabledEndpointKeys?: unknown;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -136,6 +141,44 @@ config.get('/mail', async (c) => {
   ]);
 
   return c.json({ mail, secrets });
+});
+
+config.get('/logging', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const logging = await getLoggingConfig(c.env);
+  return c.json({ logging });
+});
+
+config.put('/logging', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  let body: LoggingConfigPayload;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const mode = body.mode === 'custom' ? 'custom' : 'all';
+  const enabledEndpointKeys = Array.isArray(body.enabledEndpointKeys)
+    ? body.enabledEndpointKeys.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+
+  await upsertLoggingConfig(c.env, {
+    mode,
+    enabledEndpointKeys,
+  });
+
+  return c.json({
+    success: true,
+    logging: {
+      mode,
+      enabledEndpointKeys,
+    },
+  });
 });
 
 config.put('/mail', async (c) => {

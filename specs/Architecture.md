@@ -48,6 +48,7 @@ The application has been migrated to a **Supabase-only architecture**. Historica
 -   **Authentication (Supabase Auth):** Handles user sessions, registration, and role-based access control (RBAC). 
 -   **Product & Page Management:** Manages core product data (`mentorbooking_products`) and dynamic page content stored as JSONB in the `products` table.
 -   **Forms Management:** Stores reusable form definitions in `forms` and submissions in `forms_answers`, including share-link, auth, and agent/API access settings.
+-   **Communication Logs & API Observability:** Request/response traffic for the schema API, config routes, forms API, and MCP transport is captured in `agent_logs` by the Worker-side `agentLogger` middleware. The super-admin-only API Administration page (`src/pages/VerwaltungApi.tsx`) acts as the operator surface for this feature: it documents the loggable endpoints, exposes filtering/search for the route catalog, and now provides per-endpoint verbosity settings backed by `system_config` instead of a dedicated settings table.
 -   **Mentor & Staff Management:** 
     -   Supabase now acts as the primary source of truth for all users.
     -   Profile metadata (names, bios, initials) is retrieved from the `user_profile` table.
@@ -60,6 +61,13 @@ The application has been migrated to a **Supabase-only architecture**. Historica
 -   **Under Construction Notice:** Feature sections that relied exclusively on SeaTable data (e.g., detailed mentor bios, specific experience fields) currently display an "Under Construction" migration notice. Data is being transitioned to the `user_profile` table in Supabase.
 -   **Fallback Names:** In areas where first/last names were previously sourced from SeaTable, the application now gracefully falls back to the Supabase `Username`.
 
+### Agent Communication Logs
+-   **Middleware Placement:** `api/index.ts` mounts `agentLogger` in front of `/api/*` and `/mcp*`, while explicitly mounting `/api/schemas/logs` first and skipping `/api/secrets*` inside the middleware to avoid recursive log creation and secret-adjacent payload capture.
+-   **Captured Data:** Each log row stores request method, path, status code, duration, sanitized JSON request/response payloads, IP address, user agent, optional schema linkage, and an extracted error message for failing responses.
+-   **Persistence Model:** Logs are stored in `public.agent_logs`, linked to `page_schemas` when a schema slug is present, and hardened by `agent_logs_hardening.sql` so read/delete access is restricted to `super-admin`.
+-   **Verbosity Controls:** The interface now derives the list of loggable endpoints dynamically from the API catalog entries marked with `logging: 'agentLogger'`. Super-admins can enable or disable individual endpoints with checkboxes in API Administration; the resulting allowlist is persisted in `system_config` (`logging.mode`, `logging.enabled_endpoints`) and consulted by the middleware through a short-lived cache.
+-   **Intentional Exclusions:** `/api/secrets*` remains unlogged even though it is operator-facing, and `/api/schemas/logs*` is excluded to prevent the observability feature from logging itself.
+
 ---
 
 ## 3. API Structure & Environment Variables
@@ -69,6 +77,7 @@ The application uses specialized clients to interact with Supabase services:
 ### API Clients
 1.  **Supabase Client (`src/lib/supabase.ts`):** The primary client for database operations, authentication, and standard storage tasks.
 2.  **FileUpload Client (`src/lib/fileUploadClient.ts`):** A specialized configuration for the Supabase storage bucket that allows for multipart file uploads without manual `Content-Type` boundary management.
+3.  **Worker Config Endpoints (`api/routes/config.ts` + `src/services/connectionsService.ts`):** Super-admin-only endpoints for reading and updating non-secret runtime settings in `system_config`, including storage settings, mail transport settings, and communication log verbosity.
 
 ### Required Environment Variables
 To run the application, only the standard Supabase credentials are required. SeaTable environmental variables are no longer used.
@@ -104,6 +113,8 @@ All database tables are defined as plain SQL files under `migrations/`. They are
 | `mentorbooking_events_archive.sql` | Archived events table. Same FK requirements as `mentorbooking_events`. |
 | `mentorbooking_notifications.sql` | Per-user event notifications. FK to `user_profile`. |
 | `agent_logs.sql` | Page-builder AI agent request/response log. FK to `page_schemas`. |
+| `agent_logs_hardening.sql` | Tightens `agent_logs` access so only `super-admin` can read/delete operational logs. |
+| `system_config.sql` | Generic key/value store for non-sensitive runtime settings such as storage configuration and communication-log verbosity. |
 | `Auth/Access_hook.sql` | Supabase Auth hook function (`custom_access_token_hook`) that injects `user_roles` into JWT claims. Requires `roles` and `user_roles` tables to exist. Also includes `GRANT EXECUTE … TO supabase_auth_admin`, `GRANT USAGE ON SCHEMA public`, and the corresponding `REVOKE` from `authenticated`, `anon`, `public` — required for the hook to be callable by Supabase Auth internals. |
 | `storage.default.sql` _(template)_ | **Template only — not applied directly.** Defines four RLS policies for Supabase Storage (`public read`, `authenticated insert/update/delete`) using the placeholder `REPLACE_WITH_STORAGE_BUCKET`. The wizard substitutes the user-chosen bucket name and applies the result. **Skipped entirely when `STORAGE_PROVIDER = r2`** — Cloudflare R2 manages its own permissions outside Supabase. |
 
@@ -126,8 +137,10 @@ preamble.sql                    (app_enum, trigger functions)
   └─ page_schemas.sql
        └─ pages.sql
        └─ agent_logs.sql
+      └─ agent_logs_hardening.sql
   mentor_groups.sql             (standalone)
   mentorbooking_notifications.sql  (← user_profile)
+  system_config.sql             (standalone runtime settings store)
   Auth/Access_hook.sql          (← roles + user_roles — must be last)
   storage.sql                   (generated from storage.default.sql — Supabase provider only)
 ```

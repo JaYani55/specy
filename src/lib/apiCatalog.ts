@@ -35,6 +35,10 @@ export interface ApiEndpointDefinition {
   notes?: string[];
 }
 
+export function buildLoggingEndpointKey(endpoint: Pick<ApiEndpointDefinition, 'method' | 'path'>): string {
+  return `${endpoint.method} ${endpoint.path}`;
+}
+
 export const API_CATALOG: ApiEndpointDefinition[] = [
   {
     id: 'root-discovery',
@@ -761,7 +765,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
-    logging: 'agentLogger',
+    logging: 'none',
     responseExamples: [
       {
         status: 200,
@@ -790,7 +794,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
-    logging: 'agentLogger',
+    logging: 'none',
     responseExamples: [
       {
         status: 200,
@@ -814,7 +818,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
-    logging: 'agentLogger',
+    logging: 'none',
     responseExamples: [
       {
         status: 200,
@@ -835,7 +839,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
-    logging: 'agentLogger',
+    logging: 'none',
     parameters: [
       { name: 'name', in: 'path', required: true, type: 'string', description: 'Secret name.' },
       { name: 'value', in: 'body', required: true, type: 'string', description: 'Secret value.' },
@@ -876,7 +880,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     auth: 'bearer-required',
     mountsAt: '/api/secrets',
     sourceFile: 'api/routes/secrets.ts',
-    logging: 'agentLogger',
+    logging: 'none',
     parameters: [
       { name: 'name', in: 'path', required: true, type: 'string', description: 'Secret name.' },
       { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Super-admin bearer token.' },
@@ -891,6 +895,243 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
 }` },
     ],
     sideEffects: ['Deletes secret material from Cloudflare Secrets Store.'],
+  },
+  {
+    id: 'config-storage-get',
+    tag: 'Configuration',
+    method: 'GET',
+    path: '/api/config/storage',
+    summary: 'Read storage runtime configuration',
+    description: 'Returns the current non-sensitive storage settings persisted in system_config for the Connections admin UI.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Current storage configuration.',
+        example: `{
+  "storage": {
+    "provider": "supabase",
+    "bucket": "booking_media",
+    "r2PublicUrl": ""
+  }
+}`,
+      },
+    ],
+    tables: ['system_config'],
+    notes: ['Super-admin only.', 'Falls back to worker env vars when system_config is empty.'],
+  },
+  {
+    id: 'config-storage-put',
+    tag: 'Configuration',
+    method: 'PUT',
+    path: '/api/config/storage',
+    summary: 'Update storage runtime configuration',
+    description: 'Persists non-sensitive media storage settings in system_config without routing them through the secrets store.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'provider', in: 'body', required: true, type: 'supabase|r2', description: 'Storage backend selector.' },
+      { name: 'bucket', in: 'body', required: true, type: 'string', description: 'Bucket or container name.' },
+      { name: 'r2PublicUrl', in: 'body', required: false, type: 'string', description: 'Public URL prefix for R2-backed media.' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Super-admin bearer token.' },
+    ],
+    requestExample: `{
+  "provider": "supabase",
+  "bucket": "booking_media",
+  "r2PublicUrl": ""
+}`,
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Settings updated.',
+        example: `{
+  "success": true
+}`,
+      },
+    ],
+    sideEffects: ['Upserts core storage rows in system_config.'],
+    tables: ['system_config'],
+  },
+  {
+    id: 'config-logging-get',
+    tag: 'Configuration',
+    method: 'GET',
+    path: '/api/config/logging',
+    summary: 'Read communication log verbosity settings',
+    description: 'Returns the super-admin logging mode and the selected agentLogger endpoint keys used by the API Administration interface.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Logging settings payload.',
+        example: `{
+  "logging": {
+    "mode": "custom",
+    "enabledEndpointKeys": ["GET /api/schemas", "POST /mcp"]
+  }
+}`,
+      },
+    ],
+    tables: ['system_config'],
+    notes: ['Super-admin only.', 'When mode is "all", the middleware logs every supported route except explicitly skipped operational paths.'],
+  },
+  {
+    id: 'config-logging-put',
+    tag: 'Configuration',
+    method: 'PUT',
+    path: '/api/config/logging',
+    summary: 'Update communication log verbosity settings',
+    description: 'Stores a per-endpoint allowlist for agentLogger-backed routes in system_config without creating a dedicated settings table.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'mode', in: 'body', required: false, type: 'all|custom', description: 'Whether to log all supported endpoints or only the provided allowlist.' },
+      { name: 'enabledEndpointKeys', in: 'body', required: false, type: 'string[]', description: 'Allowlist entries in the form "METHOD /path/:param".' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Super-admin bearer token.' },
+    ],
+    requestExample: `{
+  "mode": "custom",
+  "enabledEndpointKeys": ["GET /api/schemas", "POST /mcp"]
+}`,
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Settings updated.',
+        example: `{
+  "success": true,
+  "logging": {
+    "mode": "custom",
+    "enabledEndpointKeys": ["GET /api/schemas", "POST /mcp"]
+  }
+}`,
+      },
+    ],
+    sideEffects: ['Upserts logging configuration rows in system_config.', 'Changes the runtime allowlist consulted by agentLogger after cache expiry.'],
+    tables: ['system_config'],
+  },
+  {
+    id: 'config-mail-get',
+    tag: 'Configuration',
+    method: 'GET',
+    path: '/api/config/mail',
+    summary: 'Read outbound mail configuration',
+    description: 'Returns non-secret mail transport settings plus presence flags for the write-only managed secrets.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Current mail settings and secret status.',
+        example: `{
+  "mail": {
+    "provider": "smtp",
+    "fromName": "ServiceCMS",
+    "fromEmail": "noreply@example.com",
+    "replyToEmail": "support@example.com",
+    "smtpHost": "smtp.resend.com",
+    "smtpPort": 587,
+    "smtpSecure": false,
+    "smtpUsername": "resend"
+  },
+  "secrets": {
+    "smtpPasswordConfigured": true,
+    "resendApiKeyConfigured": false
+  }
+}`,
+      },
+    ],
+    tables: ['system_config', 'managed_secrets'],
+  },
+  {
+    id: 'config-mail-put',
+    tag: 'Configuration',
+    method: 'PUT',
+    path: '/api/config/mail',
+    summary: 'Update outbound mail configuration',
+    description: 'Writes non-secret mail transport settings to system_config and optionally rotates write-only provider secrets in managed_secrets.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'provider', in: 'body', required: true, type: 'smtp|resend', description: 'Mail provider selector.' },
+      { name: 'fromEmail', in: 'body', required: true, type: 'string', description: 'Validated sender address.' },
+      { name: 'smtpPassword', in: 'body', required: false, type: 'string', description: 'Optional write-only SMTP password rotation.' },
+      { name: 'resendApiKey', in: 'body', required: false, type: 'string', description: 'Optional write-only Resend API key rotation.' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Super-admin bearer token.' },
+    ],
+    requestExample: `{
+  "provider": "smtp",
+  "fromName": "ServiceCMS",
+  "fromEmail": "noreply@example.com",
+  "replyToEmail": "support@example.com",
+  "smtpHost": "smtp.resend.com",
+  "smtpPort": 587,
+  "smtpSecure": false,
+  "smtpUsername": "resend",
+  "smtpPassword": "write-only-secret"
+}`,
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Mail settings saved.',
+        example: `{
+  "success": true,
+  "mail": {
+    "provider": "smtp"
+  },
+  "secrets": {
+    "smtpPasswordConfigured": true,
+    "resendApiKeyConfigured": false
+  }
+}`,
+      },
+    ],
+    sideEffects: ['Upserts mail rows in system_config.', 'Writes provider credentials into managed_secrets when supplied.'],
+    tables: ['system_config', 'managed_secrets'],
+  },
+  {
+    id: 'config-mail-test',
+    tag: 'Configuration',
+    method: 'POST',
+    path: '/api/config/mail/test',
+    summary: 'Run outbound mail connectivity test',
+    description: 'Invokes the send_email edge function in test mode and returns provider-specific connectivity diagnostics.',
+    auth: 'bearer-required',
+    mountsAt: '/api/config',
+    sourceFile: 'api/routes/config.ts',
+    logging: 'agentLogger',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Connectivity succeeded.',
+        example: `{
+  "success": true,
+  "provider": "smtp",
+  "detail": "Authenticated successfully"
+}`,
+      },
+      {
+        status: 502,
+        description: 'Upstream edge function failed.',
+        example: `{
+  "error": "Mail test failed: Edge Function HTTP 500: ..."
+}`,
+      },
+    ],
+    notes: ['Super-admin only.', 'Delegates to the Supabase edge function send_email.'],
   },
   {
     id: 'mcp-stream',
@@ -933,5 +1174,9 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     notes: ['This is a generated integration point, not a single callable route.', 'Run plugin installation to regenerate the mount file when plugins provide API handlers.'],
   },
 ];
+
+export const AGENT_LOGGER_ENDPOINTS = API_CATALOG.filter(
+  (endpoint) => endpoint.logging === 'agentLogger' && endpoint.path.startsWith('/'),
+);
 
 export const API_TAGS = Array.from(new Set(API_CATALOG.map((endpoint) => endpoint.tag)));

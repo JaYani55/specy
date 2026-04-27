@@ -2,6 +2,7 @@ import { createSupabaseAdminClient, type Env } from './supabase';
 
 const CORE_NAMESPACE = 'core';
 const MAIL_NAMESPACE = 'mail';
+const LOGGING_NAMESPACE = 'logging';
 
 type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url';
 type MailConfigKey =
@@ -13,6 +14,7 @@ type MailConfigKey =
   | 'smtp_port'
   | 'smtp_secure'
   | 'smtp_username';
+type LoggingConfigKey = 'mode' | 'enabled_endpoints';
 
 const ENV_FALLBACKS: Partial<Record<CoreConfigKey, keyof Env>> = {
   'storage.provider': 'STORAGE_PROVIDER',
@@ -35,6 +37,24 @@ export interface MailConfigValues {
   smtpPort: number;
   smtpSecure: boolean;
   smtpUsername: string;
+}
+
+export interface LoggingConfigValues {
+  mode: 'all' | 'custom';
+  enabledEndpointKeys: string[];
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((entry): entry is string => typeof entry === 'string');
+  } catch {
+    return [];
+  }
 }
 
 async function getConfigValue(
@@ -125,6 +145,31 @@ export async function upsertMailConfig(env: Env, input: MailConfigValues): Promi
     { namespace: MAIL_NAMESPACE, key: 'smtp_port', value: String(input.smtpPort) },
     { namespace: MAIL_NAMESPACE, key: 'smtp_secure', value: String(input.smtpSecure) },
     { namespace: MAIL_NAMESPACE, key: 'smtp_username', value: input.smtpUsername },
+  ];
+
+  const { error } = await admin.from('system_config').upsert(rows, { onConflict: 'namespace,key' });
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getLoggingConfig(env: Env): Promise<LoggingConfigValues> {
+  const [mode, enabledEndpointKeys] = await Promise.all([
+    getConfigValue(env, LOGGING_NAMESPACE, 'mode'),
+    getConfigValue(env, LOGGING_NAMESPACE, 'enabled_endpoints'),
+  ]);
+
+  return {
+    mode: mode === 'custom' ? 'custom' : 'all',
+    enabledEndpointKeys: parseStringArray(enabledEndpointKeys),
+  };
+}
+
+export async function upsertLoggingConfig(env: Env, input: LoggingConfigValues): Promise<void> {
+  const admin = await createSupabaseAdminClient(env);
+  const rows: Array<{ namespace: string; key: LoggingConfigKey; value: string }> = [
+    { namespace: LOGGING_NAMESPACE, key: 'mode', value: input.mode },
+    { namespace: LOGGING_NAMESPACE, key: 'enabled_endpoints', value: JSON.stringify(input.enabledEndpointKeys) },
   ];
 
   const { error } = await admin.from('system_config').upsert(rows, { onConflict: 'namespace,key' });
