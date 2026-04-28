@@ -370,3 +370,93 @@ export async function deleteSecret(name: string): Promise<void> {
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
 }
+
+// ── Extra media sources ───────────────────────────────────────────────────────
+
+/**
+ * Non-sensitive config for an additional S3-compatible media source.
+ * The secret access key is sent separately via upsertMediaSourceSecret.
+ */
+export interface ExtraMediaSource {
+  id: string;
+  label: string;
+  type: 's3';
+  endpoint: string;
+  bucket: string;
+  region: string;
+  publicUrl: string;
+  accessKeyId: string;
+}
+
+export interface MediaSourceInfo {
+  id: string;
+  label: string;
+  type: 'supabase' | 'r2' | 's3';
+  configured: boolean;
+}
+
+export async function getMediaSources(): Promise<MediaSourceInfo[]> {
+  const headers = await createAuthenticatedHeaders({ Accept: 'application/json' });
+  const res = await fetch(`${API_URL}/api/media/sources`, { headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { sources: MediaSourceInfo[] };
+  return data.sources ?? [];
+}
+
+export async function getExtraMediaSourcesConfig(): Promise<ExtraMediaSource[]> {
+  const res = await fetch(`${API_URL}/api/config/media-sources`, {
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { sources: ExtraMediaSource[] };
+  return data.sources ?? [];
+}
+
+export async function updateExtraMediaSourcesConfig(sources: ExtraMediaSource[]): Promise<ExtraMediaSource[]> {
+  const res = await fetch(`${API_URL}/api/config/media-sources`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
+    body: JSON.stringify({ sources }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { sources: ExtraMediaSource[] };
+  return data.sources ?? sources;
+}
+
+export async function upsertMediaSourceSecret(sourceId: string, secretAccessKey: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/config/media-sources/${encodeURIComponent(sourceId)}/secret`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
+    body: JSON.stringify({ secretAccessKey }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function deleteExtraMediaSource(sourceId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/config/media-sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE',
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+}

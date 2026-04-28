@@ -1,15 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
 import { API_URL } from '@/lib/apiUrl';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Upload, Image as ImageIcon, Loader2, Check, X, Folder, ArrowLeft, Trash2, FolderPlus } from 'lucide-react';
+import { Upload, Image as ImageIcon, Loader2, Check, X, Folder, ArrowLeft, Trash2, FolderPlus, Database } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
 import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 import {
@@ -22,6 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import type { MediaSourceInfo } from '@/services/connectionsService';
 
 interface ImageUploaderProps {
   value?: string;
@@ -65,6 +67,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   const [itemToDelete, setItemToDelete] = useState<MediaItem | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
+  // Multi-source support
+  const [availableSources, setAvailableSources] = useState<MediaSourceInfo[]>([]);
+  const [activeSourceId, setActiveSourceId] = useState<string>('primary');
+
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : 'Unbekannter Fehler.';
 
@@ -81,10 +87,25 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     };
   }, []);
 
-  const loadMediaLibrary = useCallback(async (path: string = '') => {
+  const loadSources = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_URL}/api/media/sources`, { headers });
+      if (res.ok) {
+        const data = await res.json() as { sources: MediaSourceInfo[] };
+        setAvailableSources(data.sources ?? []);
+      }
+    } catch {
+      // non-critical — picker still works with primary source
+    }
+  }, [getAuthHeaders]);
+
+  const loadMediaLibrary = useCallback(async (path: string = '', sourceId: string = activeSourceId) => {
     setLoadingMedia(true);
     try {
-      const res = await fetch(`${API_URL}/api/media/list?path=${encodeURIComponent(path)}`, {
+      const params = new URLSearchParams({ path });
+      if (sourceId !== 'primary') params.set('source', sourceId);
+      const res = await fetch(`${API_URL}/api/media/list?${params.toString()}`, {
         headers: await getAuthHeaders(),
       });
       if (!res.ok) {
@@ -99,7 +120,19 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     } finally {
       setLoadingMedia(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, activeSourceId]);
+
+  // Load available sources once on mount
+  useEffect(() => {
+    void loadSources();
+  }, [loadSources]);
+
+  const handleSourceChange = (sourceId: string) => {
+    setActiveSourceId(sourceId);
+    setCurrentPath('');
+    setPathHistory([]);
+    void loadMediaLibrary('', sourceId);
+  };
 
   const handleFolderClick = (folderName: string) => {
     const newPath = currentPath ? `${currentPath}/${folderName}` : folderName;
@@ -127,6 +160,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       const formData = new FormData();
       formData.append('file', new File([''], '.placeholder', { type: 'text/plain' }));
       formData.append('path', folderPath);
+      if (activeSourceId !== 'primary') formData.append('source', activeSourceId);
 
       const res = await fetch(`${API_URL}/api/media/upload`, {
         method: 'POST',
@@ -163,14 +197,17 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         // List all files inside the folder, then delete them one-by-one via the API
         const folderPath = itemToDelete.path;
         const authHeaders = await getAuthHeaders();
-        const listRes = await fetch(`${API_URL}/api/media/list?path=${encodeURIComponent(folderPath)}`, {
+        const sourceParam = activeSourceId !== 'primary' ? `&source=${encodeURIComponent(activeSourceId)}` : '';
+        const listRes = await fetch(`${API_URL}/api/media/list?path=${encodeURIComponent(folderPath)}${sourceParam}`, {
           headers: authHeaders,
         });
         if (listRes.ok) {
           const listData = await listRes.json() as { items: MediaItem[] };
           for (const child of listData.items) {
             if (!child.isFolder) {
-              await fetch(`${API_URL}/api/media/file?path=${encodeURIComponent(child.path)}`, {
+              const deleteParams = new URLSearchParams({ path: child.path });
+              if (activeSourceId !== 'primary') deleteParams.set('source', activeSourceId);
+              await fetch(`${API_URL}/api/media/file?${deleteParams.toString()}`, {
                 method: 'DELETE',
                 headers: authHeaders,
               });
@@ -179,8 +216,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         }
         toast.success(`Ordner "${itemToDelete.name}" erfolgreich gelöscht`);
       } else {
+        const deleteParams = new URLSearchParams({ path: itemToDelete.path });
+        if (activeSourceId !== 'primary') deleteParams.set('source', activeSourceId);
         const res = await fetch(
-          `${API_URL}/api/media/file?path=${encodeURIComponent(itemToDelete.path)}`,
+          `${API_URL}/api/media/file?${deleteParams.toString()}`,
           {
             method: 'DELETE',
             headers: await getAuthHeaders(),
@@ -212,6 +251,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       const formData = new FormData();
       formData.append('file', file);
       if (currentPath) formData.append('path', currentPath);
+      if (activeSourceId !== 'primary') formData.append('source', activeSourceId);
 
       const res = await fetch(`${API_URL}/api/media/upload`, {
         method: 'POST',
@@ -234,7 +274,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     } finally {
       setUploading(false);
     }
-  }, [currentPath, getAuthHeaders, onChange]);
+  }, [currentPath, activeSourceId, getAuthHeaders, onChange]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -257,11 +297,13 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     if (open) {
       // Sync internal selection with the current committed value
       setSelectedImage(value || null);
-      // Open avatar or feature-specific pickers in their default folder.
+      // Reset to primary source and root path
+      setActiveSourceId('primary');
       const initialPath = folder?.replace(/^\/+|\/+$/g, '') || '';
       setCurrentPath(initialPath);
       setPathHistory([]);
-      void loadMediaLibrary(initialPath);
+      void loadSources();
+      void loadMediaLibrary(initialPath, 'primary');
     }
   };
 
@@ -319,6 +361,34 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         <DialogHeader>
           <DialogTitle>Bild auswählen oder hochladen</DialogTitle>
         </DialogHeader>
+
+        {/* Source selector — only shown when multiple sources are configured */}
+        {availableSources.length > 1 && (
+          <div className="flex items-center gap-2 flex-wrap pb-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Database className="h-3 w-3" />
+              Quelle:
+            </span>
+            {availableSources.map((src) => (
+              <button
+                key={src.id}
+                type="button"
+                onClick={() => handleSourceChange(src.id)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
+                  activeSourceId === src.id
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background hover:bg-muted text-foreground',
+                )}
+              >
+                {src.label}
+                {!src.configured && (
+                  <Badge variant="outline" className="ml-1 text-[9px] px-1 py-0 h-3">!</Badge>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
 
         <Tabs defaultValue="library" className="w-full">
           <TabsList className="grid w-full grid-cols-2">

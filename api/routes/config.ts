@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { requireAppRole } from '../lib/auth';
 import type { Env } from '../lib/supabase';
-import { buildMailSecretName, getMailSecretNamespace, getManagedSecretMetadata, upsertManagedSecret } from '../lib/managedSecrets';
+import { buildMailSecretName, buildS3SecretName, getMailSecretNamespace, getManagedSecretMetadata, getS3SourceSecretNamespace, upsertManagedSecret } from '../lib/managedSecrets';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { getLoggingConfig, getMailConfig, getStorageConfig, upsertLoggingConfig, upsertMailConfig, upsertStorageConfig } from '../lib/systemConfig';
+import { getExtraMediaSources, getLoggingConfig, getMailConfig, getStorageConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertStorageConfig, type ExtraMediaSource } from '../lib/systemConfig';
 
 const config = new Hono<{ Bindings: Env }>();
 
@@ -264,6 +264,114 @@ config.post('/mail/test', async (c) => {
   }
 
   return c.json(result.data ?? { success: true });
+});
+
+// ── Extra media sources ───────────────────────────────────────────────────
+
+const S3_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+function isValidS3SourceId(id: string): boolean {
+  return S3_ID_PATTERN.test(id);
+}
+
+/** GET /config/media-sources — list extra S3-compatible media sources */
+config.get('/media-sources', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const sources = await getExtraMediaSources(c.env);
+  return c.json({ sources });
+});
+
+/** PUT /config/media-sources — replace the full list of extra sources (non-secret fields only) */
+config.put('/media-sources', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  let body: { sources: ExtraMediaSource[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!Array.isArray(body.sources)) {
+    return c.json({ error: 'sources must be an array' }, 400);
+  }
+
+  for (const s of body.sources) {
+    if (!s.id || !isValidS3SourceId(s.id)) {
+      return c.json({ error: `Invalid source id "${String(s.id)}" — must be lowercase alphanumeric with hyphens` }, 400);
+    }
+    if (!s.label?.trim()) return c.json({ error: `Source "${s.id}" is missing a label` }, 400);
+    if (s.type !== 's3') return c.json({ error: `Source "${s.id}" type must be "s3"` }, 400);
+    if (!s.bucket?.trim()) return c.json({ error: `Source "${s.id}" is missing a bucket` }, 400);
+    if (!s.endpoint?.trim()) return c.json({ error: `Source "${s.id}" is missing an endpoint` }, 400);
+  }
+
+  // Deduplicate by id — last write wins
+  const deduped = Array.from(new Map(body.sources.map((s) => [s.id, s])).values());
+  await upsertExtraMediaSources(c.env, deduped);
+  return c.json({ success: true, sources: deduped });
+});
+
+/** PUT /config/media-sources/:id/secret — store the secret access key for a source */
+config.put('/media-sources/:id/secret', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const sourceId = c.req.param('id');
+  if (!isValidS3SourceId(sourceId)) {
+    return c.json({ error: 'Invalid source id' }, 400);
+  }
+
+  let body: { secretAccessKey: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!body.secretAccessKey?.trim()) {
+    return c.json({ error: 'secretAccessKey is required' }, 400);
+  }
+
+  await upsertManagedSecret(c.env, {
+    name: buildS3SecretName(sourceId),
+    namespace: getS3SourceSecretNamespace(),
+    value: body.secretAccessKey.trim(),
+    metadata: { sourceId },
+  });
+
+  return c.json({ success: true });
+});
+
+/** DELETE /config/media-sources/:id — remove an extra source (config + secret) */
+config.delete('/media-sources/:id', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const sourceId = c.req.param('id');
+  if (!isValidS3SourceId(sourceId)) {
+    return c.json({ error: 'Invalid source id' }, 400);
+  }
+
+  const sources = await getExtraMediaSources(c.env);
+  const filtered = sources.filter((s) => s.id !== sourceId);
+  await upsertExtraMediaSources(c.env, filtered);
+
+  // Best-effort: remove the managed secret (don't fail if it doesn't exist)
+  try {
+    const admin = await createSupabaseAdminClient(c.env);
+    await admin
+      .from('managed_secrets')
+      .delete()
+      .eq('name', buildS3SecretName(sourceId));
+  } catch {
+    // not critical
+  }
+
+  return c.json({ success: true });
 });
 
 export default config;

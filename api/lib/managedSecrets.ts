@@ -73,6 +73,20 @@ export function buildMailSecretName(kind: 'smtp-password' | 'resend-api-key'): s
   return 'MAIL_RESEND_API_KEY';
 }
 
+const S3_SOURCE_SECRET_NAMESPACE = 's3-sources';
+
+export function getS3SourceSecretNamespace(): string {
+  return S3_SOURCE_SECRET_NAMESPACE;
+}
+
+/**
+ * Returns the managed-secret name for the secret access key of an extra S3 media source.
+ * @param sourceId - the url-safe id of the source (e.g. "aws-photos")
+ */
+export function buildS3SecretName(sourceId: string): string {
+  return `S3_SECRET_KEY_${sourceId.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+}
+
 export async function upsertManagedSecret(env: Env, input: {
   name: string;
   namespace: string;

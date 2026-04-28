@@ -1,21 +1,25 @@
 /**
  * /api/media — Storage provider abstraction layer
  *
- * Supports two providers, selected at runtime via the STORAGE_PROVIDER var:
- *   • "supabase" (default) — proxies to Supabase Storage using SS_STORAGE_BUCKET
- *   • "r2"                 — uses the native MEDIA_BUCKET R2 binding
+ * Supports multiple providers:
+ *   • "supabase" (default primary) — proxies to Supabase Storage
+ *   • "r2"                         — uses the native MEDIA_BUCKET R2 binding
+ *   • "s3"                         — S3-compatible extra sources (aws4fetch)
  *
  * Endpoints:
  *   GET  /config            → { provider, bucket, configured, publicUrlConfigured? }
- *   GET  /list?path=        → { items: MediaItem[] }
- *   POST /upload            → { url, path }   (multipart/form-data: file, path?)
- *   DELETE /file?path=      → { success: true }
+ *   GET  /sources           → { sources: MediaSourceInfo[] }
+ *   GET  /list?path=&source=        → { items: MediaItem[] }
+ *   POST /upload?source=            → { url, path }   (multipart/form-data: file, path?)
+ *   DELETE /file?path=&source=      → { success: true }
  */
 
+import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
 import { requireAppRole } from '../lib/auth';
+import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import { Env, createSupabaseClient, createSupabaseAdminClient } from '../lib/supabase';
-import { getStorageConfig } from '../lib/systemConfig';
+import { getExtraMediaSources, getStorageConfig, type ExtraMediaSource } from '../lib/systemConfig';
 
 // File operations (list files, upload, delete) use the publishable key — bucket
 // policies govern access so no service key is needed for those.
@@ -30,6 +34,13 @@ export type MediaItem = {
   isFolder: boolean;
   size?: number;
   createdAt?: string;
+};
+
+export type MediaSourceInfo = {
+  id: string;
+  label: string;
+  type: 'supabase' | 'r2' | 's3';
+  configured: boolean;
 };
 
 type MediaConfig = {
@@ -74,6 +85,146 @@ async function resolveMediaConfig(env: Env): Promise<MediaConfig & { r2PublicUrl
   };
 }
 
+// ── helper: get an extra source + its secret access key ──────────────────
+async function resolveExtraSource(
+  env: Env,
+  sourceId: string,
+): Promise<{ source: ExtraMediaSource; secretAccessKey: string } | null> {
+  const sources = await getExtraMediaSources(env);
+  const source = sources.find((s) => s.id === sourceId);
+  if (!source) return null;
+
+  const secretName = buildS3SecretName(source.id);
+  const secretAccessKey = await getManagedSecretValue(env, secretName);
+  if (!secretAccessKey) return null;
+
+  return { source, secretAccessKey };
+}
+
+// ── S3 helpers (aws4fetch) ────────────────────────────────────────────────
+
+/**
+ * Parse the XML response from the S3 ListObjectsV2 API into MediaItem[].
+ */
+function parseS3ListXml(xml: string, prefix: string, publicUrl: string): MediaItem[] {
+  const items: MediaItem[] = [];
+
+  // Common prefixes → folders
+  const cpRegex = /<CommonPrefixes>\s*<Prefix>([^<]+)<\/Prefix>\s*<\/CommonPrefixes>/g;
+  let cpMatch: RegExpExecArray | null;
+  while ((cpMatch = cpRegex.exec(xml)) !== null) {
+    const folderPath = cpMatch[1];
+    const name = folderPath.replace(prefix, '').replace(/\/$/, '');
+    if (name) {
+      items.push({ name, path: folderPath, url: '', isFolder: true });
+    }
+  }
+
+  // Contents → files
+  const contentsRegex = /<Contents>([\s\S]*?)<\/Contents>/g;
+  let contentsMatch: RegExpExecArray | null;
+  while ((contentsMatch = contentsRegex.exec(xml)) !== null) {
+    const block = contentsMatch[1];
+    const keyMatch = /<Key>([^<]+)<\/Key>/.exec(block);
+    const sizeMatch = /<Size>(\d+)<\/Size>/.exec(block);
+    const dateMatch = /<LastModified>([^<]+)<\/LastModified>/.exec(block);
+    if (!keyMatch) continue;
+    const key = keyMatch[1];
+    // Skip the folder placeholder itself and .placeholder files
+    if (key === prefix || key.endsWith('/.placeholder') || key === '.placeholder') continue;
+    const name = key.replace(prefix, '');
+    if (!name) continue;
+    const cleanPublicUrl = publicUrl.replace(/\/$/, '');
+    items.push({
+      name,
+      path: key,
+      url: `${cleanPublicUrl}/${key}`,
+      isFolder: false,
+      size: sizeMatch ? Number(sizeMatch[1]) : undefined,
+      createdAt: dateMatch ? dateMatch[1] : undefined,
+    });
+  }
+
+  return items;
+}
+
+async function s3List(
+  source: ExtraMediaSource,
+  secretAccessKey: string,
+  path: string,
+): Promise<MediaItem[]> {
+  const prefix = path ? (path.endsWith('/') ? path : `${path}/`) : '';
+  const endpoint = source.endpoint.replace(/\/$/, '');
+  const url = `${endpoint}/${source.bucket}?list-type=2&prefix=${encodeURIComponent(prefix)}&delimiter=%2F`;
+
+  const client = new AwsClient({
+    accessKeyId: source.accessKeyId,
+    secretAccessKey,
+    region: source.region || 'us-east-1',
+    service: 's3',
+  });
+
+  const res = await client.fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`S3 list failed (${res.status}): ${errText}`);
+  }
+  const xml = await res.text();
+  return parseS3ListXml(xml, prefix, source.publicUrl);
+}
+
+async function s3Upload(
+  source: ExtraMediaSource,
+  secretAccessKey: string,
+  key: string,
+  body: ArrayBuffer,
+  contentType: string,
+): Promise<string> {
+  const endpoint = source.endpoint.replace(/\/$/, '');
+  const url = `${endpoint}/${source.bucket}/${key}`;
+
+  const client = new AwsClient({
+    accessKeyId: source.accessKeyId,
+    secretAccessKey,
+    region: source.region || 'us-east-1',
+    service: 's3',
+  });
+
+  const res = await client.fetch(url, {
+    method: 'PUT',
+    body,
+    headers: { 'Content-Type': contentType },
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`S3 upload failed (${res.status}): ${errText}`);
+  }
+  const cleanPublicUrl = source.publicUrl.replace(/\/$/, '');
+  return `${cleanPublicUrl}/${key}`;
+}
+
+async function s3Delete(
+  source: ExtraMediaSource,
+  secretAccessKey: string,
+  key: string,
+): Promise<void> {
+  const endpoint = source.endpoint.replace(/\/$/, '');
+  const url = `${endpoint}/${source.bucket}/${key}`;
+
+  const client = new AwsClient({
+    accessKeyId: source.accessKeyId,
+    secretAccessKey,
+    region: source.region || 'us-east-1',
+    service: 's3',
+  });
+
+  const res = await client.fetch(url, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`S3 delete failed (${res.status}): ${errText}`);
+  }
+}
+
 // ── router ────────────────────────────────────────────────────────────────
 const media = new Hono<{ Bindings: Env }>();
 
@@ -84,11 +235,57 @@ media.get('/config', async (c) => {
   return c.json(response);
 });
 
-// GET /api/media/list?path=
+// GET /api/media/sources — returns all configured sources for the media picker
+media.get('/sources', async (c) => {
+  const [primaryCfg, extraSources] = await Promise.all([
+    resolveMediaConfig(c.env),
+    getExtraMediaSources(c.env),
+  ]);
+
+  const sources: MediaSourceInfo[] = [];
+
+  // Always include primary if it is configured
+  if (primaryCfg.provider !== 'unconfigured') {
+    sources.push({
+      id: 'primary',
+      label: primaryCfg.provider === 'r2' ? 'Cloudflare R2' : 'Supabase Storage',
+      type: primaryCfg.provider as 'supabase' | 'r2',
+      configured: primaryCfg.configured,
+    });
+  }
+
+  for (const s of extraSources) {
+    // Check if the secret is stored by looking up metadata
+    sources.push({
+      id: s.id,
+      label: s.label,
+      type: 's3',
+      configured: true, // if it's in the list, config was saved; secret check is runtime
+    });
+  }
+
+  return c.json({ sources });
+});
+
+// GET /api/media/list?path=&source=
 media.get('/list', async (c) => {
   const path = c.req.query('path') ?? '';
-  const cfg = await resolveMediaConfig(c.env);
+  const sourceParam = c.req.query('source') ?? 'primary';
   const token = getBearerToken(c.req.header('Authorization'));
+
+  // Extra S3 source
+  if (sourceParam !== 'primary') {
+    const resolved = await resolveExtraSource(c.env, sourceParam);
+    if (!resolved) return c.json({ error: `Source "${sourceParam}" not found or not configured` }, 404);
+    try {
+      const items = await s3List(resolved.source, resolved.secretAccessKey, path);
+      return c.json({ items });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : 'S3 list error' }, 500);
+    }
+  }
+
+  const cfg = await resolveMediaConfig(c.env);
 
   if (!cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
@@ -183,16 +380,10 @@ media.get('/list', async (c) => {
   }
 });
 
-// POST /api/media/upload  (multipart/form-data: file, path?)
+// POST /api/media/upload  (multipart/form-data: file, path?, source?)
 media.post('/upload', async (c) => {
   const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
-
-  const cfg = await resolveMediaConfig(c.env);
-  if (!cfg.configured || cfg.provider === 'unconfigured') {
-    return c.json({ error: 'Storage not configured' }, 503);
-  }
-  const token = auth.token;
 
   let formData: FormData;
   try {
@@ -205,8 +396,28 @@ media.post('/upload', async (c) => {
   if (!file) return c.json({ error: 'No file provided' }, 400);
 
   const folder = (formData.get('path') as string | null) ?? '';
+  const sourceParam = (formData.get('source') as string | null) ?? c.req.query('source') ?? 'primary';
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = folder ? `${folder.replace(/\/$/, '')}/${safeName}` : safeName;
+
+  // Extra S3 source
+  if (sourceParam !== 'primary') {
+    const resolved = await resolveExtraSource(c.env, sourceParam);
+    if (!resolved) return c.json({ error: `Source "${sourceParam}" not found or not configured` }, 404);
+    try {
+      const buf = await file.arrayBuffer();
+      const url = await s3Upload(resolved.source, resolved.secretAccessKey, key, buf, file.type || 'application/octet-stream');
+      return c.json({ url, path: key });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : 'S3 upload error' }, 500);
+    }
+  }
+
+  const cfg = await resolveMediaConfig(c.env);
+  if (!cfg.configured || cfg.provider === 'unconfigured') {
+    return c.json({ error: 'Storage not configured' }, 503);
+  }
+  const token = auth.token;
 
   try {
     if (cfg.provider === 'r2') {
@@ -241,6 +452,20 @@ media.delete('/file', async (c) => {
 
   const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
+
+  const sourceParam = c.req.query('source') ?? 'primary';
+
+  // Extra S3 source
+  if (sourceParam !== 'primary') {
+    const resolved = await resolveExtraSource(c.env, sourceParam);
+    if (!resolved) return c.json({ error: `Source "${sourceParam}" not found or not configured` }, 404);
+    try {
+      await s3Delete(resolved.source, resolved.secretAccessKey, path);
+      return c.json({ success: true });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : 'S3 delete error' }, 500);
+    }
+  }
 
   const cfg = await resolveMediaConfig(c.env);
   if (!cfg.configured || cfg.provider === 'unconfigured') {

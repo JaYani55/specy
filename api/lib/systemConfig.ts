@@ -4,7 +4,7 @@ const CORE_NAMESPACE = 'core';
 const MAIL_NAMESPACE = 'mail';
 const LOGGING_NAMESPACE = 'logging';
 
-type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url';
+type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url' | 'media.extra_sources';
 type MailConfigKey =
   | 'provider'
   | 'from_name'
@@ -26,6 +26,26 @@ export interface StorageConfigValues {
   provider: 'supabase' | 'r2' | '';
   bucket: string;
   r2PublicUrl: string;
+}
+
+/**
+ * An additional S3-compatible media source configured by the operator.
+ * Credentials (secret access key) are stored separately in managed_secrets.
+ */
+export interface ExtraMediaSource {
+  /** URL-safe slug identifier, e.g. "aws-photos" */
+  id: string;
+  /** Display name shown in the media picker */
+  label: string;
+  type: 's3';
+  /** S3 endpoint URL, e.g. "https://s3.amazonaws.com" or custom */
+  endpoint: string;
+  bucket: string;
+  region: string;
+  /** Base public URL for generating file links */
+  publicUrl: string;
+  /** Access Key ID (non-sensitive) */
+  accessKeyId: string;
 }
 
 export interface MailConfigValues {
@@ -180,4 +200,38 @@ export async function upsertLoggingConfig(env: Env, input: LoggingConfigValues):
 
 export function getMailConfigNamespace(): string {
   return MAIL_NAMESPACE;
+}
+
+function parseExtraMediaSources(value: string): ExtraMediaSource[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (s): s is ExtraMediaSource =>
+        s !== null &&
+        typeof s === 'object' &&
+        typeof (s as ExtraMediaSource).id === 'string' &&
+        typeof (s as ExtraMediaSource).label === 'string' &&
+        (s as ExtraMediaSource).type === 's3' &&
+        typeof (s as ExtraMediaSource).bucket === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function getExtraMediaSources(env: Env): Promise<ExtraMediaSource[]> {
+  const raw = await getConfigValue(env, CORE_NAMESPACE, 'media.extra_sources');
+  return parseExtraMediaSources(raw);
+}
+
+export async function upsertExtraMediaSources(env: Env, sources: ExtraMediaSource[]): Promise<void> {
+  const admin = await createSupabaseAdminClient(env);
+  const { error } = await admin.from('system_config').upsert(
+    [{ namespace: CORE_NAMESPACE, key: 'media.extra_sources', value: JSON.stringify(sources) }],
+    { onConflict: 'namespace,key' },
+  );
+  if (error) {
+    throw new Error(error.message);
+  }
 }

@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   XCircle,
   FlaskConical,
+  Server,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,6 +65,10 @@ import {
   updateMailConfigSettings,
   getMediaConfig,
   testMediaConnection,
+  getExtraMediaSourcesConfig,
+  updateExtraMediaSourcesConfig,
+  upsertMediaSourceSecret,
+  deleteExtraMediaSource,
   SECRETS_MANIFEST,
   STORAGE_CONFIG_MANIFEST,
   type CfSecret,
@@ -73,6 +78,7 @@ import {
   type MailConfigSettings,
   type MailSecretStatus,
   type StorageConfigSettings,
+  type ExtraMediaSource,
 } from '@/services/connectionsService';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -194,6 +200,16 @@ const VerwaltungConnections: React.FC = () => {
   const [mediaTesting, setMediaTesting] = useState(false);
   const [mediaTestResult, setMediaTestResult] = useState<{ ok: boolean; itemCount?: number; error?: string } | null>(null);
 
+  // Extra media sources
+  const [extraSources, setExtraSources] = useState<ExtraMediaSource[]>([]);
+  const [extraSourcesSaving, setExtraSourcesSaving] = useState(false);
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<ExtraMediaSource | null>(null);
+  const [sourceForm, setSourceForm] = useState<ExtraMediaSource & { secretAccessKey: string }>({
+    id: '', label: '', type: 's3', endpoint: '', bucket: '', region: '', publicUrl: '', accessKeyId: '', secretAccessKey: '',
+  });
+  const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
+
   // Edit dialog state
   const [editState, setEditState] = useState<EditState | null>(null);
 
@@ -273,12 +289,22 @@ const VerwaltungConnections: React.FC = () => {
     }
   }, []);
 
+  const loadExtraSources = useCallback(async () => {
+    try {
+      const sources = await getExtraMediaSourcesConfig();
+      setExtraSources(sources);
+    } catch {
+      // non-critical
+    }
+  }, []);
+
   useEffect(() => {
     loadSecrets();
     loadStorageConfig();
     loadMailConfig();
     loadMediaStatus();
-  }, [loadSecrets, loadStorageConfig, loadMailConfig, loadMediaStatus]);
+    loadExtraSources();
+  }, [loadSecrets, loadStorageConfig, loadMailConfig, loadMediaStatus, loadExtraSources]);
 
   // Build merged list: manifest entry + CF secrets store status + env-var status
   const secretsWithStatus: SecretWithStatus[] = SECRETS_MANIFEST.map((def) => ({
@@ -357,6 +383,61 @@ const VerwaltungConnections: React.FC = () => {
       toast.error(err instanceof Error ? err.message : 'Failed to save secret');
     } finally {
       setCustomSaving(false);
+    }
+  };
+
+  // ── Extra media source handlers ──────────────────────────────────────────
+
+  const openAddSource = () => {
+    setEditingSource(null);
+    setSourceForm({ id: '', label: '', type: 's3', endpoint: 'https://s3.amazonaws.com', bucket: '', region: 'us-east-1', publicUrl: '', accessKeyId: '', secretAccessKey: '' });
+    setSourceDialogOpen(true);
+  };
+
+  const openEditSource = (source: ExtraMediaSource) => {
+    setEditingSource(source);
+    setSourceForm({ ...source, secretAccessKey: '' });
+    setSourceDialogOpen(true);
+  };
+
+  const saveSourceDialog = async () => {
+    const { secretAccessKey, ...sourceData } = sourceForm;
+    if (!sourceData.id.trim() || !sourceData.label.trim() || !sourceData.bucket.trim() || !sourceData.endpoint.trim()) {
+      toast.error('ID, Label, Endpoint and Bucket are required');
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(sourceData.id)) {
+      toast.error('ID must be lowercase alphanumeric with hyphens (e.g. "aws-photos")');
+      return;
+    }
+    setExtraSourcesSaving(true);
+    try {
+      const updatedSources = editingSource
+        ? extraSources.map((s) => (s.id === editingSource.id ? sourceData : s))
+        : [...extraSources, sourceData];
+      const saved = await updateExtraMediaSourcesConfig(updatedSources);
+      if (secretAccessKey.trim()) {
+        await upsertMediaSourceSecret(sourceData.id, secretAccessKey.trim());
+      }
+      setExtraSources(saved);
+      setSourceDialogOpen(false);
+      toast.success(editingSource ? 'Media source updated' : 'Media source added');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save media source');
+    } finally {
+      setExtraSourcesSaving(false);
+    }
+  };
+
+  const confirmDeleteSource = async () => {
+    if (!deletingSourceId) return;
+    try {
+      await deleteExtraMediaSource(deletingSourceId);
+      setExtraSources((prev) => prev.filter((s) => s.id !== deletingSourceId));
+      setDeletingSourceId(null);
+      toast.success('Media source removed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove media source');
     }
   };
 
@@ -495,6 +576,7 @@ const VerwaltungConnections: React.FC = () => {
               void loadStorageConfig();
               void loadMailConfig();
               void loadMediaStatus();
+              void loadExtraSources();
             }}
             disabled={loading}
           >
@@ -587,6 +669,57 @@ const VerwaltungConnections: React.FC = () => {
                 They are intentionally no longer shown as editable secrets in this page.
               </AlertDescription>
             </Alert>
+          </CardContent>
+        </Card>
+
+        {/* ── Additional Media Sources ── */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Server className="h-4 w-4" />
+              Additional Media Sources
+            </CardTitle>
+            <CardDescription>
+              Configure extra S3-compatible storage backends for the media picker. Users can switch between sources directly in the media browser.
+              Credentials are stored encrypted via managed secrets.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {extraSources.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No additional sources configured. Only the primary storage (above) will be available in the media picker.</p>
+            ) : (
+              <div className="space-y-2">
+                {extraSources.map((source) => (
+                  <div key={source.id} className="flex items-center justify-between rounded-lg border p-3 gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm">{source.label}</span>
+                        <Badge variant="outline" className="text-xs font-mono">{source.id}</Badge>
+                        <Badge variant="secondary" className="text-xs">S3</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{source.endpoint} / {source.bucket}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button size="sm" variant="outline" onClick={() => openEditSource(source)}>
+                        <Pencil className="h-3 w-3 mr-1" />Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeletingSourceId(source.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button variant="outline" size="sm" onClick={openAddSource}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add S3-compatible source
+            </Button>
           </CardContent>
         </Card>
 
@@ -1210,6 +1343,138 @@ const VerwaltungConnections: React.FC = () => {
               className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Add / Edit extra media source dialog ── */}
+      <Dialog open={sourceDialogOpen} onOpenChange={(open) => { if (!open) setSourceDialogOpen(false); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingSource ? 'Edit media source' : 'Add S3-compatible media source'}</DialogTitle>
+            <DialogDescription>
+              Configure a new S3-compatible storage backend. The secret access key is stored encrypted.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="src-id">ID <span className="text-muted-foreground text-xs">(unique slug)</span></Label>
+                <Input
+                  id="src-id"
+                  value={sourceForm.id}
+                  onChange={(e) => setSourceForm((f) => ({ ...f, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
+                  placeholder="aws-photos"
+                  disabled={!!editingSource}
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="src-label">Display Name</Label>
+                <Input
+                  id="src-label"
+                  value={sourceForm.label}
+                  onChange={(e) => setSourceForm((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="AWS Photos"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="src-endpoint">Endpoint URL</Label>
+              <Input
+                id="src-endpoint"
+                value={sourceForm.endpoint}
+                onChange={(e) => setSourceForm((f) => ({ ...f, endpoint: e.target.value }))}
+                placeholder="https://s3.amazonaws.com"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">For AWS S3 use <code>https://s3.amazonaws.com</code>. For DigitalOcean Spaces, MinIO, etc. use their custom endpoint.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="src-bucket">Bucket Name</Label>
+                <Input
+                  id="src-bucket"
+                  value={sourceForm.bucket}
+                  onChange={(e) => setSourceForm((f) => ({ ...f, bucket: e.target.value }))}
+                  placeholder="my-media-bucket"
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="src-region">Region</Label>
+                <Input
+                  id="src-region"
+                  value={sourceForm.region}
+                  onChange={(e) => setSourceForm((f) => ({ ...f, region: e.target.value }))}
+                  placeholder="us-east-1"
+                  className="font-mono text-sm"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="src-publicurl">Public URL Base</Label>
+              <Input
+                id="src-publicurl"
+                value={sourceForm.publicUrl}
+                onChange={(e) => setSourceForm((f) => ({ ...f, publicUrl: e.target.value }))}
+                placeholder="https://my-media-bucket.s3.amazonaws.com"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">Base URL prepended to object keys to generate public links.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="src-keyid">Access Key ID</Label>
+              <Input
+                id="src-keyid"
+                value={sourceForm.accessKeyId}
+                onChange={(e) => setSourceForm((f) => ({ ...f, accessKeyId: e.target.value }))}
+                placeholder="AKIAIOSFODNN7EXAMPLE"
+                className="font-mono text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="src-secret">Secret Access Key</Label>
+              <Input
+                id="src-secret"
+                type="password"
+                value={sourceForm.secretAccessKey}
+                onChange={(e) => setSourceForm((f) => ({ ...f, secretAccessKey: e.target.value }))}
+                placeholder={editingSource ? 'Leave blank to keep stored key' : 'Enter secret access key'}
+                className="font-mono text-sm"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">Stored encrypted via managed secrets.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSourceDialogOpen(false)}>Cancel</Button>
+            <Button onClick={saveSourceDialog} disabled={extraSourcesSaving}>
+              {extraSourcesSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editingSource ? 'Save changes' : 'Add source'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete extra source confirm ── */}
+      <AlertDialog open={deletingSourceId !== null} onOpenChange={(open) => { if (!open) setDeletingSourceId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove media source?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the source <span className="font-mono font-semibold">{deletingSourceId}</span> from
+              the configuration and delete its stored secret access key.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteSource}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
