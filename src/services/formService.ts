@@ -5,6 +5,7 @@ import type {
   FormNotificationRecipient,
   FormNotificationSettings,
   FormNotificationStaffOption,
+  FormUploadedFileValue,
   FormRecord,
   FormSchemaDefinition,
   PublicFormDefinition,
@@ -21,6 +22,11 @@ const buildHeaders = async (): Promise<HeadersInit> => {
   return token
     ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     : { 'Content-Type': 'application/json' };
+};
+
+const buildAuthHeaders = async (): Promise<HeadersInit> => {
+  const token = await getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 export const getForms = async (): Promise<FormRecord[]> => {
@@ -334,4 +340,37 @@ export const submitFormAnswers = async (
   }
 
   return response.json();
+};
+
+export const uploadFormFile = async (
+  identifier: string,
+  payload: {
+    file: File;
+    field_name: string;
+    submission_id: string;
+  },
+  mode: 'share' | 'api' = 'share',
+): Promise<FormUploadedFileValue> => {
+  const url = mode === 'share'
+    ? `${API_URL}/api/forms/share/${encodeURIComponent(identifier)}/upload`
+    : `${API_URL}/api/forms/${encodeURIComponent(identifier)}/upload`;
+
+  const formData = new FormData();
+  formData.append('file', payload.file);
+  formData.append('field_name', payload.field_name);
+  formData.append('submission_id', payload.submission_id);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: await buildAuthHeaders(),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to upload form file.');
+  }
+
+  const data = await response.json() as { file: FormUploadedFileValue };
+  return data.file;
 };

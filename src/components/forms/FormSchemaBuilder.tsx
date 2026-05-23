@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronUp, ListChecks, Plus, Rows3, SquareCheckBig, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronDown, ChevronUp, ListChecks, Paperclip, Plus, Rows3, SquareCheckBig, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { getMediaSources, type MediaSourceInfo } from '@/services/connectionsService';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { FormFieldDefinition, FormFieldType } from '@/types/forms';
@@ -57,6 +58,12 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     icon: Rows3,
   },
   {
+    label: { en: 'File Upload', de: 'Datei-Upload' },
+    description: { en: 'Upload one file into object storage.', de: 'Eine Datei in den Objektspeicher hochladen.' },
+    type: 'file-upload',
+    icon: Paperclip,
+  },
+  {
     label: { en: 'Checkbox', de: 'Checkbox' },
     description: { en: 'Single true/false value.', de: 'Einzelner Ja/Nein-Wert.' },
     type: 'checkbox',
@@ -87,6 +94,7 @@ const typeLabels: Record<FormFieldType, string> = {
   textarea: 'Textarea',
   email: 'Email',
   number: 'Number',
+  'file-upload': 'File Upload',
   checkbox: 'Checkbox',
   select: 'Select',
   radio: 'Radio',
@@ -94,6 +102,8 @@ const typeLabels: Record<FormFieldType, string> = {
   'single-select': 'Single Select',
   'multi-select': 'Multi Select',
 };
+
+const DEFAULT_UPLOAD_MOUNT = '__default__';
 
 const createField = (type: FormFieldType, index: number): FormFieldDefinition => {
   const baseName = type === 'single-select' || type === 'multi-select'
@@ -112,12 +122,17 @@ const createField = (type: FormFieldType, index: number): FormFieldDefinition =>
     options: type === 'single-select' || type === 'multi-select' || type === 'select' || type === 'radio'
       ? ['Option 1', 'Option 2']
       : undefined,
+    upload_mount: type === 'file-upload' ? undefined : undefined,
+    upload_bucket: type === 'file-upload' ? '' : undefined,
+    upload_folder: type === 'file-upload' ? 'forms/{form_slug}/{field_name}/{submission_id}' : undefined,
   };
 };
 
 const supportsOptions = (type: FormFieldType) => (
   type === 'single-select' || type === 'multi-select' || type === 'select' || type === 'radio'
 );
+
+const supportsUploadConfig = (type: FormFieldType) => type === 'file-upload';
 
 interface OptionTagInputProps {
   options: string[];
@@ -195,6 +210,26 @@ const OptionTagInput = ({ options, language, onChange }: OptionTagInputProps) =>
 };
 
 export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuilderProps) => {
+  const [mediaSources, setMediaSources] = useState<MediaSourceInfo[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    void getMediaSources()
+      .then((sources) => {
+        if (!active) return;
+        setMediaSources(sources.filter((source) => source.configured));
+      })
+      .catch(() => {
+        if (!active) return;
+        setMediaSources([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const updateField = (index: number, patch: Partial<FormFieldDefinition>) => {
     const next = [...fields];
     next[index] = { ...next[index], ...patch };
@@ -203,6 +238,16 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
       next[index].options = undefined;
     } else if (!next[index].options || next[index].options.length === 0) {
       next[index].options = ['Option 1', 'Option 2'];
+    }
+
+    if (!supportsUploadConfig(next[index].type)) {
+      next[index].upload_mount = undefined;
+      next[index].upload_bucket = undefined;
+      next[index].upload_folder = undefined;
+    } else {
+      next[index].upload_mount = next[index].upload_mount || undefined;
+      next[index].upload_bucket = next[index].upload_bucket || '';
+      next[index].upload_folder = next[index].upload_folder || 'forms/{form_slug}/{field_name}/{submission_id}';
     }
 
     onChange(next);
@@ -348,6 +393,59 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                     language={language}
                     onChange={(options) => updateField(index, { options })}
                   />
+                </div>
+              )}
+
+              {supportsUploadConfig(field.type) && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{language === 'en' ? 'Upload Storage Mount' : 'Upload-Speicher-Mount'}</Label>
+                    <Select
+                      value={field.upload_mount || DEFAULT_UPLOAD_MOUNT}
+                      onValueChange={(value) => updateField(index, {
+                        upload_mount: value === DEFAULT_UPLOAD_MOUNT ? undefined : value,
+                        upload_bucket: value === DEFAULT_UPLOAD_MOUNT ? field.upload_bucket || '' : '',
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={language === 'en' ? 'Use default storage mount' : 'Standard-Speicher-Mount verwenden'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={DEFAULT_UPLOAD_MOUNT}>
+                          {language === 'en' ? 'Default mount from Connections' : 'Standard-Mount aus Connections'}
+                        </SelectItem>
+                        {mediaSources.map((source) => (
+                          <SelectItem key={source.id} value={source.id}>
+                            {source.label}{source.isDefault ? ` (${language === 'en' ? 'Default' : 'Standard'})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en'
+                        ? 'Select a mounted drive or keep the default active storage mount from Connections.'
+                        : 'Wähle ein gemountetes Laufwerk oder nutze den aktiven Standard-Mount aus Connections.'}
+                    </p>
+                    {field.upload_bucket && !field.upload_mount ? (
+                      <p className="text-xs text-amber-600">
+                        {language === 'en'
+                          ? `Legacy bucket override is still saved: ${field.upload_bucket}`
+                          : `Legacy-Bucket-Override ist noch gespeichert: ${field.upload_bucket}`}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{language === 'en' ? 'Upload Folder Template' : 'Upload-Ordner-Template'}</Label>
+                    <Input
+                      value={field.upload_folder || ''}
+                      onChange={(event) => updateField(index, { upload_folder: event.target.value })}
+                      placeholder="forms/{form_slug}/{field_name}/{submission_id}"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en' ? 'Supported tokens: {form_slug}, {field_name}, {submission_id}.' : 'Unterstützte Tokens: {form_slug}, {field_name}, {submission_id}.'}
+                    </p>
+                  </div>
                 </div>
               )}
 

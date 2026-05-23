@@ -4,7 +4,7 @@ import type { Env } from '../lib/supabase';
 import { buildMailSecretName, buildS3SecretName, getMailSecretNamespace, getManagedSecretMetadata, getS3SourceSecretNamespace, upsertManagedSecret } from '../lib/managedSecrets';
 import { invalidateLoggingConfigCache } from '../middleware/agentLogger';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { getExtraMediaSources, getLoggingConfig, getMailConfig, getStorageConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertStorageConfig, type ExtraMediaSource } from '../lib/systemConfig';
+import { getExtraMediaSources, getLoggingConfig, getMailConfig, getMediaSourceMounts, getStorageConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertMediaSourceMounts, upsertStorageConfig, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
 
 const config = new Hono<{ Bindings: Env }>();
 
@@ -270,11 +270,131 @@ config.post('/mail/test', async (c) => {
 
 // ── Extra media sources ───────────────────────────────────────────────────
 
-const S3_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const MOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-function isValidS3SourceId(id: string): boolean {
-  return S3_ID_PATTERN.test(id);
+function isValidMountId(id: string): boolean {
+  return MOUNT_ID_PATTERN.test(id);
 }
+
+function isValidMediaMount(mount: MediaSourceMount): string | null {
+  if (!mount.id || !isValidMountId(mount.id)) {
+    return `Invalid mount id "${String(mount.id)}" — must be lowercase alphanumeric with hyphens`;
+  }
+  if (!mount.label?.trim()) {
+    return `Mount "${mount.id}" is missing a label`;
+  }
+  if (!mount.bucket?.trim()) {
+    return `Mount "${mount.id}" is missing a bucket`;
+  }
+  if (mount.type !== 'supabase' && mount.type !== 'r2' && mount.type !== 's3') {
+    return `Mount "${mount.id}" type must be "supabase", "r2", or "s3"`;
+  }
+  if (mount.type === 's3' && !mount.endpoint?.trim()) {
+    return `Mount "${mount.id}" is missing an endpoint`;
+  }
+
+  return null;
+}
+
+config.get('/media-mounts', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const mounts = await getMediaSourceMounts(c.env);
+  return c.json({ mounts });
+});
+
+config.put('/media-mounts', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  let body: { mounts: MediaSourceMount[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!Array.isArray(body.mounts)) {
+    return c.json({ error: 'mounts must be an array' }, 400);
+  }
+
+  for (const mount of body.mounts) {
+    const validationError = isValidMediaMount(mount);
+    if (validationError) {
+      return c.json({ error: validationError }, 400);
+    }
+  }
+
+  const deduped = Array.from(new Map(body.mounts.map((mount) => [mount.id, mount])).values());
+  const mounts = await upsertMediaSourceMounts(c.env, deduped);
+  return c.json({ success: true, mounts });
+});
+
+config.put('/media-mounts/:id/secret', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const mountId = c.req.param('id');
+  if (!isValidMountId(mountId)) {
+    return c.json({ error: 'Invalid mount id' }, 400);
+  }
+
+  const mounts = await getMediaSourceMounts(c.env);
+  const mount = mounts.find((entry) => entry.id === mountId);
+  if (!mount) {
+    return c.json({ error: 'Mount not found' }, 404);
+  }
+  if (mount.type !== 's3') {
+    return c.json({ error: 'Only S3 mounts use managed secrets' }, 400);
+  }
+
+  let body: { secretAccessKey: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!body.secretAccessKey?.trim()) {
+    return c.json({ error: 'secretAccessKey is required' }, 400);
+  }
+
+  await upsertManagedSecret(c.env, {
+    name: buildS3SecretName(mountId),
+    namespace: getS3SourceSecretNamespace(),
+    value: body.secretAccessKey.trim(),
+    metadata: { sourceId: mountId },
+  });
+
+  return c.json({ success: true });
+});
+
+config.delete('/media-mounts/:id', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const mountId = c.req.param('id');
+  if (!isValidMountId(mountId)) {
+    return c.json({ error: 'Invalid mount id' }, 400);
+  }
+
+  const mounts = await getMediaSourceMounts(c.env);
+  const filtered = mounts.filter((mount) => mount.id !== mountId);
+  await upsertMediaSourceMounts(c.env, filtered);
+
+  try {
+    const admin = await createSupabaseAdminClient(c.env);
+    await admin
+      .from('managed_secrets')
+      .delete()
+      .eq('name', buildS3SecretName(mountId));
+  } catch {
+    // not critical
+  }
+
+  return c.json({ success: true });
+});
 
 /** GET /config/media-sources — list extra S3-compatible media sources */
 config.get('/media-sources', async (c) => {
@@ -323,7 +443,7 @@ config.put('/media-sources/:id/secret', async (c) => {
   if (auth instanceof Response) return auth;
 
   const sourceId = c.req.param('id');
-  if (!isValidS3SourceId(sourceId)) {
+  if (!isValidMountId(sourceId)) {
     return c.json({ error: 'Invalid source id' }, 400);
   }
 
@@ -354,7 +474,7 @@ config.delete('/media-sources/:id', async (c) => {
   if (auth instanceof Response) return auth;
 
   const sourceId = c.req.param('id');
-  if (!isValidS3SourceId(sourceId)) {
+  if (!isValidMountId(sourceId)) {
     return c.json({ error: 'Invalid source id' }, 400);
   }
 

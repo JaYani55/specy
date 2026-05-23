@@ -48,9 +48,9 @@
   // ║     STORAGE_BUCKET   = booking_media                                     ║
   // ║                                                                          ║
   // ║  Option B — Cloudflare R2:                                               ║
-  // ║     a) Set STORAGE_PROVIDER = r2 and R2_PUBLIC_URL below                 ║
-  // ║     b) Replace bucket_name in the r2_buckets section below  <<<         ║
-  // ║     c) Uncomment the r2_buckets section                                  ║
+  // ║     a) Set STORAGE_PROVIDER = r2                                          ║
+  // ║     b) MEDIA_BUCKET binds to the R2 bucket pluraconr2                    ║
+  // ║     c) R2_PUBLIC_URL is optional and can be a custom asset domain        ║
   // ║                                                                          ║
   // ║  8. Apply database migrations, sync Supabase Edge Function secrets,      ║
   // ║     deploy send_email, then build and deploy the Worker.                 ║
@@ -90,15 +90,12 @@
     "R2_PUBLIC_URL":    ""
   },
 
-  // ── R2 media bucket (OPTIONAL — only needed when STORAGE_PROVIDER = 'r2') ──
-  // <<< REPLACE bucket_name with your actual R2 bucket name, then uncomment.
-  // "r2_buckets": [
-  //   {
-  //     "binding": "MEDIA_BUCKET",
-  //     // <<< REPLACE: Your R2 bucket name
-  //     "bucket_name": "REPLACE_WITH_YOUR_R2_BUCKET_NAME"
-  //   }
-  // ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "pluraconr2"
+    }
+  ],
 
   "secrets_store_secrets": [
     {

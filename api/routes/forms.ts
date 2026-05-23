@@ -1,9 +1,21 @@
+import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
+import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig } from '../lib/mediaStorage';
+import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 
 const forms = new Hono<{ Bindings: Env }>();
 
-type FormFieldType = 'text' | 'textarea' | 'email' | 'number' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date';
+type FormFieldType = 'text' | 'textarea' | 'email' | 'number' | 'file-upload' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date';
+
+interface FormUploadedFileValue {
+  name: string;
+  path: string;
+  url: string;
+  bucket: string;
+  content_type: string | null;
+  size: number | null;
+}
 
 interface FormFieldDefinition {
   name: string;
@@ -14,6 +26,9 @@ interface FormFieldDefinition {
   meta_description?: string;
   required?: boolean;
   options?: string[];
+  upload_mount?: string;
+  upload_bucket?: string;
+  upload_folder?: string;
 }
 
 interface FormRow {
@@ -48,6 +63,7 @@ const VALID_FIELD_TYPES = new Set<FormFieldType>([
   'textarea',
   'email',
   'number',
+  'file-upload',
   'checkbox',
   'single-select',
   'multi-select',
@@ -77,23 +93,34 @@ const escapeHtml = (value: string): string => value
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
-const formatAnswerValue = (value: string | number | boolean | string[] | null): string => {
+const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => (
+  isPlainObject(value)
+  && typeof value.name === 'string'
+  && typeof value.path === 'string'
+  && typeof value.url === 'string'
+  && typeof value.bucket === 'string'
+  && (value.content_type === null || typeof value.content_type === 'string')
+  && (value.size === null || typeof value.size === 'number')
+);
+
+const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | null): string => {
   if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (isUploadedFileValue(value)) return value.url ? `${value.name} (${value.url})` : value.name;
   if (value === null || value === '') return '-';
   return String(value);
 };
 
 const buildAnswerSummaryText = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>,
 ): string => fields
   .map((field) => `${field.label}: ${formatAnswerValue(answers[field.name] ?? null)}`)
   .join('\n');
 
 const buildAnswerSummaryHtml = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>,
 ): string => fields
   .map((field) => `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;vertical-align:top;">${escapeHtml(field.label)}</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(formatAnswerValue(answers[field.name] ?? null))}</td></tr>`)
   .join('');
@@ -101,7 +128,7 @@ const buildAnswerSummaryHtml = (
 const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | null>;
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
   answerId: string;
   submittedVia: 'share' | 'api' | 'page';
   sourceSlug: string | null;
@@ -213,7 +240,7 @@ const enqueueFormAnswerNotifications = async (input: {
   env: Env;
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | null>;
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
   answerId: string;
   submittedBy: string | null;
   submittedVia: 'share' | 'api' | 'page';
@@ -346,11 +373,18 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       meta_description: typeof value.meta_description === 'string' ? value.meta_description : undefined,
       required: typeof value.required === 'boolean' ? value.required : false,
       options: Array.isArray(value.options) ? value.options.filter((entry): entry is string => typeof entry === 'string') : undefined,
+      upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
+      upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
+      upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
     };
 
     if ((field.type === 'select' || field.type === 'radio' || field.type === 'single-select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
       errors.push(`${name}.options is required.`);
       continue;
+    }
+
+    if (field.type === 'file-upload' && !field.upload_folder) {
+      field.upload_folder = 'forms/{form_slug}/{field_name}/{submission_id}';
     }
 
     fields.push(field);
@@ -362,9 +396,9 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
 const validateAnswers = (
   fields: FormFieldDefinition[],
   answers: unknown,
-): { errors: string[]; normalizedAnswers: Record<string, string | number | boolean | string[] | null> } => {
+): { errors: string[]; normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null> } => {
   const errors: string[] = [];
-  const normalizedAnswers: Record<string, string | number | boolean | string[] | null> = {};
+  const normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null> = {};
 
   if (!isPlainObject(answers)) {
     return { errors: ['answers must be an object.'], normalizedAnswers };
@@ -425,6 +459,13 @@ const validateAnswers = (
         }
         break;
       }
+      case 'file-upload':
+        if (!isUploadedFileValue(value)) {
+          errors.push(`${field.name} must be an uploaded file object.`);
+        } else {
+          normalizedAnswers[field.name] = value;
+        }
+        break;
       case 'checkbox':
         if (typeof value !== 'boolean') {
           errors.push(`${field.name} must be true or false.`);
@@ -458,6 +499,189 @@ const validateAnswers = (
   }
 
   return { errors, normalizedAnswers };
+};
+
+const sanitizeUploadPathSegment = (value: string, fallback: string): string => {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return normalized || fallback;
+};
+
+const resolveUploadFolder = (field: FormFieldDefinition, form: FormRow, submissionId: string): string => {
+  const template = field.upload_folder?.trim() || 'forms/{form_slug}/{field_name}/{submission_id}';
+  return template
+    .replaceAll('{form_slug}', sanitizeUploadPathSegment(form.slug, 'form'))
+    .replaceAll('{field_name}', sanitizeUploadPathSegment(field.name, 'field'))
+    .replaceAll('{submission_id}', sanitizeUploadPathSegment(submissionId, 'submission'))
+    .split('/')
+    .map((segment) => sanitizeUploadPathSegment(segment, 'segment'))
+    .filter(Boolean)
+    .join('/');
+};
+
+const uploadFormFile = async (input: {
+  env: Env;
+  requestUrl: string;
+  form: FormRow;
+  field: FormFieldDefinition;
+  file: File;
+  submissionId: string;
+}): Promise<FormUploadedFileValue> => {
+  const availableMounts = await resolveAllMediaSourceMounts(input.env, input.requestUrl);
+  const defaultMount = availableMounts.find((mount) => mount.isDefault) ?? await resolvePrimaryMediaConfig(input.env, input.requestUrl);
+  const selectedMountId = input.field.upload_mount?.trim();
+  const legacyBucketOverride = input.field.upload_bucket?.trim();
+
+  const storageConfig = selectedMountId
+    ? availableMounts.find((mount) => mount.id === selectedMountId) ?? null
+    : defaultMount;
+
+  if (!storageConfig) {
+    throw new Error(`Configured upload mount ${selectedMountId} is not available.`);
+  }
+
+  if (!storageConfig.configured || storageConfig.provider === 'unconfigured') {
+    throw new Error('Storage is not configured for form uploads.');
+  }
+
+  const selectedBucket = storageConfig.provider === 'supabase'
+    ? legacyBucketOverride || storageConfig.bucket
+    : storageConfig.bucket;
+
+  if (!selectedBucket) {
+    throw new Error('Storage is not configured for form uploads.');
+  }
+
+  if ((storageConfig.provider === 'r2' || storageConfig.provider === 's3') && legacyBucketOverride && legacyBucketOverride !== storageConfig.bucket) {
+    throw new Error(`${storageConfig.provider.toUpperCase()} form uploads must use the configured bucket ${storageConfig.bucket}.`);
+  }
+
+  const folder = resolveUploadFolder(input.field, input.form, input.submissionId);
+  const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const key = `${folder}/${Date.now()}-${safeName}`;
+
+  if (storageConfig.provider === 's3') {
+    if (!storageConfig.endpoint || !storageConfig.accessKeyId) {
+      throw new Error('S3 form uploads require an endpoint and access key ID on the default mount.');
+    }
+
+    const secretAccessKey = await getManagedSecretValue(input.env, buildS3SecretName(storageConfig.id));
+    if (!secretAccessKey) {
+      throw new Error(`S3 form uploads require a stored secret access key for mount ${storageConfig.id}.`);
+    }
+
+    const client = new AwsClient({
+      accessKeyId: storageConfig.accessKeyId,
+      secretAccessKey,
+      region: storageConfig.region || 'us-east-1',
+      service: 's3',
+    });
+    const endpoint = storageConfig.endpoint.replace(/\/+$/, '');
+    const url = `${endpoint}/${storageConfig.bucket}/${key}`;
+    const buf = await input.file.arrayBuffer();
+    const response = await client.fetch(url, {
+      method: 'PUT',
+      body: buf,
+      headers: { 'Content-Type': input.file.type || 'application/octet-stream' },
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`S3 upload failed (${response.status}): ${detail}`);
+    }
+
+    return {
+      name: input.file.name,
+      path: key,
+      url: buildMediaMountUrl(storageConfig, input.requestUrl, key),
+      bucket: selectedBucket,
+      content_type: input.file.type || null,
+      size: Number.isFinite(input.file.size) ? input.file.size : null,
+    };
+  }
+
+  if (storageConfig.provider === 'r2') {
+    const buf = await input.file.arrayBuffer();
+    await input.env.MEDIA_BUCKET!.put(key, buf, { httpMetadata: { contentType: input.file.type || 'application/octet-stream' } });
+    return {
+      name: input.file.name,
+      path: key,
+      url: buildMediaMountUrl(storageConfig, input.requestUrl, key),
+      bucket: selectedBucket,
+      content_type: input.file.type || null,
+      size: Number.isFinite(input.file.size) ? input.file.size : null,
+    };
+  }
+
+  await ensureSupabaseStorageBucket(input.env, selectedBucket);
+  const admin = await createSupabaseAdminClient(input.env);
+  const buf = await input.file.arrayBuffer();
+  const { error } = await admin.storage
+    .from(selectedBucket)
+    .upload(key, buf, { contentType: input.file.type || 'application/octet-stream', upsert: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const { data } = admin.storage.from(selectedBucket).getPublicUrl(key);
+  return {
+    name: input.file.name,
+    path: key,
+    url: data.publicUrl,
+    bucket: selectedBucket,
+    content_type: input.file.type || null,
+    size: Number.isFinite(input.file.size) ? input.file.size : null,
+  };
+};
+
+const handleFormUploadRequest = async (input: {
+  env: Env;
+  requestUrl: string;
+  form: FormRow | null;
+  shareMode: boolean;
+  token?: string;
+  formData: FormData;
+}): Promise<Response> => {
+  const form = input.form;
+  if (!form) return new Response(JSON.stringify({ error: 'Form not found.' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  if (input.shareMode && !form.share_enabled) return new Response(JSON.stringify({ error: 'Share link is disabled for this form.' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  if (!input.shareMode && !form.api_enabled) return new Response(JSON.stringify({ error: 'API access is disabled for this form.' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  if (form.requires_auth && !input.token) return new Response(JSON.stringify({ error: 'Authentication required.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+  const { fields, errors } = normalizeSchema(form.schema || {});
+  if (errors.length > 0) return new Response(JSON.stringify({ error: 'Stored form schema is invalid.', details: errors }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+
+  const file = input.formData.get('file');
+  const fieldName = input.formData.get('field_name');
+  const submissionId = input.formData.get('submission_id');
+
+  if (!(file instanceof File)) return new Response(JSON.stringify({ error: 'No file provided.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  if (typeof fieldName !== 'string' || !fieldName.trim()) return new Response(JSON.stringify({ error: 'field_name is required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  if (typeof submissionId !== 'string' || !submissionId.trim()) return new Response(JSON.stringify({ error: 'submission_id is required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+
+  const field = fields.find((entry) => entry.name === fieldName);
+  if (!field) return new Response(JSON.stringify({ error: `Unknown field: ${fieldName}.` }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  if (field.type !== 'file-upload') return new Response(JSON.stringify({ error: `${fieldName} is not a file-upload field.` }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    const uploaded = await uploadFormFile({
+      env: input.env,
+      requestUrl: input.requestUrl,
+      form,
+      field,
+      file,
+      submissionId,
+    });
+    return new Response(JSON.stringify({ file: uploaded }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to upload file.';
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
 };
 
 const getFormByIdentifier = async (
@@ -533,6 +757,26 @@ forms.get('/share/:shareSlug', async (c) => {
   return c.json(serializeForm(form, fields));
 });
 
+forms.post('/share/:shareSlug/upload', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+  const form = await getFormByShareSlug(supabase, c.req.param('shareSlug'));
+  const formData = await c.req.formData().catch(() => null);
+
+  if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
+
+  const response = await handleFormUploadRequest({
+    env: c.env,
+    requestUrl: c.req.url,
+    form,
+    shareMode: true,
+    token,
+    formData,
+  });
+
+  return response;
+});
+
 forms.post('/share/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
@@ -606,6 +850,26 @@ forms.get('/:identifier', async (c) => {
   if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
 
   return c.json(serializeForm(form, fields));
+});
+
+forms.post('/:identifier/upload', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+  const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
+  const formData = await c.req.formData().catch(() => null);
+
+  if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
+
+  const response = await handleFormUploadRequest({
+    env: c.env,
+    requestUrl: c.req.url,
+    form,
+    shareMode: false,
+    token,
+    formData,
+  });
+
+  return response;
 });
 
 forms.post('/:identifier/answers', async (c) => {

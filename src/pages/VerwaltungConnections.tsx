@@ -59,26 +59,22 @@ import {
   upsertSecret,
   deleteSecret,
   getMailConfigSettings,
-  getStorageConfigSettings,
   testMailConnection,
-  updateStorageConfigSettings,
   updateMailConfigSettings,
   getMediaConfig,
   testMediaConnection,
-  getExtraMediaSourcesConfig,
-  updateExtraMediaSourcesConfig,
+  getMediaMountsConfig,
+  updateMediaMountsConfig,
   upsertMediaSourceSecret,
-  deleteExtraMediaSource,
+  deleteMediaMount,
   SECRETS_MANIFEST,
-  STORAGE_CONFIG_MANIFEST,
   type CfSecret,
   type SecretDefinition,
   type MediaConfig,
   type EnvStatusEntry,
   type MailConfigSettings,
   type MailSecretStatus,
-  type StorageConfigSettings,
-  type ExtraMediaSource,
+  type MediaMount,
 } from '@/services/connectionsService';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -97,10 +93,6 @@ interface EditState {
   value: string;
   comment: string;
   showValue: boolean;
-  saving: boolean;
-}
-
-interface StorageConfigState extends StorageConfigSettings {
   saving: boolean;
 }
 
@@ -171,12 +163,6 @@ const VerwaltungConnections: React.FC = () => {
   const [cfSecrets, setCfSecrets] = useState<CfSecret[]>([]);
   const [envStatusMap, setEnvStatusMap] = useState<Record<string, boolean>>({});
   const [apiError, setApiError] = useState<string | null>(null);
-  const [storageConfig, setStorageConfig] = useState<StorageConfigState>({
-    provider: '',
-    bucket: '',
-    r2PublicUrl: '',
-    saving: false,
-  });
   const [mailConfig, setMailConfig] = useState<MailConfigState>({
     provider: '',
     fromName: '',
@@ -200,15 +186,24 @@ const VerwaltungConnections: React.FC = () => {
   const [mediaTesting, setMediaTesting] = useState(false);
   const [mediaTestResult, setMediaTestResult] = useState<{ ok: boolean; itemCount?: number; error?: string } | null>(null);
 
-  // Extra media sources
-  const [extraSources, setExtraSources] = useState<ExtraMediaSource[]>([]);
-  const [extraSourcesSaving, setExtraSourcesSaving] = useState(false);
-  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
-  const [editingSource, setEditingSource] = useState<ExtraMediaSource | null>(null);
-  const [sourceForm, setSourceForm] = useState<ExtraMediaSource & { secretAccessKey: string }>({
-    id: '', label: '', type: 's3', endpoint: '', bucket: '', region: '', publicUrl: '', accessKeyId: '', secretAccessKey: '',
+  // Media mounts
+  const [mediaMounts, setMediaMounts] = useState<MediaMount[]>([]);
+  const [mountsSaving, setMountsSaving] = useState(false);
+  const [mountDialogOpen, setMountDialogOpen] = useState(false);
+  const [editingMount, setEditingMount] = useState<MediaMount | null>(null);
+  const [mountForm, setMountForm] = useState<MediaMount & { secretAccessKey: string }>({
+    id: '',
+    label: '',
+    type: 'supabase',
+    bucket: '',
+    isDefault: true,
+    endpoint: '',
+    region: 'us-east-1',
+    publicUrl: '',
+    accessKeyId: '',
+    secretAccessKey: '',
   });
-  const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
+  const [deletingMountId, setDeletingMountId] = useState<string | null>(null);
 
   // Edit dialog state
   const [editState, setEditState] = useState<EditState | null>(null);
@@ -254,15 +249,6 @@ const VerwaltungConnections: React.FC = () => {
     }
   }, []);
 
-  const loadStorageConfig = useCallback(async () => {
-    try {
-      const config = await getStorageConfigSettings();
-      setStorageConfig((current) => ({ ...current, ...config, saving: false }));
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Failed to load storage configuration');
-    }
-  }, []);
-
   const loadMailConfig = useCallback(async () => {
     try {
       const config = await getMailConfigSettings();
@@ -289,10 +275,10 @@ const VerwaltungConnections: React.FC = () => {
     }
   }, []);
 
-  const loadExtraSources = useCallback(async () => {
+  const loadMediaMounts = useCallback(async () => {
     try {
-      const sources = await getExtraMediaSourcesConfig();
-      setExtraSources(sources);
+      const mounts = await getMediaMountsConfig();
+      setMediaMounts(mounts);
     } catch {
       // non-critical
     }
@@ -300,11 +286,10 @@ const VerwaltungConnections: React.FC = () => {
 
   useEffect(() => {
     loadSecrets();
-    loadStorageConfig();
     loadMailConfig();
     loadMediaStatus();
-    loadExtraSources();
-  }, [loadSecrets, loadStorageConfig, loadMailConfig, loadMediaStatus, loadExtraSources]);
+    loadMediaMounts();
+  }, [loadSecrets, loadMailConfig, loadMediaStatus, loadMediaMounts]);
 
   // Build merged list: manifest entry + CF secrets store status + env-var status
   const secretsWithStatus: SecretWithStatus[] = SECRETS_MANIFEST.map((def) => ({
@@ -386,80 +371,130 @@ const VerwaltungConnections: React.FC = () => {
     }
   };
 
-  // ── Extra media source handlers ──────────────────────────────────────────
+  // ── Media mount handlers ────────────────────────────────────────────────
 
-  const openAddSource = () => {
-    setEditingSource(null);
-    setSourceForm({ id: '', label: '', type: 's3', endpoint: 'https://s3.amazonaws.com', bucket: '', region: 'us-east-1', publicUrl: '', accessKeyId: '', secretAccessKey: '' });
-    setSourceDialogOpen(true);
+  const normalizeDefaultMounts = (mounts: MediaMount[]): MediaMount[] => {
+    if (mounts.length === 0) {
+      return [];
+    }
+
+    const defaultMountId = mounts.find((mount) => mount.isDefault)?.id ?? mounts[0].id;
+    return mounts.map((mount) => ({
+      ...mount,
+      isDefault: mount.id === defaultMountId,
+    }));
   };
 
-  const openEditSource = (source: ExtraMediaSource) => {
-    setEditingSource(source);
-    setSourceForm({ ...source, secretAccessKey: '' });
-    setSourceDialogOpen(true);
+  const openAddMount = () => {
+    setEditingMount(null);
+    setMountForm({
+      id: '',
+      label: '',
+      type: 'supabase',
+      bucket: '',
+      isDefault: mediaMounts.length === 0,
+      endpoint: '',
+      region: 'us-east-1',
+      publicUrl: '',
+      accessKeyId: '',
+      secretAccessKey: '',
+    });
+    setMountDialogOpen(true);
   };
 
-  const saveSourceDialog = async () => {
-    const { secretAccessKey, ...sourceData } = sourceForm;
-    if (!sourceData.id.trim() || !sourceData.label.trim() || !sourceData.bucket.trim() || !sourceData.endpoint.trim()) {
-      toast.error('ID, Label, Endpoint and Bucket are required');
+  const openEditMount = (mount: MediaMount) => {
+    setEditingMount(mount);
+    setMountForm({
+      id: mount.id,
+      label: mount.label,
+      type: mount.type,
+      bucket: mount.bucket,
+      isDefault: mount.isDefault,
+      endpoint: mount.endpoint ?? '',
+      region: mount.region ?? 'us-east-1',
+      publicUrl: mount.publicUrl ?? '',
+      accessKeyId: mount.accessKeyId ?? '',
+      secretAccessKey: '',
+    });
+    setMountDialogOpen(true);
+  };
+
+  const saveMountDialog = async () => {
+    const { secretAccessKey, ...rawMountData } = mountForm;
+    if (!rawMountData.id.trim() || !rawMountData.label.trim() || !rawMountData.bucket.trim()) {
+      toast.error('ID, label and bucket are required');
       return;
     }
-    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(sourceData.id)) {
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(rawMountData.id)) {
       toast.error('ID must be lowercase alphanumeric with hyphens (e.g. "aws-photos")');
       return;
     }
-    setExtraSourcesSaving(true);
-    try {
-      const updatedSources = editingSource
-        ? extraSources.map((s) => (s.id === editingSource.id ? sourceData : s))
-        : [...extraSources, sourceData];
-      const saved = await updateExtraMediaSourcesConfig(updatedSources);
-      if (secretAccessKey.trim()) {
-        await upsertMediaSourceSecret(sourceData.id, secretAccessKey.trim());
-      }
-      setExtraSources(saved);
-      setSourceDialogOpen(false);
-      toast.success(editingSource ? 'Media source updated' : 'Media source added');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save media source');
-    } finally {
-      setExtraSourcesSaving(false);
-    }
-  };
-
-  const confirmDeleteSource = async () => {
-    if (!deletingSourceId) return;
-    try {
-      await deleteExtraMediaSource(deletingSourceId);
-      setExtraSources((prev) => prev.filter((s) => s.id !== deletingSourceId));
-      setDeletingSourceId(null);
-      toast.success('Media source removed');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to remove media source');
-    }
-  };
-
-  const saveStorageConfig = async () => {
-    if (!storageConfig.provider || !storageConfig.bucket.trim()) {
-      toast.error('Provider and bucket are required');
+    if (rawMountData.type === 's3' && !rawMountData.endpoint?.trim()) {
+      toast.error('S3 mounts require an endpoint');
       return;
     }
 
-    setStorageConfig((current) => ({ ...current, saving: true }));
+    const mountData: MediaMount = {
+      id: rawMountData.id.trim(),
+      label: rawMountData.label.trim(),
+      type: rawMountData.type,
+      bucket: rawMountData.bucket.trim(),
+      isDefault: rawMountData.isDefault,
+      endpoint: rawMountData.type === 's3' ? rawMountData.endpoint?.trim() || '' : undefined,
+      region: rawMountData.type === 's3' ? rawMountData.region?.trim() || '' : undefined,
+      publicUrl: rawMountData.type === 'r2' || rawMountData.type === 's3' ? rawMountData.publicUrl?.trim() || '' : undefined,
+      accessKeyId: rawMountData.type === 's3' ? rawMountData.accessKeyId?.trim() || '' : undefined,
+    };
+
+    setMountsSaving(true);
     try {
-      await updateStorageConfigSettings({
-        provider: storageConfig.provider,
-        bucket: storageConfig.bucket,
-        r2PublicUrl: storageConfig.r2PublicUrl,
-      });
-      toast.success('Storage configuration saved');
-      await loadStorageConfig();
+      const updatedMounts = editingMount
+        ? mediaMounts.map((mount) => (mount.id === editingMount.id ? mountData : mount))
+        : [...mediaMounts, mountData];
+      const saved = await updateMediaMountsConfig(normalizeDefaultMounts(updatedMounts));
+      if (secretAccessKey.trim()) {
+        await upsertMediaSourceSecret(mountData.id, secretAccessKey.trim());
+      }
+      setMediaMounts(saved);
+      setMountDialogOpen(false);
       await loadMediaStatus();
+      toast.success(editingMount ? 'Mount updated' : 'Mount added');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save storage configuration');
-      setStorageConfig((current) => ({ ...current, saving: false }));
+      toast.error(err instanceof Error ? err.message : 'Failed to save mount');
+    } finally {
+      setMountsSaving(false);
+    }
+  };
+
+  const setDefaultMount = async (mountId: string) => {
+    setMountsSaving(true);
+    try {
+      const saved = await updateMediaMountsConfig(
+        mediaMounts.map((mount) => ({
+          ...mount,
+          isDefault: mount.id === mountId,
+        })),
+      );
+      setMediaMounts(saved);
+      await loadMediaStatus();
+      toast.success('Default mount updated');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update default mount');
+    } finally {
+      setMountsSaving(false);
+    }
+  };
+
+  const confirmDeleteMount = async () => {
+    if (!deletingMountId) return;
+    try {
+      await deleteMediaMount(deletingMountId);
+      setMediaMounts((prev) => prev.filter((mount) => mount.id !== deletingMountId));
+      setDeletingMountId(null);
+      await loadMediaStatus();
+      toast.success('Mount removed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove mount');
     }
   };
 
@@ -573,10 +608,9 @@ const VerwaltungConnections: React.FC = () => {
             size="sm"
             onClick={() => {
               void loadSecrets();
-              void loadStorageConfig();
               void loadMailConfig();
               void loadMediaStatus();
-              void loadExtraSources();
+              void loadMediaMounts();
             }}
             disabled={loading}
           >
@@ -629,85 +663,50 @@ const VerwaltungConnections: React.FC = () => {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              <HardDrive className="h-4 w-4" />
-              System Configuration
-            </CardTitle>
-            <CardDescription>
-              Non-sensitive runtime settings are managed separately from Cloudflare-backed secrets.
-              These values control media storage behavior and are stored as system configuration.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {STORAGE_CONFIG_MANIFEST.map((field) => (
-              <div key={field.key} className="space-y-1.5">
-                <Label htmlFor={`storage-config-${field.key}`}>{field.label}</Label>
-                <Input
-                  id={`storage-config-${field.key}`}
-                  value={storageConfig[field.key]}
-                  onChange={(event) =>
-                    setStorageConfig((current) => ({ ...current, [field.key]: event.target.value }))
-                  }
-                  placeholder={field.placeholder}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">{field.description}</p>
-              </div>
-            ))}
-            <div className="flex items-center gap-2">
-              <Button onClick={saveStorageConfig} disabled={storageConfig.saving}>
-                {storageConfig.saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                Save configuration
-              </Button>
-              <Button variant="outline" onClick={loadStorageConfig} disabled={storageConfig.saving}>
-                Reload configuration
-              </Button>
-            </div>
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertDescription className="text-xs">
-                Bootstrap values such as <code>SUPABASE_URL</code> and <code>SUPABASE_PUBLISHABLE_KEY</code> still come from deployment configuration.
-                They are intentionally no longer shown as editable secrets in this page.
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-
-        {/* ── Additional Media Sources ── */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
               <Server className="h-4 w-4" />
-              Additional Media Sources
+              Storage Mounts
             </CardTitle>
             <CardDescription>
-              Configure extra S3-compatible storage backends for the media picker. Users can switch between sources directly in the media browser.
-              Credentials are stored encrypted via managed secrets.
+              Configure the buckets and object stores exposed to media and data pickers. Each mount appears like a selectable drive, and one mount is marked as the default for legacy flows.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {extraSources.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No additional sources configured. Only the primary storage (above) will be available in the media picker.</p>
+            {mediaMounts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No mounts configured yet. Add at least one Supabase, R2, or S3 mount to expose it in the pickers.</p>
             ) : (
               <div className="space-y-2">
-                {extraSources.map((source) => (
-                  <div key={source.id} className="flex items-center justify-between rounded-lg border p-3 gap-4">
-                    <div className="flex-1 min-w-0">
+                {mediaMounts.map((mount) => (
+                  <div key={mount.id} className="flex items-center justify-between rounded-lg border p-3 gap-4">
+                    <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm">{source.label}</span>
-                        <Badge variant="outline" className="text-xs font-mono">{source.id}</Badge>
-                        <Badge variant="secondary" className="text-xs">S3</Badge>
+                        <span className="font-medium text-sm">{mount.label}</span>
+                        <Badge variant="outline" className="text-xs font-mono">{mount.id}</Badge>
+                        <Badge variant="secondary" className="text-xs uppercase">{mount.type}</Badge>
+                        {mount.isDefault && <Badge className="text-xs">Default drive</Badge>}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{source.endpoint} / {source.bucket}</p>
+                      <p className="text-xs text-muted-foreground break-all">
+                        {mount.type === 's3'
+                          ? `${mount.endpoint || 'S3 endpoint missing'} / ${mount.bucket}`
+                          : mount.bucket}
+                      </p>
+                      {(mount.type === 'r2' || mount.type === 's3') && mount.publicUrl && (
+                        <p className="text-xs text-muted-foreground break-all">Delivery: {mount.publicUrl}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <Button size="sm" variant="outline" onClick={() => openEditSource(source)}>
+                      {!mount.isDefault && (
+                        <Button size="sm" variant="outline" onClick={() => void setDefaultMount(mount.id)} disabled={mountsSaving}>
+                          Set default
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => openEditMount(mount)}>
                         <Pencil className="h-3 w-3 mr-1" />Edit
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
-                        onClick={() => setDeletingSourceId(source.id)}
+                        onClick={() => setDeletingMountId(mount.id)}
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -716,10 +715,21 @@ const VerwaltungConnections: React.FC = () => {
                 ))}
               </div>
             )}
-            <Button variant="outline" size="sm" onClick={openAddSource}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add S3-compatible source
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={openAddMount}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add mount
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void loadMediaMounts()} disabled={mountsSaving}>
+                Reload mounts
+              </Button>
+            </div>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                Supabase mounts reuse your existing project credentials. R2 mounts currently use the single Worker binding <code>MEDIA_BUCKET</code>, so only one R2 bucket can be live at a time unless you add more Worker bindings.
+              </AlertDescription>
+            </Alert>
           </CardContent>
         </Card>
 
@@ -978,10 +988,10 @@ const VerwaltungConnections: React.FC = () => {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <HardDrive className="h-4 w-4" />
-              Media Storage — Connection Test
+              Active Drive — Connection Test
             </CardTitle>
             <CardDescription>
-              Live status of the configured media storage provider. Save your Storage secrets above, then click Test to verify the connection.
+              Live status of the current default mount. Update the mount list above, then click Test to verify the active bucket and binding.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -999,6 +1009,7 @@ const VerwaltungConnections: React.FC = () => {
                 >
                   {mediaConfig.provider === 'supabase' && '⚡ Supabase Storage'}
                   {mediaConfig.provider === 'r2' && '☁️ Cloudflare R2'}
+                  {mediaConfig.provider === 's3' && '🪣 S3-Compatible'}
                   {mediaConfig.provider === 'unconfigured' && 'Not configured'}
                 </Badge>
               ) : (
@@ -1011,6 +1022,23 @@ const VerwaltungConnections: React.FC = () => {
                 {mediaConfig?.bucket ?? '—'}
               </span>
             </div>
+            {mediaConfig?.provider === 'r2' && (
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-medium w-28 shrink-0">Binding</div>
+                <Badge
+                  variant="outline"
+                  className={
+                    mediaConfig.bindingConfigured
+                      ? 'text-green-600 border-green-300 bg-green-50 dark:bg-green-950/30'
+                      : 'text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950/30'
+                  }
+                >
+                  {mediaConfig.bindingConfigured
+                    ? `${mediaConfig.bindingName ?? 'MEDIA_BUCKET'} bound`
+                    : `${mediaConfig.bindingName ?? 'MEDIA_BUCKET'} missing`}
+                </Badge>
+              </div>
+            )}
             {mediaConfig?.provider === 'r2' && (
               <div className="flex items-center gap-3">
                 <div className="text-sm font-medium w-28 shrink-0">Public URL</div>
@@ -1026,14 +1054,38 @@ const VerwaltungConnections: React.FC = () => {
                 </Badge>
               </div>
             )}
+            {mediaConfig?.provider === 'r2' && (
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-medium w-28 shrink-0">Delivery</div>
+                <span className="text-sm font-mono text-muted-foreground break-all">
+                  {mediaConfig.assetBaseUrl ?? '—'}
+                </span>
+              </div>
+            )}
             {mediaConfig?.provider === 'r2' && !mediaConfig.configured && (
               <Alert>
                 <Info className="h-4 w-4" />
                 <AlertDescription className="text-xs">
-                  R2 bucket binding (<code>MEDIA_BUCKET</code>) is not bound. Enable the
-                  <code>r2_buckets</code> section in <code>wrangler.jsonc</code> and redeploy.
+                  R2 bucket binding (<code>MEDIA_BUCKET</code>) is not bound. Add the Worker R2 binding in
+                  <code>wrangler.jsonc</code> and redeploy the Worker.
                 </AlertDescription>
               </Alert>
+            )}
+            {mediaConfig?.provider === 's3' && (
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-medium w-28 shrink-0">Endpoint</div>
+                <span className="text-sm font-mono text-muted-foreground break-all">
+                  {mediaConfig.endpoint ?? '—'}
+                </span>
+              </div>
+            )}
+            {mediaConfig?.provider === 's3' && (
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-medium w-28 shrink-0">Delivery</div>
+                <span className="text-sm font-mono text-muted-foreground break-all">
+                  {mediaConfig.assetBaseUrl ?? '—'}
+                </span>
+              </div>
             )}
 
             {/* ── Test result ── */}
@@ -1188,8 +1240,7 @@ const VerwaltungConnections: React.FC = () => {
               Values are <strong>write-only</strong>: they can be set or deleted, but never read back through this UI.
             </p>
             <p>
-              Non-sensitive operational settings such as storage provider and bucket now belong to the separate system configuration section.
-              They are no longer treated as Cloudflare-managed secrets.
+              Bucket mounts are stored as non-sensitive system configuration. Media and data pickers read that list directly and expose each mount as a selectable drive, while S3 access keys remain write-only managed secrets.
             </p>
             <p>
               To bind a new secret to the Worker, add an entry to <code>secrets_store_secrets</code> in
@@ -1348,13 +1399,13 @@ const VerwaltungConnections: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Add / Edit extra media source dialog ── */}
-      <Dialog open={sourceDialogOpen} onOpenChange={(open) => { if (!open) setSourceDialogOpen(false); }}>
+      {/* ── Add / Edit media mount dialog ── */}
+      <Dialog open={mountDialogOpen} onOpenChange={(open) => { if (!open) setMountDialogOpen(false); }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingSource ? 'Edit media source' : 'Add S3-compatible media source'}</DialogTitle>
+            <DialogTitle>{editingMount ? 'Edit storage mount' : 'Add storage mount'}</DialogTitle>
             <DialogDescription>
-              Configure a new S3-compatible storage backend. The secret access key is stored encrypted.
+              Configure a mount that will appear as a selectable drive in media and data pickers.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1363,10 +1414,10 @@ const VerwaltungConnections: React.FC = () => {
                 <Label htmlFor="src-id">ID <span className="text-muted-foreground text-xs">(unique slug)</span></Label>
                 <Input
                   id="src-id"
-                  value={sourceForm.id}
-                  onChange={(e) => setSourceForm((f) => ({ ...f, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
-                  placeholder="aws-photos"
-                  disabled={!!editingSource}
+                  value={mountForm.id}
+                  onChange={(e) => setMountForm((f) => ({ ...f, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
+                  placeholder="blog-media"
+                  disabled={!!editingMount}
                   className="font-mono text-sm"
                 />
               </div>
@@ -1374,104 +1425,142 @@ const VerwaltungConnections: React.FC = () => {
                 <Label htmlFor="src-label">Display Name</Label>
                 <Input
                   id="src-label"
-                  value={sourceForm.label}
-                  onChange={(e) => setSourceForm((f) => ({ ...f, label: e.target.value }))}
-                  placeholder="AWS Photos"
+                  value={mountForm.label}
+                  onChange={(e) => setMountForm((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="Blog Media"
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="src-endpoint">Endpoint URL</Label>
-              <Input
-                id="src-endpoint"
-                value={sourceForm.endpoint}
-                onChange={(e) => setSourceForm((f) => ({ ...f, endpoint: e.target.value }))}
-                placeholder="https://s3.amazonaws.com"
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">For AWS S3 use <code>https://s3.amazonaws.com</code>. For DigitalOcean Spaces, MinIO, etc. use their custom endpoint.</p>
-            </div>
             <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Mount Type</Label>
+                <Select
+                  value={mountForm.type}
+                  onValueChange={(value) => setMountForm((current) => ({
+                    ...current,
+                    type: value as MediaMount['type'],
+                    endpoint: value === 's3' ? current.endpoint || 'https://s3.amazonaws.com' : '',
+                    region: value === 's3' ? current.region || 'us-east-1' : '',
+                    accessKeyId: value === 's3' ? current.accessKeyId || '' : '',
+                    publicUrl: value === 'supabase' ? '' : current.publicUrl || '',
+                  }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mount type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="supabase">Supabase Storage</SelectItem>
+                    <SelectItem value="r2">Cloudflare R2</SelectItem>
+                    <SelectItem value="s3">S3-compatible</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="src-bucket">Bucket Name</Label>
                 <Input
                   id="src-bucket"
-                  value={sourceForm.bucket}
-                  onChange={(e) => setSourceForm((f) => ({ ...f, bucket: e.target.value }))}
+                  value={mountForm.bucket}
+                  onChange={(e) => setMountForm((f) => ({ ...f, bucket: e.target.value }))}
                   placeholder="my-media-bucket"
                   className="font-mono text-sm"
                 />
               </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md bg-muted/40 p-3">
+              <div>
+                <Label>Default drive</Label>
+                <p className="text-xs text-muted-foreground">Used when a flow does not specify a mount explicitly.</p>
+              </div>
+              <Switch checked={mountForm.isDefault === true} onCheckedChange={(value) => setMountForm((current) => ({ ...current, isDefault: value }))} />
+            </div>
+            {mountForm.type === 's3' && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="src-endpoint">Endpoint URL</Label>
+                  <Input
+                    id="src-endpoint"
+                    value={mountForm.endpoint || ''}
+                    onChange={(e) => setMountForm((f) => ({ ...f, endpoint: e.target.value }))}
+                    placeholder="https://s3.amazonaws.com"
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">For AWS S3 use <code>https://s3.amazonaws.com</code>. For DigitalOcean Spaces, MinIO, etc. use their custom endpoint.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="src-region">Region</Label>
+                    <Input
+                      id="src-region"
+                      value={mountForm.region || ''}
+                      onChange={(e) => setMountForm((f) => ({ ...f, region: e.target.value }))}
+                      placeholder="us-east-1"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="src-keyid">Access Key ID</Label>
+                    <Input
+                      id="src-keyid"
+                      value={mountForm.accessKeyId || ''}
+                      onChange={(e) => setMountForm((f) => ({ ...f, accessKeyId: e.target.value }))}
+                      placeholder="AKIAIOSFODNN7EXAMPLE"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="src-secret">Secret Access Key</Label>
+                  <Input
+                    id="src-secret"
+                    type="password"
+                    value={mountForm.secretAccessKey}
+                    onChange={(e) => setMountForm((f) => ({ ...f, secretAccessKey: e.target.value }))}
+                    placeholder={editingMount ? 'Leave blank to keep stored key' : 'Enter secret access key'}
+                    className="font-mono text-sm"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">Stored encrypted via managed secrets.</p>
+                </div>
+              </>
+            )}
+            {(mountForm.type === 'r2' || mountForm.type === 's3') && (
               <div className="space-y-1.5">
-                <Label htmlFor="src-region">Region</Label>
+                <Label htmlFor="src-publicurl">Public URL Base</Label>
                 <Input
-                  id="src-region"
-                  value={sourceForm.region}
-                  onChange={(e) => setSourceForm((f) => ({ ...f, region: e.target.value }))}
-                  placeholder="us-east-1"
+                  id="src-publicurl"
+                  value={mountForm.publicUrl || ''}
+                  onChange={(e) => setMountForm((f) => ({ ...f, publicUrl: e.target.value }))}
+                  placeholder={mountForm.type === 'r2' ? 'https://assets.example.com' : 'https://my-media-bucket.s3.amazonaws.com'}
                   className="font-mono text-sm"
                 />
+                <p className="text-xs text-muted-foreground">Optional. Used to generate direct delivery URLs for this drive.</p>
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="src-publicurl">Public URL Base</Label>
-              <Input
-                id="src-publicurl"
-                value={sourceForm.publicUrl}
-                onChange={(e) => setSourceForm((f) => ({ ...f, publicUrl: e.target.value }))}
-                placeholder="https://my-media-bucket.s3.amazonaws.com"
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">Base URL prepended to object keys to generate public links.</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="src-keyid">Access Key ID</Label>
-              <Input
-                id="src-keyid"
-                value={sourceForm.accessKeyId}
-                onChange={(e) => setSourceForm((f) => ({ ...f, accessKeyId: e.target.value }))}
-                placeholder="AKIAIOSFODNN7EXAMPLE"
-                className="font-mono text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="src-secret">Secret Access Key</Label>
-              <Input
-                id="src-secret"
-                type="password"
-                value={sourceForm.secretAccessKey}
-                onChange={(e) => setSourceForm((f) => ({ ...f, secretAccessKey: e.target.value }))}
-                placeholder={editingSource ? 'Leave blank to keep stored key' : 'Enter secret access key'}
-                className="font-mono text-sm"
-                autoComplete="off"
-              />
-              <p className="text-xs text-muted-foreground">Stored encrypted via managed secrets.</p>
-            </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSourceDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveSourceDialog} disabled={extraSourcesSaving}>
-              {extraSourcesSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editingSource ? 'Save changes' : 'Add source'}
+            <Button variant="outline" onClick={() => setMountDialogOpen(false)}>Cancel</Button>
+            <Button onClick={saveMountDialog} disabled={mountsSaving}>
+              {mountsSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editingMount ? 'Save changes' : 'Add mount'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Delete extra source confirm ── */}
-      <AlertDialog open={deletingSourceId !== null} onOpenChange={(open) => { if (!open) setDeletingSourceId(null); }}>
+      {/* ── Delete mount confirm ── */}
+      <AlertDialog open={deletingMountId !== null} onOpenChange={(open) => { if (!open) setDeletingMountId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove media source?</AlertDialogTitle>
+            <AlertDialogTitle>Remove storage mount?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove the source <span className="font-mono font-semibold">{deletingSourceId}</span> from
-              the configuration and delete its stored secret access key.
+              This will permanently remove the mount <span className="font-mono font-semibold">{deletingMountId}</span> from
+              the picker configuration. If it is an S3 mount, its stored secret access key will also be deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmDeleteSource}
+              onClick={confirmDeleteMount}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Remove

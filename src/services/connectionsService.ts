@@ -78,10 +78,10 @@ export const STORAGE_CONFIG_MANIFEST: SystemConfigDefinition[] = [
   },
   {
     key: 'r2PublicUrl',
-    label: 'R2 Public URL',
-    description: 'Public CDN URL prefix for your R2 bucket. Only required when the provider is "r2".',
+    label: 'R2 Public URL / Custom Domain',
+    description: 'Optional public asset URL for R2. Leave empty to serve files through the Worker binding on the app domain.',
     required: false,
-    placeholder: 'https://pub-<hash>.r2.dev',
+    placeholder: 'https://assets.example.com',
   },
 ];
 
@@ -331,10 +331,19 @@ export async function upsertSecret(name: string, value: string, comment?: string
 // ── Media config ─────────────────────────────────────────────────────────────
 
 export interface MediaConfig {
-  provider: 'supabase' | 'r2' | 'unconfigured';
+  provider: 'supabase' | 'r2' | 's3' | 'unconfigured';
+  type: 'supabase' | 'r2' | 's3' | 'unconfigured';
+  id: string;
+  label: string;
   bucket: string | null;
+  isDefault: boolean;
   configured: boolean;
+  bindingConfigured: boolean;
+  bindingName: 'MEDIA_BUCKET' | null;
   publicUrlConfigured?: boolean;
+  assetBaseUrl: string | null;
+  endpoint?: string | null;
+  region?: string | null;
 }
 
 export async function getMediaConfig(): Promise<MediaConfig> {
@@ -371,28 +380,28 @@ export async function deleteSecret(name: string): Promise<void> {
   }
 }
 
-// ── Extra media sources ───────────────────────────────────────────────────────
+// ── Media mounts ─────────────────────────────────────────────────────────────
 
-/**
- * Non-sensitive config for an additional S3-compatible media source.
- * The secret access key is sent separately via upsertMediaSourceSecret.
- */
-export interface ExtraMediaSource {
+export interface MediaMount {
   id: string;
   label: string;
-  type: 's3';
-  endpoint: string;
+  type: 'supabase' | 'r2' | 's3';
   bucket: string;
-  region: string;
-  publicUrl: string;
-  accessKeyId: string;
+  isDefault?: boolean;
+  endpoint?: string;
+  region?: string;
+  publicUrl?: string;
+  accessKeyId?: string;
 }
+
+export type ExtraMediaSource = MediaMount & { type: 's3'; endpoint: string; region: string; publicUrl: string; accessKeyId: string };
 
 export interface MediaSourceInfo {
   id: string;
   label: string;
   type: 'supabase' | 'r2' | 's3';
   configured: boolean;
+  isDefault: boolean;
 }
 
 export async function getMediaSources(): Promise<MediaSourceInfo[]> {
@@ -406,37 +415,60 @@ export async function getMediaSources(): Promise<MediaSourceInfo[]> {
   return data.sources ?? [];
 }
 
-export async function getExtraMediaSourcesConfig(): Promise<ExtraMediaSource[]> {
-  const res = await fetch(`${API_URL}/api/config/media-sources`, {
+export async function getMediaMountsConfig(): Promise<MediaMount[]> {
+  const res = await fetch(`${API_URL}/api/config/media-mounts`, {
     headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
-  const data = await res.json() as { sources: ExtraMediaSource[] };
-  return data.sources ?? [];
+  const data = await res.json() as { mounts: MediaMount[] };
+  return data.mounts ?? [];
 }
 
-export async function updateExtraMediaSourcesConfig(sources: ExtraMediaSource[]): Promise<ExtraMediaSource[]> {
-  const res = await fetch(`${API_URL}/api/config/media-sources`, {
+export async function updateMediaMountsConfig(mounts: MediaMount[]): Promise<MediaMount[]> {
+  const res = await fetch(`${API_URL}/api/config/media-mounts`, {
     method: 'PUT',
     headers: await createAuthenticatedHeaders({
       'Content-Type': 'application/json',
       Accept: 'application/json',
     }),
-    body: JSON.stringify({ sources }),
+    body: JSON.stringify({ mounts }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
-  const data = await res.json() as { sources: ExtraMediaSource[] };
-  return data.sources ?? sources;
+  const data = await res.json() as { mounts: MediaMount[] };
+  return data.mounts ?? mounts;
+}
+
+export async function deleteMediaMount(mountId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/config/media-mounts/${encodeURIComponent(mountId)}`, {
+    method: 'DELETE',
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function getExtraMediaSourcesConfig(): Promise<ExtraMediaSource[]> {
+  const mounts = await getMediaMountsConfig();
+  return mounts.filter((mount): mount is ExtraMediaSource => mount.type === 's3');
+}
+
+export async function updateExtraMediaSourcesConfig(sources: ExtraMediaSource[]): Promise<ExtraMediaSource[]> {
+  const mounts = await getMediaMountsConfig();
+  const nativeMounts = mounts.filter((mount) => mount.type !== 's3');
+  const saved = await updateMediaMountsConfig([...nativeMounts, ...sources]);
+  return saved.filter((mount): mount is ExtraMediaSource => mount.type === 's3');
 }
 
 export async function upsertMediaSourceSecret(sourceId: string, secretAccessKey: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/config/media-sources/${encodeURIComponent(sourceId)}/secret`, {
+  const res = await fetch(`${API_URL}/api/config/media-mounts/${encodeURIComponent(sourceId)}/secret`, {
     method: 'PUT',
     headers: await createAuthenticatedHeaders({
       'Content-Type': 'application/json',
@@ -451,12 +483,5 @@ export async function upsertMediaSourceSecret(sourceId: string, secretAccessKey:
 }
 
 export async function deleteExtraMediaSource(sourceId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/config/media-sources/${encodeURIComponent(sourceId)}`, {
-    method: 'DELETE',
-    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
-    throw new Error(err.error ?? `HTTP ${res.status}`);
-  }
+  await deleteMediaMount(sourceId);
 }

@@ -5,6 +5,7 @@ export type FormFieldType =
   | 'textarea'
   | 'email'
   | 'number'
+  | 'file-upload'
   | 'checkbox'
   | 'single-select'
   | 'multi-select'
@@ -12,7 +13,16 @@ export type FormFieldType =
   | 'radio'
   | 'date';
 
-export type FormAnswerValue = string | number | boolean | string[] | null;
+export interface FormUploadedFileValue {
+  name: string;
+  path: string;
+  url: string;
+  bucket: string;
+  content_type: string | null;
+  size: number | null;
+}
+
+export type FormAnswerValue = string | number | boolean | string[] | FormUploadedFileValue | null;
 
 export interface FormFieldDefinition {
   editorId?: string;
@@ -24,6 +34,9 @@ export interface FormFieldDefinition {
   meta_description?: string;
   required?: boolean;
   options?: string[];
+  upload_mount?: string;
+  upload_bucket?: string;
+  upload_folder?: string;
 }
 
 export type FormSchemaDefinition = Record<string, Omit<FormFieldDefinition, 'name'>>;

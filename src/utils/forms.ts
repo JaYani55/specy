@@ -23,6 +23,7 @@ const VALID_FORM_FIELD_TYPES = new Set<FormFieldType>([
   'textarea',
   'email',
   'number',
+  'file-upload',
   'checkbox',
   'single-select',
   'multi-select',
@@ -93,6 +94,9 @@ const parseFieldEntry = (
     placeholder: typeof value.placeholder === 'string' ? value.placeholder : undefined,
     meta_description: typeof value.meta_description === 'string' ? value.meta_description : undefined,
     required: typeof value.required === 'boolean' ? value.required : false,
+    upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
+    upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
+    upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
   };
 
   if (value.options !== undefined) {
@@ -105,6 +109,15 @@ const parseFieldEntry = (
 
   if ((field.type === 'select' || field.type === 'radio' || field.type === 'single-select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
     errors.push(`${path}.options is required for ${field.type} fields.`);
+  }
+
+  if (field.type === 'file-upload') {
+    if (field.options) {
+      errors.push(`${path}.options is not supported for file-upload fields.`);
+    }
+    if (!field.upload_folder) {
+      field.upload_folder = 'forms/{form_slug}/{field_name}/{submission_id}';
+    }
   }
 
   return { field, errors, warnings };
@@ -184,6 +197,9 @@ export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDef
       meta_description: field.meta_description || undefined,
       required: Boolean(field.required),
       options: field.options && field.options.length > 0 ? field.options : undefined,
+      upload_mount: field.upload_mount || undefined,
+      upload_bucket: field.upload_bucket || undefined,
+      upload_folder: field.upload_folder || undefined,
     };
 
     return accumulator;
@@ -196,6 +212,8 @@ export const buildInitialAnswers = (fields: FormFieldDefinition[]): Record<strin
       accumulator[field.name] = false;
     } else if (field.type === 'multi-select') {
       accumulator[field.name] = [];
+    } else if (field.type === 'file-upload') {
+      accumulator[field.name] = null;
     } else {
       accumulator[field.name] = '';
     }

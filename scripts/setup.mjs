@@ -363,8 +363,8 @@ async function stepSupabaseSecrets(storeId) {
   const storageBucket = bailOnCancel(
     await text({
       message: 'Storage bucket name:',
-      placeholder: storageProvider === 'supabase' ? 'booking_media' : 'my-r2-bucket',
-      initialValue: storageProvider === 'supabase' ? 'booking_media' : '',
+      placeholder: storageProvider === 'supabase' ? 'booking_media' : 'pluraconr2',
+      initialValue: storageProvider === 'supabase' ? 'booking_media' : 'pluraconr2',
     }),
   );
 
@@ -372,10 +372,13 @@ async function stepSupabaseSecrets(storeId) {
   if (storageProvider === 'r2') {
     r2PublicUrl = bailOnCancel(
       await text({
-        message: 'R2 public URL:',
-        placeholder: 'https://pub-xxx.r2.dev',
-        validate: (v) =>
-          !v.trim().startsWith('https://') ? 'Should start with https://' : undefined,
+        message: 'R2 public URL / custom domain (optional):',
+        placeholder: 'https://assets.example.com',
+        validate: (v) => {
+          const trimmed = v.trim();
+          if (!trimmed) return undefined;
+          return !trimmed.startsWith('https://') ? 'Should start with https://' : undefined;
+        },
       }),
     );
   }
@@ -439,8 +442,8 @@ async function stepSupabaseSecrets(storeId) {
     note(
       [
         'You chose R2 as the storage provider.',
-        'Remember to uncomment the ' + pc.yellow('r2_buckets') + ' section in wrangler.jsonc',
-        'and replace the bucket name before deploying.',
+        'The setup template binds the Worker bucket ' + pc.yellow('MEDIA_BUCKET') + ' to ' + pc.yellow('pluraconr2') + '.',
+        'Make sure the R2 bucket exists in your Cloudflare account before deploying.',
       ].join('\n'),
       'R2 reminder',
     );
@@ -490,9 +493,7 @@ function patchWranglerVars(supabaseUrl, storageProvider, storageBucket, r2Public
   txt = txt.replaceAll('REPLACE_WITH_SUPABASE_URL',     supabaseUrl.trim());
   txt = txt.replaceAll('REPLACE_WITH_STORAGE_PROVIDER', storageProvider.trim());
   txt = txt.replaceAll('REPLACE_WITH_STORAGE_BUCKET',   storageBucket.trim());
-  if (r2PublicUrl) {
-    txt = txt.replace('"R2_PUBLIC_URL":    ""', `"R2_PUBLIC_URL":    "${r2PublicUrl.trim()}"`);
-  }
+  txt = txt.replace('"R2_PUBLIC_URL":    ""', `"R2_PUBLIC_URL":    "${r2PublicUrl.trim()}"`);
   writeFileSync(path, txt, 'utf8');
 }
 

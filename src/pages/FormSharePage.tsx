@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, Loader2, Lock } from 'lucide-react';
+import { AlertCircle, Loader2, Lock, Paperclip, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import NotFound from '@/pages/NotFound';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,8 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
-import { getPublicFormByShareSlug, submitFormAnswers } from '@/services/formService';
-import type { FormAnswerValue, PublicFormDefinition } from '@/types/forms';
+import { getPublicFormByShareSlug, submitFormAnswers, uploadFormFile } from '@/services/formService';
+import type { FormAnswerValue, FormUploadedFileValue, PublicFormDefinition } from '@/types/forms';
 import { buildInitialAnswers } from '@/utils/forms';
 
 const FormSharePage = () => {
@@ -23,8 +23,15 @@ const FormSharePage = () => {
   const [answers, setAnswers] = useState<Record<string, FormAnswerValue>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const submissionId = useMemo(() => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `form-submission-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  }, []);
 
   useEffect(() => {
     if (!formShareSlug) {
@@ -54,6 +61,28 @@ const FormSharePage = () => {
     () => new Set(formDefinition?.fields.filter((field) => field.required).map((field) => field.name) ?? []),
     [formDefinition],
   );
+
+  const handleFileSelect = async (fieldName: string, file: File | null) => {
+    if (!file || !formShareSlug) {
+      return;
+    }
+
+    try {
+      setUploadingFields((current) => ({ ...current, [fieldName]: true }));
+      const uploaded = await uploadFormFile(formShareSlug, {
+        file,
+        field_name: fieldName,
+        submission_id: submissionId,
+      }, 'share');
+
+      setAnswers((current) => ({ ...current, [fieldName]: uploaded }));
+      toast.success(language === 'en' ? 'File uploaded.' : 'Datei hochgeladen.');
+    } catch (uploadError) {
+      toast.error(uploadError instanceof Error ? uploadError.message : 'Failed to upload file.');
+    } finally {
+      setUploadingFields((current) => ({ ...current, [fieldName]: false }));
+    }
+  };
 
   if (isLoading) {
     return (
@@ -174,6 +203,62 @@ const FormSharePage = () => {
                         rows={5}
                         onChange={(event) => setAnswers((current) => ({ ...current, [field.name]: event.target.value }))}
                       />
+                    )}
+
+                    {field.type === 'file-upload' && (
+                      <div className="space-y-3 rounded-md border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Paperclip className="h-4 w-4" />
+                          <span>{language === 'en' ? 'Upload one file for this field.' : 'Eine Datei für dieses Feld hochladen.'}</span>
+                        </div>
+                        <Input
+                          id={field.name}
+                          type="file"
+                          onChange={(event) => {
+                            const selectedFile = event.target.files?.[0] ?? null;
+                            void handleFileSelect(field.name, selectedFile);
+                            event.target.value = '';
+                          }}
+                          disabled={uploadingFields[field.name] === true || isSubmitting}
+                        />
+                        {uploadingFields[field.name] && (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>{language === 'en' ? 'Uploading…' : 'Lade hoch…'}</span>
+                          </div>
+                        )}
+                        {typeof answers[field.name] === 'object' && answers[field.name] !== null && 'path' in answers[field.name] && (
+                          <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{(answers[field.name] as FormUploadedFileValue).name}</p>
+                              <a
+                                href={(answers[field.name] as FormUploadedFileValue).url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-primary underline-offset-2 hover:underline"
+                              >
+                                {(language === 'en' ? 'Open uploaded file' : 'Hochgeladene Datei öffnen')}
+                              </a>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button type="button" variant="outline" size="sm" asChild>
+                                <a href={(answers[field.name] as FormUploadedFileValue).url} target="_blank" rel="noreferrer">
+                                  <Upload className="mr-2 h-3.5 w-3.5" />
+                                  {language === 'en' ? 'Open' : 'Öffnen'}
+                                </a>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setAnswers((current) => ({ ...current, [field.name]: null }))}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {field.type === 'checkbox' && (

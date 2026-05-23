@@ -69,7 +69,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
 
   // Multi-source support
   const [availableSources, setAvailableSources] = useState<MediaSourceInfo[]>([]);
-  const [activeSourceId, setActiveSourceId] = useState<string>('primary');
+  const [activeSourceId, setActiveSourceId] = useState<string>('');
 
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : 'Unbekannter Fehler.';
@@ -87,24 +87,29 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     };
   }, []);
 
-  const loadSources = useCallback(async () => {
+  const loadSources = useCallback(async (): Promise<MediaSourceInfo[]> => {
     try {
       const headers = await getAuthHeaders();
       const res = await fetch(`${API_URL}/api/media/sources`, { headers });
       if (res.ok) {
         const data = await res.json() as { sources: MediaSourceInfo[] };
-        setAvailableSources(data.sources ?? []);
+        const sources = data.sources ?? [];
+        setAvailableSources(sources);
+        const defaultSourceId = sources.find((source) => source.isDefault)?.id ?? sources[0]?.id ?? '';
+        setActiveSourceId((current) => (sources.some((source) => source.id === current) ? current : defaultSourceId));
+        return sources;
       }
     } catch {
       // non-critical — picker still works with primary source
     }
+    return [];
   }, [getAuthHeaders]);
 
   const loadMediaLibrary = useCallback(async (path: string = '', sourceId: string = activeSourceId) => {
     setLoadingMedia(true);
     try {
       const params = new URLSearchParams({ path });
-      if (sourceId !== 'primary') params.set('source', sourceId);
+      if (sourceId) params.set('source', sourceId);
       const res = await fetch(`${API_URL}/api/media/list?${params.toString()}`, {
         headers: await getAuthHeaders(),
       });
@@ -160,7 +165,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       const formData = new FormData();
       formData.append('file', new File([''], '.placeholder', { type: 'text/plain' }));
       formData.append('path', folderPath);
-      if (activeSourceId !== 'primary') formData.append('source', activeSourceId);
+      if (activeSourceId) formData.append('source', activeSourceId);
 
       const res = await fetch(`${API_URL}/api/media/upload`, {
         method: 'POST',
@@ -197,7 +202,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         // List all files inside the folder, then delete them one-by-one via the API
         const folderPath = itemToDelete.path;
         const authHeaders = await getAuthHeaders();
-        const sourceParam = activeSourceId !== 'primary' ? `&source=${encodeURIComponent(activeSourceId)}` : '';
+        const sourceParam = activeSourceId ? `&source=${encodeURIComponent(activeSourceId)}` : '';
         const listRes = await fetch(`${API_URL}/api/media/list?path=${encodeURIComponent(folderPath)}${sourceParam}`, {
           headers: authHeaders,
         });
@@ -206,7 +211,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           for (const child of listData.items) {
             if (!child.isFolder) {
               const deleteParams = new URLSearchParams({ path: child.path });
-              if (activeSourceId !== 'primary') deleteParams.set('source', activeSourceId);
+              if (activeSourceId) deleteParams.set('source', activeSourceId);
               await fetch(`${API_URL}/api/media/file?${deleteParams.toString()}`, {
                 method: 'DELETE',
                 headers: authHeaders,
@@ -217,7 +222,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         toast.success(`Ordner "${itemToDelete.name}" erfolgreich gelöscht`);
       } else {
         const deleteParams = new URLSearchParams({ path: itemToDelete.path });
-        if (activeSourceId !== 'primary') deleteParams.set('source', activeSourceId);
+        if (activeSourceId) deleteParams.set('source', activeSourceId);
         const res = await fetch(
           `${API_URL}/api/media/file?${deleteParams.toString()}`,
           {
@@ -251,7 +256,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       const formData = new FormData();
       formData.append('file', file);
       if (currentPath) formData.append('path', currentPath);
-      if (activeSourceId !== 'primary') formData.append('source', activeSourceId);
+      if (activeSourceId) formData.append('source', activeSourceId);
 
       const res = await fetch(`${API_URL}/api/media/upload`, {
         method: 'POST',
@@ -297,13 +302,15 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     if (open) {
       // Sync internal selection with the current committed value
       setSelectedImage(value || null);
-      // Reset to primary source and root path
-      setActiveSourceId('primary');
       const initialPath = folder?.replace(/^\/+|\/+$/g, '') || '';
       setCurrentPath(initialPath);
       setPathHistory([]);
-      void loadSources();
-      void loadMediaLibrary(initialPath, 'primary');
+      void (async () => {
+        const sources = await loadSources();
+        const initialSourceId = sources.find((source) => source.isDefault)?.id ?? sources[0]?.id ?? '';
+        setActiveSourceId(initialSourceId);
+        await loadMediaLibrary(initialPath, initialSourceId);
+      })();
     }
   };
 
@@ -362,31 +369,37 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           <DialogTitle>Bild auswählen oder hochladen</DialogTitle>
         </DialogHeader>
 
-        {/* Source selector — only shown when multiple sources are configured */}
+        {/* Drive selector — only shown when multiple mounts are configured */}
         {availableSources.length > 1 && (
-          <div className="flex items-center gap-2 flex-wrap pb-1">
+          <div className="space-y-2 pb-1">
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Database className="h-3 w-3" />
-              Quelle:
+              Laufwerke:
             </span>
-            {availableSources.map((src) => (
-              <button
-                key={src.id}
-                type="button"
-                onClick={() => handleSourceChange(src.id)}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
-                  activeSourceId === src.id
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background hover:bg-muted text-foreground',
-                )}
-              >
-                {src.label}
-                {!src.configured && (
-                  <Badge variant="outline" className="ml-1 text-[9px] px-1 py-0 h-3">!</Badge>
-                )}
-              </button>
-            ))}
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {availableSources.map((src) => (
+                <button
+                  key={src.id}
+                  type="button"
+                  onClick={() => handleSourceChange(src.id)}
+                  className={cn(
+                    'rounded-xl border p-3 text-left transition-colors',
+                    activeSourceId === src.id
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : 'border-border bg-background hover:bg-muted/60',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-medium">{src.label}</span>
+                    {src.isDefault && <Badge variant="secondary" className="text-[10px]">Default</Badge>}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="uppercase">{src.type}</span>
+                    {!src.configured && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">Setup needed</Badge>}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

@@ -7,7 +7,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getForm, getFormAnswers } from '@/services/formService';
-import type { FormAnswerRecord, FormRecord } from '@/types/forms';
+import type { FormAnswerRecord, FormRecord, FormUploadedFileValue } from '@/types/forms';
+
+const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => (
+  typeof value === 'object'
+  && value !== null
+  && 'name' in value
+  && 'url' in value
+  && 'path' in value
+);
 
 const FormAnswers = () => {
   const { formId } = useParams<{ formId: string }>();
@@ -89,9 +97,18 @@ const FormAnswers = () => {
                   {Object.entries(answer.answers).map(([fieldName, value]) => (
                     <div key={fieldName} className="rounded-lg border bg-muted/20 p-3">
                       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{fieldName}</p>
-                      <p className="mt-2 break-words text-sm">
-                        {typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value ?? '')}
-                      </p>
+                      {isUploadedFileValue(value) ? (
+                        <div className="mt-2 space-y-1 text-sm">
+                          <p className="font-medium">{value.name}</p>
+                          <a href={value.url} target="_blank" rel="noreferrer" className="break-all text-primary underline-offset-2 hover:underline">
+                            {value.url}
+                          </a>
+                        </div>
+                      ) : (
+                        <p className="mt-2 break-words text-sm">
+                          {typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value ?? '')}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
