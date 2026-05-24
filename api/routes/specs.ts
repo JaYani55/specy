@@ -124,6 +124,7 @@ specs.post('/', async (c) => {
     is_main_template?: boolean;
     tags?: string[];
     metadata?: Record<string, unknown>;
+    tenant_id?: string | null;
   };
 
   try {
@@ -150,6 +151,7 @@ specs.post('/', async (c) => {
       is_main_template: Boolean(body.is_main_template),
       tags: normalizeStringArray(body.tags),
       metadata: body.metadata ?? {},
+      tenant_id: typeof body.tenant_id === 'string' && body.tenant_id.trim() ? body.tenant_id.trim() : null,
     })
     .select('*')
     .single();
@@ -299,6 +301,7 @@ specs.put('/:id', async (c) => {
     is_main_template?: boolean;
     tags?: string[];
     metadata?: Record<string, unknown>;
+    tenant_id?: string | null;
   };
 
   try {
@@ -318,6 +321,9 @@ specs.put('/:id', async (c) => {
   if (body.is_main_template !== undefined) updateData.is_main_template = body.is_main_template;
   if (body.tags !== undefined) updateData.tags = normalizeStringArray(body.tags);
   if (body.metadata !== undefined) updateData.metadata = body.metadata;
+  if (body.tenant_id !== undefined) {
+    updateData.tenant_id = typeof body.tenant_id === 'string' && body.tenant_id.trim() ? body.tenant_id.trim() : null;
+  }
 
   const supabase = await createSupabaseClient(c.env, auth.token);
   const { data, error } = await supabase

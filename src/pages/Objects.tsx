@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { deleteObject, getObjects } from '@/services/objectService';
+import { getVisibleTenantNameMap } from '@/services/tenantService';
 import type { ObjectRecord } from '@/types/objects';
 
 const statusVariant: Record<ObjectRecord['status'], 'default' | 'secondary' | 'destructive'> = {
@@ -19,11 +20,14 @@ const Objects = () => {
   const { language } = useTheme();
   const [items, setItems] = useState<ObjectRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   const loadObjects = useCallback(async () => {
     try {
       setIsLoading(true);
-      setItems(await getObjects());
+      const records = await getObjects();
+      setItems(records);
+      setTenantNames(await getVisibleTenantNameMap(records.map((item) => item.tenant_id)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load objects.');
     } finally {
@@ -130,6 +134,11 @@ const Objects = () => {
                 <Badge variant="secondary" className="font-mono text-xs">
                   /{obj.slug}
                 </Badge>
+                {obj.tenant_id && tenantNames[obj.tenant_id] && (
+                  <Badge variant="outline" className="text-xs">
+                    {tenantNames[obj.tenant_id]}
+                  </Badge>
+                )}
                 {obj.requires_auth ? (
                   <Badge variant="outline" className="gap-1 text-xs">
                     <Lock className="h-3 w-3" />

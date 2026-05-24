@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
 import { createSpec, getSpec, updateSpec } from '@/services/specService';
+import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import type { SaveSpecInput, SpecRecord } from '@/types/specs';
 
 const DEFAULT_DEFINITION = {
@@ -179,6 +180,26 @@ const SpecEditor = () => {
   const [isMainTemplate, setIsMainTemplate] = useState(false);
   const [tagsText, setTagsText] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('generic-tool');
+  const [tenantId, setTenantId] = useState('');
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    const loadTenantOptions = async () => {
+      try {
+        setTenantOptionsLoading(true);
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setTenantId((current) => pickInitialTenantId(options, current));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
+      } finally {
+        setTenantOptionsLoading(false);
+      }
+    };
+
+    void loadTenantOptions();
+  }, []);
 
   useEffect(() => {
     if (!isEditing || !specSlug) {
@@ -199,6 +220,7 @@ const SpecEditor = () => {
         setStatus(spec.status);
         setIsPublic(spec.is_public);
         setIsMainTemplate(spec.is_main_template);
+        setTenantId(spec.tenant_id ?? '');
         setTagsText(spec.tags.join(', '));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load MCP entry.');
@@ -251,6 +273,11 @@ const SpecEditor = () => {
       return;
     }
 
+    if (tenantOptions.length > 0 && !tenantId) {
+      toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
+      return;
+    }
+
     const payload: SaveSpecInput = {
       name,
       slug,
@@ -262,6 +289,7 @@ const SpecEditor = () => {
       is_main_template: isMainTemplate,
       tags: tagsText.split(',').map((entry) => entry.trim()).filter(Boolean),
       metadata: existingSpec?.metadata ?? {},
+      tenant_id: tenantId || null,
     };
 
     try {
@@ -348,6 +376,27 @@ const SpecEditor = () => {
             <div className="space-y-2">
                 <Label htmlFor="spec-description">{language === 'en' ? 'Description' : 'Beschreibung'}</Label>
               <Textarea id="spec-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
+              <Select value={tenantId} onValueChange={setTenantId} disabled={tenantOptionsLoading || tenantOptions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'en' ? 'Select workspace...' : 'Workspace auswählen...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}{option.is_default ? (language === 'en' ? ' (default)' : ' (Standard)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'This controls which tenant can discover, attach, and manage the MCP entry.'
+                  : 'Dies steuert, welcher Tenant den MCP-Eintrag entdecken, anhängen und verwalten kann.'}
+              </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">

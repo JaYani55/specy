@@ -19,6 +19,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { toast } from 'sonner';
 import AgentLogs from '@/components/pagebuilder/AgentLogs';
 import { API_URL } from '@/lib/apiUrl';
+import { getVisibleTenantNameMap } from '@/services/tenantService';
 
 const statusConfig: Record<string, { label: { en: string; de: string }; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
   pending: { label: { en: 'Pending', de: 'Ausstehend' }, variant: 'secondary', icon: Clock },
@@ -32,12 +33,13 @@ const statusConfig: Record<string, { label: { en: string; de: string }; variant:
 interface OnboardingScreenProps {
   language: string;
   schemas: PageSchema[];
+  tenantNames: Record<string, string>;
   onCreateSchema: () => void;
   onNavigateSchema: (slug: string) => void;
   onRefresh: () => void;
 }
 
-const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, onCreateSchema, onNavigateSchema, onRefresh }) => {
+const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, tenantNames, onCreateSchema, onNavigateSchema, onRefresh }) => {
   const [copied, setCopied] = useState(false);
   const [startingRegId, setStartingRegId] = useState<string | null>(null);
   const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'sveltekit'>('nextjs');
@@ -636,6 +638,11 @@ Available MCP tools:
                           <span className="font-medium text-sm text-amber-900 dark:text-amber-100 truncate">{schema.name}</span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          {schema.tenant_id && tenantNames[schema.tenant_id] && (
+                            <Badge variant="outline" className="text-[10px] h-5 border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400">
+                              {tenantNames[schema.tenant_id]}
+                            </Badge>
+                          )}
                           {schema.is_default && (
                             <Badge variant="outline" className="text-[10px] h-5 border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400">
                               {language === 'en' ? 'Default' : 'Standard'}
@@ -723,12 +730,13 @@ Available MCP tools:
 interface TLDSectionProps {
   group: TLDGroup;
   language: string;
+  tenantNames: Record<string, string>;
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   defaultOpen?: boolean;
 }
 
-const TLDSection: React.FC<TLDSectionProps> = ({ group, language, onNavigate, onRefresh, defaultOpen = true }) => {
+const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, onNavigate, onRefresh, defaultOpen = true }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isUnhooking, setIsUnhooking] = useState(false);
 
@@ -870,6 +878,11 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, onNavigate, on
                         <p className="text-xs text-muted-foreground line-clamp-2">{schema.description}</p>
                       )}
                       <div className="flex items-center gap-2">
+                        {schema.tenant_id && tenantNames[schema.tenant_id] && (
+                          <Badge variant="outline" className="text-[10px] h-5">
+                            {tenantNames[schema.tenant_id]}
+                          </Badge>
+                        )}
                         {schema.is_default && (
                           <Badge variant="outline" className="text-[10px] h-5">
                             {language === 'en' ? 'Default' : 'Standard'}
@@ -897,12 +910,14 @@ const Pages: React.FC = () => {
   const [tldGroups, setTldGroups] = useState<TLDGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   const fetchAndGroup = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getSchemas();
       setSchemas(data);
+      setTenantNames(await getVisibleTenantNameMap(data.map((schema) => schema.tenant_id)));
 
       const groups = groupSchemasByTLD(data);
 
@@ -960,6 +975,7 @@ const Pages: React.FC = () => {
       <OnboardingScreen
         language={language}
         schemas={schemas}
+        tenantNames={tenantNames}
         onCreateSchema={() => navigate('/pages/schema/new')}
         onNavigateSchema={(slug) => navigate(`/pages/schema/${slug}`)}
         onRefresh={fetchAndGroup}
@@ -995,6 +1011,7 @@ const Pages: React.FC = () => {
             key={group.domain || '__unassigned__'}
             group={group}
             language={language}
+            tenantNames={tenantNames}
             onNavigate={navigate}
             onRefresh={fetchAndGroup}
             defaultOpen={idx === 0 || tldGroups.length <= 3}

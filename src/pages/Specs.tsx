@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useTheme } from '@/contexts/ThemeContext';
 import { API_URL } from '@/lib/apiUrl';
 import { deleteSpec, getSpecs, updateSpec } from '@/services/specService';
+import { getVisibleTenantNameMap } from '@/services/tenantService';
 import type { SpecRecord } from '@/types/specs';
 
 const statusVariant: Record<SpecRecord['status'], 'default' | 'secondary' | 'destructive'> = {
@@ -27,6 +28,7 @@ const Specs = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | SpecRecord['status']>('all');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'private'>('all');
   const [copiedValue, setCopiedValue] = useState<'mcp' | 'discovery' | null>(null);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   const mcpEndpointUrl = `${API_URL}/mcp`;
   const mcpDiscoveryUrl = `${API_URL}/.well-known/mcp.json`;
@@ -34,7 +36,9 @@ const Specs = () => {
   const loadSpecs = useCallback(async () => {
     try {
       setIsLoading(true);
-      setSpecs(await getSpecs());
+      const records = await getSpecs();
+      setSpecs(records);
+      setTenantNames(await getVisibleTenantNameMap(records.map((spec) => spec.tenant_id)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load MCP entries.');
     } finally {
@@ -259,6 +263,9 @@ const Specs = () => {
 
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">/{spec.slug}</Badge>
+                  {spec.tenant_id && tenantNames[spec.tenant_id] && (
+                    <Badge variant="outline">{tenantNames[spec.tenant_id]}</Badge>
+                  )}
                   <Badge variant="outline">{spec.is_public ? (language === 'en' ? 'Public' : 'Öffentlich') : (language === 'en' ? 'Closed' : 'Geschlossen')}</Badge>
                   {spec.is_main_template && <Badge variant="outline">{language === 'en' ? 'Template' : 'Vorlage'}</Badge>}
                   <Badge variant="outline">{Object.keys(spec.definition || {}).length} keys</Badge>

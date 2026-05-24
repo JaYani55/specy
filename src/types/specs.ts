@@ -12,6 +12,7 @@ export interface SpecRecord {
   is_main_template: boolean;
   tags: string[];
   metadata: Record<string, unknown> | null;
+  tenant_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -57,4 +58,5 @@ export interface SaveSpecInput {
   is_main_template?: boolean;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  tenant_id?: string | null;
 }

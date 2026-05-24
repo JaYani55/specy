@@ -235,9 +235,9 @@ const AppContent = () => {
           <Route path="/forms/:formId" element={<ProtectedRoute requiredRole="user"><FormEditor /></ProtectedRoute>} />
           <Route path="/forms/:formId/answers" element={<ProtectedRoute requiredRole="user"><FormAnswers /></ProtectedRoute>} />
 
-          <Route path="/objects" element={<ProtectedRoute requiredRole="admin"><Objects /></ProtectedRoute>} />
-          <Route path="/objects/new" element={<ProtectedRoute requiredRole="admin"><ObjectEditor /></ProtectedRoute>} />
-          <Route path="/objects/:objectId" element={<ProtectedRoute requiredRole="admin"><ObjectEditor /></ProtectedRoute>} />
+          <Route path="/objects" element={<ProtectedRoute requiredRole="user"><Objects /></ProtectedRoute>} />
+          <Route path="/objects/new" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
+          <Route path="/objects/:objectId" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
           <Route path="/mcp" element={<ProtectedRoute requiredRole="user"><Specs /></ProtectedRoute>} />
           <Route path="/mcp/new" element={<ProtectedRoute requiredRole="user"><SpecEditor /></ProtectedRoute>} />
           <Route path="/mcp/:specSlug" element={<ProtectedRoute requiredRole="user"><SpecEditor /></ProtectedRoute>} />

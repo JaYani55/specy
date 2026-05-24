@@ -40,6 +40,7 @@ import {
   type RevalidationSecretStatus,
 } from '@/services/pageService';
 import { getSchemaSpecBundle } from '@/services/specService';
+import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
 import type { SchemaSpecBundle } from '@/types/specs';
@@ -73,6 +74,7 @@ const PagesSchemaDetail: React.FC = () => {
   const [isSavingRevalidationSecret, setIsSavingRevalidationSecret] = useState(false);
   const [isDeletingRevalidationSecret, setIsDeletingRevalidationSecret] = useState(false);
   const [schemaSpecBundle, setSchemaSpecBundle] = useState<SchemaSpecBundle | null>(null);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
     if (!schemaSlug) return;
@@ -87,6 +89,10 @@ const PagesSchemaDetail: React.FC = () => {
       ]);
       setPages(pagesData);
       setSchemaSpecBundle(specBundle);
+      setTenantNames(await getVisibleTenantNameMap([
+        schemaData.tenant_id,
+        ...pagesData.map((page) => page.tenant_id),
+      ]));
       setRevalidationSecretStatus(null);
 
       // Check domain health for registered schemas
@@ -253,6 +259,9 @@ const PagesSchemaDetail: React.FC = () => {
             <Badge variant={schema.registration_status === 'registered' ? 'default' : 'secondary'}>
               {schema.registration_status}
             </Badge>
+            {schema.tenant_id && tenantNames[schema.tenant_id] && (
+              <Badge variant="outline">{tenantNames[schema.tenant_id]}</Badge>
+            )}
             {health && (
               <Badge variant={health === 'online' ? 'default' : health === 'checking' ? 'outline' : 'destructive'}>
                 <Globe className="h-3 w-3 mr-1" />
@@ -578,6 +587,9 @@ const PagesSchemaDetail: React.FC = () => {
                       <Badge variant={statusBadgeVariant[page.status] || 'secondary'}>
                         {page.status}
                       </Badge>
+                      {page.tenant_id && tenantNames[page.tenant_id] && (
+                        <Badge variant="outline">{tenantNames[page.tenant_id]}</Badge>
+                      )}
                       <span className="text-xs text-muted-foreground whitespace-nowrap">
                         {new Date(page.updated_at).toLocaleDateString(language === 'en' ? 'en-US' : 'de-DE')}
                       </span>

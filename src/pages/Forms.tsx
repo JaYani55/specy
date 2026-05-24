@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { deleteForm, getForms } from '@/services/formService';
+import { getVisibleTenantNameMap } from '@/services/tenantService';
 import type { FormRecord } from '@/types/forms';
 
 const statusVariant: Record<FormRecord['status'], 'default' | 'secondary' | 'destructive'> = {
@@ -19,11 +20,14 @@ const Forms = () => {
   const { language } = useTheme();
   const [forms, setForms] = useState<FormRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   const loadForms = useCallback(async () => {
     try {
       setIsLoading(true);
-      setForms(await getForms());
+      const records = await getForms();
+      setForms(records);
+      setTenantNames(await getVisibleTenantNameMap(records.map((form) => form.tenant_id)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load forms.');
     } finally {
@@ -111,6 +115,9 @@ const Forms = () => {
 
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">/{form.slug}</Badge>
+                  {form.tenant_id && tenantNames[form.tenant_id] && (
+                    <Badge variant="outline">{tenantNames[form.tenant_id]}</Badge>
+                  )}
                   <Badge variant="outline">API {form.api_enabled ? 'on' : 'off'}</Badge>
                   <Badge variant="outline">{form.requires_auth ? (language === 'en' ? 'Auth required' : 'Mit Anmeldung') : (language === 'en' ? 'Public' : 'Öffentlich')}</Badge>
                   {form.share_enabled && form.share_slug && (

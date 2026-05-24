@@ -979,6 +979,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202605240001_multi_tenant_foundation.sql',
     '202605240002_multi_tenant_backfill_and_ownership.sql',
     '202605240003_multi_tenant_rls_hardening.sql',
+    '202605240004_tenant_assignment_rls_fix.sql',
+    '202605240005_console_visibility_hardening.sql',
     'objects.sql',
     'Auth/Access_hook.sql',
     // storage.sql is generated from storage.default.sql at runtime using the

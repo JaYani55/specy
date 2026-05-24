@@ -11,6 +11,9 @@ The goal of this change set is to move the platform toward a secure user-owned a
 - delegated administration is limited to user content and tenant membership
 - platform-critical configuration and secret management remain restricted to `super-admin`
 - API and MCP route behavior aligns with database RLS instead of bypassing it through privileged service clients
+- tenant assignment is visible and editable from the main content editors
+- the console shows workspace ownership on the main content lists and schema detail views
+- `super-admin` has an explicit tenant management interface for workspace creation and membership administration
 
 This specification is deployment-oriented. It documents what was changed, why it was changed, how the authorization model now works, and what must be reviewed before running these migrations against production.
 
@@ -73,18 +76,24 @@ That model is not acceptable for a self-service multi-tenant CMS where unrelated
 
 ## Migration Files Introduced
 
-The following new migrations were added:
+The following multi-tenancy migrations were added:
 
 1. `migrations/202605240001_multi_tenant_foundation.sql`
 2. `migrations/202605240002_multi_tenant_backfill_and_ownership.sql`
 3. `migrations/202605240003_multi_tenant_rls_hardening.sql`
+4. `migrations/202605240004_tenant_assignment_rls_fix.sql`
+5. `migrations/202605240005_console_visibility_hardening.sql`
 
-These migrations were also added to both ordered migration manifests:
+Manifest status:
 
-- `scripts/lib/core-update.mjs`
-- `scripts/setup.mjs`
+- `scripts/lib/core-update.mjs` contains `001` through `005`
+- `scripts/setup.mjs` now also contains `001` through `005`
 
-This is important because the repository maintains two separate migration order lists. Any future migration must be added to both locations or fresh setup and update flows will diverge.
+This distinction matters operationally:
+
+- update runs now apply the two follow-up fixes automatically
+- fresh setup now applies the same tenancy follow-up fixes as updater-driven environments
+- update and fresh setup are back in sync for the current tenancy migration set
 
 ---
 
@@ -393,6 +402,70 @@ This is a deliberate separation from tenant or content administration.
 
 ---
 
+## Migration 4: Tenant Assignment RLS Fix
+
+File: `migrations/202605240004_tenant_assignment_rls_fix.sql`
+
+### Purpose
+
+The original hardening pass still made tenant selection ineffective in some authenticated create flows because insert policies implicitly forced `current_tenant_id()`.
+
+This follow-up migration fixes that mismatch so the tenant selected in the UI can actually be persisted when the user is a valid member of that tenant.
+
+### Key Changes
+
+- refines `public.can_administer_user_in_tenant(...)`
+- adds `public.can_insert_owned_row(target_tenant_id, target_owner_user_id)`
+- replaces insert policies that previously over-relied on `current_tenant_id()`
+
+### Tables Updated
+
+- `companies`
+- `forms`
+- `objects`
+- `pages`
+- `page_schemas`
+- `llm_specs`
+- `employers`
+- `mentor_groups`
+- `mentorbooking_events`
+- `mentorbooking_notifications`
+- `mentorbooking_products`
+- `page_schema_templates`
+
+### Operational Effect
+
+- editor-side workspace selectors for forms, objects, pages, schemas, and MCP specs are now meaningful
+- tenant members can create owned rows in another tenant they belong to without switching some hidden global tenant context first
+
+---
+
+## Migration 5: Console Visibility Hardening
+
+File: `migrations/202605240005_console_visibility_hardening.sql`
+
+### Purpose
+
+The first RLS hardening pass still left several authenticated select policies too broad for console use, especially for published content that should remain public only through dedicated routes.
+
+This migration narrows authenticated console reads so users no longer see other tenants' published content simply because they are logged in.
+
+### Tables Updated
+
+- `forms`
+- `objects`
+- `pages`
+- `page_schemas`
+- `llm_specs`
+- `page_schema_specs`
+
+### Operational Effect
+
+- console visibility now follows tenant and ownership rules more strictly
+- public/share/API access remains available through purpose-built public endpoints instead of through broad authenticated select policies
+
+---
+
 ## Route-Level Changes
 
 Database hardening alone is not sufficient when route handlers use a service client that bypasses RLS. The following route changes were therefore included.
@@ -442,6 +515,21 @@ Effect:
 
 - MCP content discovery is now aligned with tenant-aware RLS
 
+### Specs API
+
+File: `api/routes/specs.ts`
+
+Changes:
+
+- MCP spec CRUD remains user-scoped through `createSupabaseClient(env, auth.token)`
+- spec create and update now accept `tenant_id`
+- authenticated spec reads and writes therefore align with the same tenant-aware ownership model as pages, objects, and forms
+
+Effect:
+
+- MCP specs can now be explicitly assigned to a workspace from the editor
+- schema attachments and MCP discovery remain consistent with tenant-aware RLS
+
 ### Remaining Admin-Client Uses
 
 After this refactor, remaining `createSupabaseAdminClient` uses in `schemas.ts` and `mcp.ts` are intentionally limited to platform or registration operations such as:
@@ -489,6 +577,8 @@ Impact:
 - schema templates support explicit visibility
 - public schema discovery remains possible for system/registered schemas
 - schema/spec attachments now inherit tenant boundaries
+- schema-driven page saves inherit the schema tenant automatically
+- the pages dashboard and schema detail views now show workspace badges in the console
 
 ### Forms
 
@@ -504,6 +594,8 @@ Impact:
 - form definitions and answers are no longer globally readable to authenticated users
 - public answer submission behavior remains available for forms configured for public use
 - answer visibility is now limited to the submitter and authorized owners/admins
+- the form editor now exposes tenant assignment
+- the forms list now surfaces workspace ownership in the UI
 
 ### Objects
 
@@ -516,6 +608,21 @@ Impact:
 - object CRUD is now tenant-aware
 - route-layer service-client bypass was removed
 - public object access remains available only for explicitly public objects
+- object routes in the frontend are accessible to `user`, not only `admin`
+- the objects list now surfaces workspace ownership in the UI
+
+### MCP Specs And Tool Exposure
+
+Affected tables:
+
+- `llm_specs`
+- `page_schema_specs`
+
+Impact:
+
+- MCP specs can now be assigned to a tenant/workspace from the editor
+- the MCP list shows workspace ownership in the console
+- schema detail continues to expose attached MCP entries while respecting tenant-aware visibility
 
 ### Administration And Staff
 
@@ -530,6 +637,8 @@ Impact:
 - staff-related data is now tenant-aware
 - tenant admins may manage staff rows within their tenant
 - `super-admin` remains global
+- super-admin now has an explicit tenant management surface in account administration
+- tenant memberships are visible on account cards alongside global roles
 
 ### Connections And Platform Configuration
 
@@ -589,6 +698,27 @@ This prevents accidental creation of a globally visible template library.
 - `api/routes/objects.ts`
 - `api/routes/schemas.ts`
 - `api/routes/mcp.ts`
+- `api/routes/specs.ts`
+
+### Frontend And Shared Service Files
+
+- `src/services/tenantService.ts`
+- `src/pages/FormEditor.tsx`
+- `src/pages/ObjectEditor.tsx`
+- `src/pages/SchemaEditor.tsx`
+- `src/pages/SpecEditor.tsx`
+- `src/pages/Forms.tsx`
+- `src/pages/Objects.tsx`
+- `src/pages/Pages.tsx`
+- `src/pages/PagesSchemaDetail.tsx`
+- `src/pages/Specs.tsx`
+- `src/pages/VerwaltungAccounts.tsx`
+- `src/components/pagebuilder/SchemaPageBuilderForm.tsx`
+- `src/App.tsx`
+- `src/types/forms.ts`
+- `src/types/objects.ts`
+- `src/types/pagebuilder.ts`
+- `src/types/specs.ts`
 
 These changes are functionally part of the multi-tenancy rollout because they ensure the new RLS policies are actually respected at runtime.
 
@@ -608,6 +738,7 @@ Executed:
 
 - `npm run lint -- api/routes/objects.ts api/routes/schemas.ts scripts/lib/core-update.mjs scripts/setup.mjs`
 - `npm run lint -- api/routes/schemas.ts api/routes/mcp.ts`
+- `npm run lint -- src/services/tenantService.ts src/types/specs.ts src/pages/SpecEditor.tsx src/pages/Forms.tsx src/pages/Objects.tsx src/pages/Specs.tsx src/pages/Pages.tsx src/pages/PagesSchemaDetail.tsx src/pages/VerwaltungAccounts.tsx api/routes/specs.ts`
 
 Result:
 
@@ -633,18 +764,21 @@ Because there is only one production database, deployment should be treated as a
 
 ### Pre-Deployment Checklist
 
-1. Review all three new migrations in full.
-2. Confirm they are present in both migration order manifests.
-3. Review the ownership backfill rules for legacy content.
-4. Identify which tables may contain rows with no trustworthy owner signal.
-5. Confirm operational owners for:
+1. Review all five multi-tenancy migrations in full.
+2. Confirm update environments will apply `004` and `005` through `scripts/lib/core-update.mjs`.
+3. Confirm both `scripts/lib/core-update.mjs` and `scripts/setup.mjs` still include `004` and `005` before release.
+4. Review the ownership backfill rules for legacy content.
+5. Identify which tables may contain rows with no trustworthy owner signal.
+6. Confirm operational owners for:
    - existing page schemas
    - existing pages
    - existing objects
+   - existing MCP specs and schema attachments
    - existing templates
    - existing products and events
-6. Confirm that platform secrets and runtime config should remain `super-admin` only.
-7. Confirm that no external automation depends on the old globally readable authenticated behavior.
+7. Confirm that platform secrets and runtime config should remain `super-admin` only.
+8. Confirm that no external automation depends on the old globally readable authenticated behavior.
+9. Verify the new tenant-management UI with a real `super-admin` account before handing the system to tenant operators.
 
 ### Recommended Deployment Order
 
@@ -652,6 +786,7 @@ Because there is only one production database, deployment should be treated as a
 2. Apply the migrations in the declared order.
 3. Immediately validate critical data access paths with real accounts.
 4. Review unresolved or inaccessible legacy rows and repair ownership where necessary.
+5. Verify tenant badges and tenant selectors in the console so UI behavior matches the new RLS behavior.
 
 ### Recommended Manual Verification Matrix
 
@@ -710,8 +845,9 @@ Recommended next steps:
 1. Add operational SQL or admin UI tooling to report rows missing `owner_user_id` or `tenant_id`.
 2. Add integration tests or scripted policy verification for each persona type.
 3. Review remaining API routes for any other content-level admin client usage.
-4. Document tenant bootstrap and tenant membership administration in user/operator-facing docs.
-5. Consider introducing an explicit migration audit report after production rollout.
+4. Keep `scripts/lib/core-update.mjs` and `scripts/setup.mjs` in sync whenever a new tenancy migration is added.
+5. Document tenant bootstrap and tenant membership administration in user/operator-facing docs.
+6. Consider introducing an explicit migration audit report after production rollout.
 
 ---
 
@@ -727,6 +863,8 @@ Recommended next steps:
 - `202605240001_multi_tenant_foundation.sql`
 - `202605240002_multi_tenant_backfill_and_ownership.sql`
 - `202605240003_multi_tenant_rls_hardening.sql`
+- `202605240004_tenant_assignment_rls_fix.sql`
+- `202605240005_console_visibility_hardening.sql`
 
 ### Platform-Only Tables After This Change
 
