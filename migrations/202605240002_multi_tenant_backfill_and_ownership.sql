@@ -527,9 +527,16 @@ update public.staff_traits st
 set tenant_id = coalesce(st.tenant_id, public.default_tenant_for_user(st.created_by));
 
 update public.staff_trait_assignments sta
-set tenant_id = coalesce(sta.tenant_id, s.tenant_id, st.tenant_id)
+set tenant_id = coalesce(
+  sta.tenant_id,
+  s.tenant_id,
+  (
+    select st.tenant_id
+    from public.staff_traits st
+    where st.id = sta.trait_id
+  )
+)
 from public.staff s
-join public.staff_traits st on st.id = sta.trait_id
 where sta.staff_id = s.id;
 
 update public.managed_secrets ms
