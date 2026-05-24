@@ -39,6 +39,29 @@ Plugins can contribute:
 - **Database migrations** (SQL files to apply to Supabase)
 - **Configuration values** (key-value pairs stored in the `plugins` table)
 
+### Multi-Tenancy And Distribution Model
+
+Plugin tenancy is not fully implemented yet, but new plugin work should follow the target model below.
+
+There are currently two registry categories:
+
+- `kind = 'webapp'`: external applications represented as links or registrations
+- `kind = 'plugin'`: build-time addon packages installed into `src/plugins/{slug}/` and shipped with the CMS build
+
+Target tenancy model:
+
+- simple external webapp links should use normal tenant association
+- registered webapps should be treated as tenant-scoped registrations, not one globally shared registration
+- build-time plugins remain globally present in the deployed codebase once installed, but access to them should be controlled separately from installation
+- paid addon plugins are intended to use plugin-specific active `user_roles` emitted by the auth hook so access can be granted per user even when the package is installed globally
+- one tenant may provision the same addon package for multiple end users inside that tenant
+
+Implication for plugin authors:
+
+- do not assume package installation means every authenticated user may access the plugin
+- design plugin pages and APIs so they can later honor plugin-specific entitlements from JWT claims or CMS permission helpers
+- if your plugin stores tenant-owned business data, include `tenant_id` and tenant-aware RLS from the start
+
 ---
 
 ## 2. Plugin Directory Structure
@@ -607,6 +630,11 @@ All plugins must comply with these rules:
 - **Never commit `.env` files** or API keys to the plugin repository
 - Use plugin config (§9) for non-sensitive settings
 - Use the CMS secrets management for sensitive credentials
+
+### Tenancy and entitlement safety
+- Do not treat plugin package presence as a sufficient authorization check
+- Plan for plugin-specific role or entitlement checks once addon access is enforced through the auth hook
+- If the plugin stores tenant-owned data, model it explicitly with `tenant_id` and tenant-aware RLS
 
 ### Dependencies
 - Keep npm dependencies minimal and well-maintained

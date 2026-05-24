@@ -10,6 +10,7 @@ function normalizePluginRecord(record: PluginRegistration): PluginRegistration {
   return {
     ...record,
     kind: record.kind ?? 'plugin',
+    tenant_id: record.tenant_id ?? null,
     repo_url: record.repo_url ?? null,
     external_url: record.external_url ?? null,
     icon_url: record.icon_url ?? null,
@@ -195,6 +196,21 @@ export async function updatePluginStatus(
 
   if (error) {
     console.error('[pluginService] updatePluginStatus error:', error);
+    throw error;
+  }
+}
+
+export async function updatePluginTenant(
+  id: string,
+  tenantId: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('plugins')
+    .update({ tenant_id: tenantId })
+    .eq('id', id);
+
+  if (error) {
+    console.error('[pluginService] updatePluginTenant error:', error);
     throw error;
   }
 }

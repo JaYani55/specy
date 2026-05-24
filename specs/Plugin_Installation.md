@@ -29,6 +29,17 @@ For plugin **development** (writing code, manifest fields, API routes, etc.) see
 - SUPERADMIN access to the CMS instance
 - (Recommended) A `GITHUB_TOKEN` environment variable set to a GitHub personal access token — avoids API rate limits and is required for private repositories
 
+### Multi-Tenancy Note
+
+Plugin and webapp tenancy is only partially implemented today, but the intended operating model is already defined:
+
+- `webapp` entries should ultimately be tenant-associated integrations
+- registered webapps should be stored per tenant rather than as one globally shared registration
+- build-time plugins remain installed globally into the repo and deployed build
+- access to paid addon plugins is intended to be granted through active plugin-specific `user_roles` exposed by the auth hook, not merely by package installation
+
+Installation is therefore still a platform action, while authorization is expected to become tenant-aware and user-aware.
+
 ---
 
 ## 2. Step 1 — Register the plugin in the UI
@@ -41,6 +52,8 @@ Before installing locally, add the plugin record to the database so the CMS trac
 4. Click **Registrieren** — this writes a row to the `plugins` table
 
 > This step can be skipped if the plugin is only used locally and never needs to appear in the admin UI. The install script works without it.
+
+> For future tenant-aware webapps, registration should be interpreted as tenant-scoped onboarding rather than a single global shared record. That behavior is documented now but not fully implemented yet.
 
 ---
 
@@ -138,6 +151,18 @@ If the install script printed configuration keys (from the plugin's `config_sche
 | `"secret"` | CMS secrets management at `/verwaltung/connections` — stored encrypted |
 
 > Never enter secret values (API keys, tokens, passwords) into the plain config fields. Use the secrets management for anything sensitive.
+
+### Future addon entitlement model
+
+For paid addon plugins, configuration alone is not intended to be the final access-control layer.
+
+Target behavior:
+
+- plugin packages may be installed globally by a platform operator
+- a tenant may provision addon access for multiple users inside that tenant
+- actual plugin access should be enforced through active plugin-specific `user_roles` surfaced by the auth hook
+
+This is not fully implemented yet, so installation and authorization should currently be treated as separate concerns in rollout planning.
 
 ### Reading config in plugin code
 

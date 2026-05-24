@@ -34,6 +34,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -58,8 +65,15 @@ import {
   registerPlugin,
   updatePluginConfig,
   updatePluginStatus,
+  updatePluginTenant,
   deletePlugin,
 } from '@/services/pluginService';
+import {
+  getTenantOptions,
+  getVisibleTenantNameMap,
+  pickInitialTenantId,
+  type TenantOption,
+} from '@/services/tenantService';
 import {
   deleteSecret,
   listSecrets,
@@ -172,6 +186,8 @@ export default function Plugins() {
   const [plugins, setPlugins] = useState<PluginRegistration[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
 
   // Register dialog
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -198,7 +214,11 @@ export default function Plugins() {
     description: '',
     external_url: '',
     icon_url: '',
+    tenant_id: '',
   });
+  const [tenantDialogWebapp, setTenantDialogWebapp] = useState<PluginRegistration | null>(null);
+  const [tenantDialogValue, setTenantDialogValue] = useState('');
+  const [tenantDialogSaving, setTenantDialogSaving] = useState(false);
 
   // Config dialog
   const [configPlugin, setConfigPlugin] = useState<PluginRegistration | null>(null);
@@ -229,6 +249,7 @@ export default function Plugins() {
     try {
       const data = await fetchPlugins();
       setPlugins(data);
+      setTenantNames(await getVisibleTenantNameMap(data.map((plugin) => plugin.tenant_id)));
     } catch {
       toast.error('Fehler beim Laden der Plugins');
     } finally {
@@ -238,6 +259,23 @@ export default function Plugins() {
   }, []);
 
   useEffect(() => { loadPlugins(); }, [loadPlugins]);
+
+  useEffect(() => {
+    const loadTenantOptions = async () => {
+      try {
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setWebappForm((current) => ({
+          ...current,
+          tenant_id: pickInitialTenantId(options, current.tenant_id),
+        }));
+      } catch {
+        toast.error('Workspaces konnten nicht geladen werden');
+      }
+    };
+
+    void loadTenantOptions();
+  }, []);
 
   // ── Auto-slug from repo URL ────────────────────────────────────────────────
   const handleRepoUrlChange = (url: string) => {
@@ -269,6 +307,7 @@ export default function Plugins() {
     try {
       await registerPlugin({
         kind: 'plugin',
+        tenant_id: null,
         slug:         registerForm.slug.trim(),
         name:         registerForm.name.trim(),
         version:      registerForm.version.trim() || '0.0.0',
@@ -296,6 +335,11 @@ export default function Plugins() {
   const handleRegisterWebapp = async () => {
     if (!webappForm.name.trim() || !webappForm.external_url.trim()) {
       toast.error('Name und Webapp-URL sind Pflichtfelder.');
+      return;
+    }
+
+    if (!webappForm.tenant_id) {
+      toast.error('Bitte einen Workspace auswählen.');
       return;
     }
 
@@ -330,6 +374,7 @@ export default function Plugins() {
         download_url: null,
         external_url: webappForm.external_url.trim(),
         icon_url: webappForm.icon_url.trim() || null,
+        tenant_id: webappForm.tenant_id,
         status: 'enabled',
         config_schema: [],
       });
@@ -341,12 +386,37 @@ export default function Plugins() {
         description: '',
         external_url: '',
         icon_url: '',
+        tenant_id: pickInitialTenantId(tenantOptions),
       });
       loadPlugins();
     } catch (error) {
       toast.error(getErrorMessage(error, 'Webapp konnte nicht registriert werden'));
     } finally {
       setRegisterWebappSaving(false);
+    }
+  };
+
+  const openWebappTenantDialog = (plugin: PluginRegistration) => {
+    setTenantDialogWebapp(plugin);
+    setTenantDialogValue(pickInitialTenantId(tenantOptions, plugin.tenant_id));
+  };
+
+  const handleSaveWebappTenant = async () => {
+    if (!tenantDialogWebapp || !tenantDialogValue) {
+      toast.error('Bitte einen Workspace auswählen.');
+      return;
+    }
+
+    setTenantDialogSaving(true);
+    try {
+      await updatePluginTenant(tenantDialogWebapp.id, tenantDialogValue);
+      toast.success('Workspace aktualisiert');
+      setTenantDialogWebapp(null);
+      await loadPlugins();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Workspace konnte nicht gespeichert werden'));
+    } finally {
+      setTenantDialogSaving(false);
     }
   };
 
@@ -553,8 +623,10 @@ export default function Plugins() {
             <PluginCard
               key={plugin.id}
               plugin={plugin}
+              tenantLabel={plugin.tenant_id ? (tenantNames[plugin.tenant_id] ?? null) : null}
               isActive={!isWebappRegistration(plugin) && runtimePlugins.some((r) => r.id === plugin.slug)}
               onConfig={isWebappRegistration(plugin) ? undefined : () => openConfig(plugin)}
+              onManageWebappTenant={isWebappRegistration(plugin) ? () => openWebappTenantDialog(plugin) : undefined}
               onToggle={() => handleToggleStatus(plugin)}
               onDelete={() => setDeleteTarget(plugin)}
             />
@@ -601,6 +673,21 @@ export default function Plugins() {
                   onChange={(e) => setWebappForm((current) => ({ ...current, external_url: e.target.value }))}
                 />
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Workspace *</Label>
+              <Select value={webappForm.tenant_id} onValueChange={(value) => setWebappForm((current) => ({ ...current, tenant_id: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Workspace auswählen" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="webapp-description">Beschreibung</Label>
@@ -950,6 +1037,43 @@ export default function Plugins() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!tenantDialogWebapp} onOpenChange={(open) => { if (!open) setTenantDialogWebapp(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Webapp-Workspace</DialogTitle>
+            <DialogDescription>
+              Ordne die Webapp einem Tenant zu. Nur Mitglieder dieses Workspaces sehen den Link anschließend in Navbar und Sidebar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Workspace</Label>
+              <Select value={tenantDialogValue} onValueChange={setTenantDialogValue}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Workspace auswählen" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTenantDialogWebapp(null)}>
+              Abbrechen
+            </Button>
+            <Button onClick={handleSaveWebappTenant} disabled={tenantDialogSaving || !tenantDialogValue}>
+              {tenantDialogSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Workspace speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -957,13 +1081,15 @@ export default function Plugins() {
 // ─── Plugin Card ──────────────────────────────────────────────────────────────
 interface PluginCardProps {
   plugin: PluginRegistration;
+  tenantLabel?: string | null;
   isActive: boolean;
   onConfig?: () => void;
+  onManageWebappTenant?: () => void;
   onToggle: () => void;
   onDelete: () => void;
 }
 
-function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCardProps) {
+function PluginCard({ plugin, tenantLabel, isActive, onConfig, onManageWebappTenant, onToggle, onDelete }: PluginCardProps) {
   const isWebapp = isWebappRegistration(plugin);
   const badge = STATUS_BADGE[plugin.status] ?? STATUS_BADGE.registered;
   const schemaFields = getPluginSchemaFields(plugin);
@@ -1020,6 +1146,7 @@ function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCa
           {plugin.author_name && <span>Autor: {plugin.author_name}</span>}
           {plugin.license && <span>Lizenz: {plugin.license}</span>}
           {!isWebapp && schemaFields.length > 0 && <span>Schema: {publicCount} Variablen · {secretCount} Secrets</span>}
+          {tenantLabel && <span>Workspace: {tenantLabel}</span>}
           {isWebapp && plugin.external_url && <span className="font-mono">{plugin.external_url}</span>}
           {plugin.installed_at && (
             <span>Installiert: {new Date(plugin.installed_at).toLocaleDateString('de-DE')}</span>
@@ -1058,6 +1185,12 @@ function PluginCard({ plugin, isActive, onConfig, onToggle, onDelete }: PluginCa
             <Button variant="outline" size="sm" onClick={onConfig}>
               <Settings2 className="h-4 w-4 mr-1.5" />
               Konfiguration
+            </Button>
+          )}
+          {isWebapp && onManageWebappTenant && (
+            <Button variant="outline" size="sm" onClick={onManageWebappTenant}>
+              <Globe className="h-4 w-4 mr-1.5" />
+              Workspace
             </Button>
           )}
           {plugin.status === 'installed' || plugin.status === 'enabled' || plugin.status === 'disabled' ? (

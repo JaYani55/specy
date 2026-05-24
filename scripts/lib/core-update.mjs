@@ -50,6 +50,7 @@ export const MIGRATION_ORDER = [
   '202605240003_multi_tenant_rls_hardening.sql',
   '202605240004_tenant_assignment_rls_fix.sql',
   '202605240005_console_visibility_hardening.sql',
+  '202605240006_webapps_multi_tenant.sql',
   'objects.sql',
   'Auth/Access_hook.sql',
 ];

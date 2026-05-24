@@ -654,6 +654,34 @@ Impact:
 - `admin` no longer implies access to global secrets or runtime configuration
 - database-level protection now exists in addition to route guards
 
+### Plugins And Webapps
+
+Affected tables and surfaces:
+
+- `plugins`
+- plugin registry UI
+- plugin install/update scripts
+- external webapps stored as `kind = 'webapp'`
+- build-time addons stored as `kind = 'plugin'`
+
+Current status:
+
+- plugin registry writes are still platform-level
+- plugin and webapp tenancy is documented here as the target model, but is not fully implemented yet
+
+Target model:
+
+- simple webapp links should use normal tenant association
+- registered webapps should be stored and managed per tenant instead of as one globally shared registration
+- build-time plugins remain globally present in the deployed repo once installed, so installation is still a platform action
+- authorization for paid addon plugins should ultimately be enforced through active plugin-specific `user_roles` surfaced by the auth hook, not merely by package installation
+- one tenant may provision the same addon package for multiple end users inside that tenant
+
+Important boundary:
+
+- plugin package presence in the repo is not the same thing as plugin entitlement
+- a plugin may be installed globally while only some tenant users are authorized to use it
+
 ---
 
 ## Key Operational Decisions
@@ -673,6 +701,26 @@ The refactor keeps the distinction explicit:
 - retains platform-wide control
 - may access and mutate secrets and system configuration
 - may perform system-level registration and backfill operations
+- continues to control plugin package installation until plugin entitlements are separated cleanly from package deployment
+
+### Plugin Tenancy Decision
+
+The plugin surface is split conceptually into two categories:
+
+1. Webapps
+
+- `kind = 'webapp'` records that point to external URLs should behave like tenant-owned integrations
+- plain external webapp links should support normal tenant association
+- registered webapps should be tenant-scoped registrations rather than one global shared record
+
+2. Build-time plugins
+
+- `kind = 'plugin'` records remain repo-installed packages and therefore remain operationally global at deploy time
+- authorization for these plugins should not rely only on package presence in the repo
+- the target enforcement model is plugin-specific active `user_roles` emitted by the auth hook so paid addons can be enabled for some users and not for others
+- this allows one tenant to provision the same addon package for multiple users without making the plugin globally available to every authenticated user
+
+This is documented now so future plugin and auth-hook work extends the tenancy model instead of reopening global access through the plugin surface.
 
 ### Templates Visibility Model
 

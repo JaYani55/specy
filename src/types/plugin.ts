@@ -163,6 +163,7 @@ export interface PluginDefinition {
 export interface PluginRegistration {
   id: string;
   kind: PluginRegistrationKind;
+  tenant_id: string | null;
   slug: string;
   name: string;
   version: string;
