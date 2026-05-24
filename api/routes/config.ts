@@ -4,7 +4,7 @@ import type { Env } from '../lib/supabase';
 import { buildMailSecretName, buildS3SecretName, getMailSecretNamespace, getManagedSecretMetadata, getS3SourceSecretNamespace, upsertManagedSecret } from '../lib/managedSecrets';
 import { invalidateLoggingConfigCache } from '../middleware/agentLogger';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { getExtraMediaSources, getLoggingConfig, getMailConfig, getMediaSourceMounts, getStorageConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertMediaSourceMounts, upsertStorageConfig, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
+import { getBrandingConfig, getExtraMediaSources, getLoggingConfig, getMailConfig, getMediaSourceMounts, getStorageConfig, upsertBrandingConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertMediaSourceMounts, upsertStorageConfig, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
 
 const config = new Hono<{ Bindings: Env }>();
 
@@ -24,6 +24,10 @@ interface MailConfigPayload {
 interface LoggingConfigPayload {
   mode?: 'all' | 'custom';
   enabledEndpointKeys?: unknown;
+}
+
+interface BrandingConfigPayload {
+  logoUrl?: string;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -102,6 +106,34 @@ config.get('/storage', async (c) => {
 
   const storage = await getStorageConfig(c.env);
   return c.json({ storage });
+});
+
+config.get('/branding', async (c) => {
+  const branding = await getBrandingConfig(c.env);
+  return c.json({ branding });
+});
+
+config.put('/branding', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  let body: BrandingConfigPayload;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  await upsertBrandingConfig(c.env, {
+    logoUrl: body.logoUrl?.trim() ?? '',
+  });
+
+  return c.json({
+    success: true,
+    branding: {
+      logoUrl: body.logoUrl?.trim() ?? '',
+    },
+  });
 });
 
 config.put('/storage', async (c) => {

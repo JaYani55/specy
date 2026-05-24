@@ -35,9 +35,28 @@ GitHub repo  →  install script  →  src/plugins/{slug}/  →  registry.ts  �
 Plugins can contribute:
 - **Frontend pages** (React components) registered as routes
 - **Sidebar navigation items** (linked to those routes)
-- **API routes** (Hono handlers, mounted under `/api/plugins/{slug}/`)
+- **Build-time hook handlers** registered centrally and discovered via generated registries
+- **API routes** (Hono handlers, mounted under `/api/plugin/{slug}/`)
 - **Database migrations** (SQL files to apply to Supabase)
 - **Configuration values** (key-value pairs stored in the `plugins` table)
+- **Discovery metadata** for hooks, API surfaces, and plugin capabilities exposed via `/api/plugins`
+
+### Central Registry Model
+
+The CMS now maintains **multiple generated plugin registries** from the same install step:
+
+- `src/plugins/registry.ts` — installed plugin entrypoints (`PluginDefinition[]`)
+- `src/plugins/hooks-registry.ts` — flattened build-time hook contributions (`PluginHookContribution[]`)
+- `api/plugin-routes.ts` — generated Hono mount table for plugin APIs
+- `api/plugin-metadata.ts` — generated runtime-discovery metadata for hooks, APIs, and capabilities
+
+This keeps the extension boundary centralized and explicit for EUPL-safe interoperability:
+
+- executable plugin code is still integrated at build time
+- runtime discovery is **descriptive**, not dynamic code loading
+- plugin authors can add new interfaces and also declare attachments to clearly named core hook targets
+
+> **Current rollout status:** the central registries and discovery metadata are live. Core hook targets are being adopted incrementally. Only rely on hook targets that are explicitly documented by the CMS.
 
 ### Multi-Tenancy And Distribution Model
 
@@ -109,6 +128,33 @@ This is the metadata file the install script reads and validates.
   "required_npm_dependencies": {
     "some-library": "^2.0.0"
   },
+  "hook_metadata": [
+    {
+      "key": "forms-audit-observer",
+      "target": "forms.beforeCreate",
+      "scope": "service",
+      "kind": "observer",
+      "order": 100,
+      "description": "Records form-creation attempts for audit purposes."
+    }
+  ],
+  "api_metadata": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/data",
+        "summary": "Returns plugin-owned records for the current user."
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "key": "my-plugin-dashboard",
+      "kind": "interface",
+      "targets": ["/plugins/my-plugin/dashboard"],
+      "description": "Adds a dedicated plugin dashboard page."
+    }
+  },
   "config_schema": [
     {
       "key": "api_key",
@@ -143,7 +189,19 @@ This is the metadata file the install script reads and validates.
 | `migrations` | `string[]` | `[]` | SQL migration file paths relative to the plugin root. The install script prints these — you must apply them manually. |
 | `min_cms_version` | `string` | — | Minimum CMS version required (semver range). Informational only. |
 | `required_npm_dependencies` | `object` | `{}` | npm packages this plugin requires, as `{"package-name": "semver-range"}`. The install script runs `npm install` for these automatically. |
-| `config_schema` | `object[]` | `[]` | Configuration fields the plugin needs. Each entry has `key` (string), `type` (`"string"` or `"secret"`), `label`, `description`, and `required` (boolean). The install script prints these at the end; values are set via the Plugins admin UI at `/plugins`. |
+| `hook_metadata` | `object[]` | `[]` | Optional descriptive hook registry metadata. Each entry declares `key`, `target`, `scope` (`"ui" | "page" | "service" | "api"`), `kind` (`"observer" | "validator" | "transform"`), optional `order`, and `description`. This metadata is exposed via `/api/plugins`. |
+| `api_metadata` | `object` | — | Optional descriptive API metadata for runtime discovery. Supports `basePath` and `routes[]`, where each route declares `method`, `path`, and optional `summary`. |
+| `capabilities` | `object[]` | `[]` | Optional high-level capability descriptors for discovery/admin tooling. Each entry declares `key`, `kind` (`"interface" | "hook" | "api"`), optional `targets[]`, and `description`. |
+| `config_schema` | `object[]` | `[]` | Configuration fields the plugin needs. Each entry has `key`, `label`, optional `description`, `type` (`"text" | "textarea" | "url" | "secret"`), optional `required`, optional `placeholder`, and optional `expose_to_frontend`. The install script prints these at the end; values are set via the Plugins admin UI at `/plugins`. |
+
+### Hook metadata vs. executable hooks
+
+There are two separate concerns:
+
+- `plugin.json` contains **descriptive metadata** (`hook_metadata`, `api_metadata`, `capabilities`) used for runtime discovery and admin inspection.
+- `src/index.tsx` may export **executable build-time hook handlers** through the optional `hooks` field on `PluginDefinition`.
+
+Use both when possible: the manifest tells operators and tooling what your plugin contributes, and the entrypoint provides the actual build-time handlers.
 
 ---
 
@@ -169,7 +227,7 @@ const plugin: PluginDefinition = {
     {
       path: '/plugins/my-plugin/dashboard',
       component: Dashboard,
-      requiredRole: 'staff',  // 'super-admin' | 'admin' | 'staff' | undefined
+      requiredRole: 'admin',  // 'super-admin' | 'admin' | 'user' | undefined
     },
   ],
 
@@ -180,7 +238,16 @@ const plugin: PluginDefinition = {
       label: 'My Plugin',
       icon: LayoutDashboard,
       group: 'admin',         // 'main' | 'admin'
-      requiredRole: 'staff',
+      requiredRole: 'admin',
+    },
+  ],
+
+  capabilities: [
+    {
+      key: 'my-plugin-dashboard',
+      kind: 'interface',
+      targets: ['/plugins/my-plugin/dashboard'],
+      description: 'Adds a dedicated dashboard page for plugin users.',
     },
   ],
 };
@@ -189,6 +256,48 @@ export default plugin;
 ```
 
 > **Important**: All paths must be unique across all plugins. Always namespace your paths under `/plugins/{your-plugin-id}/`.
+
+### Optional hook and discovery fields on `PluginDefinition`
+
+The `PluginDefinition` contract now also supports these additive fields:
+
+```typescript
+interface PluginDefinition {
+  id: string;
+  name: string;
+  version: string;
+  routes: PluginRoute[];
+  sidebarItems: PluginSidebarItem[];
+  hooks?: PluginHookContribution[];
+  apiMetadata?: PluginApiMetadata;
+  capabilities?: PluginCapabilityDescriptor[];
+}
+```
+
+- `hooks` registers executable build-time handlers into the centralized hooks registry
+- `apiMetadata` mirrors your API surface for discovery consumers
+- `capabilities` summarizes what the plugin adds at a high level
+
+Example executable hook contribution:
+
+```typescript
+hooks: [
+  {
+    key: 'my-plugin-forms-observer',
+    target: 'forms.beforeCreate',
+    scope: 'service',
+    kind: 'observer',
+    order: 100,
+    description: 'Records form-create attempts.',
+    handler: async (context) => {
+      console.log('Observed form create', context);
+      return context;
+    },
+  },
+]
+```
+
+> **Important:** the registry exists centrally, but core hook targets are still being adopted incrementally. Only use targets that the CMS explicitly documents as supported.
 
 ---
 
@@ -200,7 +309,7 @@ Declare routes in the `routes` array of your `PluginDefinition`. Each route maps
 interface PluginRoute {
   path: string;              // URL path, e.g. "/plugins/my-plugin/settings"
   component: ComponentType;  // React page component
-  requiredRole?: 'super-admin' | 'admin' | 'staff';  // omit for any authenticated user
+  requiredRole?: 'super-admin' | 'admin' | 'user';  // omit for any authenticated user
 }
 ```
 
@@ -210,7 +319,7 @@ interface PluginRoute {
 
 **Role gating:**
 - `undefined` — any authenticated user can access
-- `'staff'` — requires staff role or higher (staff, admin, super-admin)
+- `'user'` — any authenticated user
 - `'admin'` — requires admin or super-admin role
 - `'super-admin'` — requires SUPERADMIN role only
 
@@ -253,7 +362,7 @@ interface PluginSidebarItem {
   label: string;             // Display label (English)
   icon: LucideIcon;          // Lucide icon component
   group: 'main' | 'admin';  // Sidebar section
-  requiredRole?: 'super-admin' | 'admin' | 'staff';
+  requiredRole?: 'super-admin' | 'admin' | 'user';
 }
 ```
 
@@ -329,6 +438,24 @@ export function mountPluginRoutes(app: Hono<{ Bindings: Env }>): void {
   app.route('/api/plugin/my-plugin', myPlugin);
 }
 ```
+
+### Declaring API discovery metadata
+
+If your plugin exposes API routes, also declare `api_metadata` in `plugin.json` so runtime tooling can discover the surface without reading your source tree.
+
+```json
+{
+  "api_entrypoint": "api/index.ts",
+  "api_metadata": {
+    "routes": [
+      { "method": "GET", "path": "/", "summary": "Health check" },
+      { "method": "GET", "path": "/data", "summary": "List plugin data" }
+    ]
+  }
+}
+```
+
+The CMS exposes this metadata in the plugin registry response at `/api/plugins`.
 
 ### Accessing Supabase from API routes
 
@@ -544,6 +671,63 @@ const apiKey = config['api_key'] ?? '';
 
 ---
 
+## 9.1 Runtime Registry Discovery
+
+The CMS exposes a central plugin registry at `/api/plugins`.
+
+That response now contains two layers:
+
+- `plugins[]` — installed/registered plugin records from the database
+- `registry[]` — generated discovery metadata for each installed plugin's hooks, APIs, and capabilities
+
+Typical use cases:
+
+- admin tooling that wants to inspect what a plugin contributes
+- debugging API mount paths and declared hook targets
+- external tooling that needs descriptive metadata without loading plugin source code
+
+Example shape:
+
+```json
+{
+  "plugins": [
+    {
+      "slug": "my-plugin",
+      "name": "My Plugin"
+    }
+  ],
+  "registry": [
+    {
+      "pluginId": "my-plugin",
+      "hook_metadata": [
+        {
+          "key": "forms-audit-observer",
+          "target": "forms.beforeCreate",
+          "scope": "service",
+          "kind": "observer"
+        }
+      ],
+      "api_metadata": {
+        "basePath": "/api/plugin/my-plugin",
+        "routes": [
+          { "method": "GET", "path": "/data" }
+        ]
+      },
+      "capabilities": [
+        {
+          "key": "my-plugin-dashboard",
+          "kind": "interface"
+        }
+      ]
+    }
+  ]
+}
+```
+
+This is discovery metadata only. It does **not** imply runtime plugin loading.
+
+---
+
 ## 10. Available Imports and Shared Infrastructure
 
 Plugins can import from the CMS's shared code using the `@/` path alias, which resolves to `src/`.
@@ -706,7 +890,7 @@ const plugin: PluginDefinition = {
     {
       path: '/plugins/hello-plugin',
       component: HelloPage,
-      requiredRole: 'staff',
+      requiredRole: 'admin',
     },
   ],
   sidebarItems: [
@@ -716,7 +900,15 @@ const plugin: PluginDefinition = {
       label: 'Hello Plugin',
       icon: Smile,
       group: 'admin',
-      requiredRole: 'staff',
+      requiredRole: 'admin',
+    },
+  ],
+  capabilities: [
+    {
+      key: 'hello-plugin-interface',
+      kind: 'interface',
+      targets: ['/plugins/hello-plugin'],
+      description: 'Adds a minimal admin-facing plugin page.',
     },
   ],
 };

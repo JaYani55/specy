@@ -6,7 +6,14 @@
  */
 
 import registeredPlugins from './registry';
-import type { PluginDefinition, PluginRoute, PluginSidebarItem } from '@/types/plugin';
+import registeredHooks from './hooks-registry';
+import type {
+  PluginCapabilityDescriptor,
+  PluginDefinition,
+  PluginHookContribution,
+  PluginRoute,
+  PluginSidebarItem,
+} from '@/types/plugin';
 
 /**
  * Returns all page routes contributed by installed+registered plugins.
@@ -32,4 +39,34 @@ export function getPluginSidebarItems(group?: 'main' | 'admin'): PluginSidebarIt
  */
 export function getPlugins(): PluginDefinition[] {
   return registeredPlugins;
+}
+
+/**
+ * Returns all build-time hook contributions, optionally filtered by target.
+ */
+export function getPluginHooks(target?: string): PluginHookContribution[] {
+  if (!target) return registeredHooks;
+  return registeredHooks.filter((hook) => hook.target === target);
+}
+
+/**
+ * Returns all hooks for a given execution scope, optionally filtered by target.
+ */
+export function getPluginHooksByScope(
+  scope: PluginHookContribution['scope'],
+  target?: string,
+): PluginHookContribution[] {
+  return registeredHooks.filter((hook) => hook.scope === scope && (!target || hook.target === target));
+}
+
+/**
+ * Returns all declared plugin capabilities for discovery and admin tooling.
+ */
+export function getPluginCapabilities(): Array<PluginCapabilityDescriptor & { pluginId: string }> {
+  return registeredPlugins.flatMap((plugin) =>
+    (plugin.capabilities ?? []).map((capability) => ({
+      ...capability,
+      pluginId: plugin.id,
+    }))
+  );
 }

@@ -53,6 +53,7 @@ import VerwaltungMentorGiveTraits from "./pages/VerwaltungMentorGiveTraits";
 import VerwaltungAccounts from "./pages/VerwaltungAccounts";
 import VerwaltungConnections from "./pages/VerwaltungConnections";
 import VerwaltungApi from "./pages/VerwaltungApi";
+import VerwaltungBranding from "./pages/VerwaltungBranding";
 import Plugins from "./pages/Plugins";
 
 // Plugin loader — provides build-time routes from installed plugins
@@ -250,6 +251,7 @@ const AppContent = () => {
           <Route path="/admin/accounts" element={<ProtectedRoute requiredRole="admin"><VerwaltungAccounts /></ProtectedRoute>} />
           <Route path="/admin/connections" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungConnections /></ProtectedRoute>} />
           <Route path="/admin/api" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungApi /></ProtectedRoute>} />
+          <Route path="/admin/branding" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungBranding /></ProtectedRoute>} />
           <Route path="/admin/add-mentor" element={<ProtectedRoute requiredRole="user"><VerwaltungAddMentor /></ProtectedRoute>} />
           <Route path="/admin/all-mentors" element={<ProtectedRoute requiredRole="user"><VerwaltungAllMentors /></ProtectedRoute>} />
           <Route path="/admin/all-products" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />

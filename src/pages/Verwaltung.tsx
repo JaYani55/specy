@@ -14,7 +14,8 @@ import {
   Plus,
   ShieldCheck,
   Unplug,
-  Waypoints
+  Waypoints,
+  Image as ImageIcon
 } from 'lucide-react';
 import { AdminCard } from '@/components/admin/ui/AdminCard'; // Add this import
 
@@ -151,6 +152,17 @@ const Verwaltung = () => {
       permission: 'canManageAccounts',
       isSuperAdmin: true,
       color: 'from-cyan-600 to-slate-800',
+    },
+    {
+      title: 'Branding',
+      description: language === 'de'
+        ? 'Anwendungslogo fuer Navigation und Login ueber die Mediathek verwalten'
+        : 'Manage the application logo for navigation and login using the media library',
+      icon: ImageIcon,
+      href: '/admin/branding',
+      permission: 'canManageAccounts',
+      isSuperAdmin: true,
+      color: 'from-amber-500 to-orange-600',
     },
   ];
 

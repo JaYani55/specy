@@ -60,6 +60,10 @@ const Breadcrumb: React.FC = () => {
       label: { en: 'API Administration', de: 'API Administration' },
       parent: '/admin'
     },
+    '/admin/branding': {
+      label: { en: 'Branding', de: 'Branding' },
+      parent: '/admin'
+    },
     '/pages': { label: { en: 'Pages', de: 'Seiten' } },
     '/pages/schema/new': {
       label: { en: 'New Schema', de: 'Neues Schema' },

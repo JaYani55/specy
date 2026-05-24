@@ -52,6 +52,22 @@ export interface PluginManifest {
    * are stored in public.plugins.config.
    */
   config_schema?: PluginConfigFieldDefinition[];
+
+  /**
+   * Optional metadata describing the core hooks this plugin attaches to.
+   * This is descriptive only; executable handlers stay build-time integrated.
+   */
+  hook_metadata?: PluginHookDescriptor[];
+
+  /**
+   * Optional metadata describing the plugin's API surface for discovery.
+   */
+  api_metadata?: PluginApiMetadata;
+
+  /**
+   * Optional high-level capability summary for admin and discovery tooling.
+   */
+  capabilities?: PluginCapabilityDescriptor[];
 }
 
 export type PluginConfigFieldType = 'text' | 'textarea' | 'url' | 'secret';
@@ -71,6 +87,59 @@ export interface PluginConfigFieldDefinition {
   placeholder?: string;
   /** Whether the value may be exposed to frontend plugin code. */
   expose_to_frontend?: boolean;
+}
+
+export type PluginHookScope = 'ui' | 'page' | 'service' | 'api';
+
+export type PluginHookKind = 'observer' | 'validator' | 'transform';
+
+export interface PluginHookDescriptor {
+  /** Unique stable hook key inside the plugin namespace. */
+  key: string;
+  /** Core target identifier, e.g. "app.routes" or "forms.beforeCreate". */
+  target: string;
+  /** Broad execution surface for grouping and discovery. */
+  scope: PluginHookScope;
+  /** Behavioral contract for the hook. */
+  kind: PluginHookKind;
+  /** Lower numbers run earlier; defaults to 100. */
+  order?: number;
+  /** Human-readable description for discovery/admin tooling. */
+  description?: string;
+}
+
+export interface PluginHookContribution<TContext = unknown, TResult = unknown>
+  extends PluginHookDescriptor {
+  handler: (context: TContext) => TResult | Promise<TResult>;
+}
+
+export interface PluginApiRouteMetadata {
+  /** HTTP method, e.g. GET or POST. */
+  method: string;
+  /** Plugin-local path starting with '/'. */
+  path: string;
+  /** Optional human-readable summary. */
+  summary?: string;
+}
+
+export interface PluginApiMetadata {
+  /** Optional base path override for discovery. Defaults to /api/plugin/{slug}. */
+  basePath?: string;
+  /** Optional list of plugin API routes for discovery. */
+  routes?: PluginApiRouteMetadata[];
+}
+
+export type PluginCapabilityKind = 'interface' | 'hook' | 'api';
+
+export interface PluginCapabilityDescriptor {
+  /** Stable machine-readable capability key. */
+  key: string;
+  /** High-level capability category. */
+  kind: PluginCapabilityKind;
+  /** Optional list of affected targets, such as route groups or hook targets. */
+  targets?: string[];
+  /** Human-readable description for discovery/admin tooling. */
+  description?: string;
 }
 
 export type PluginRegistrationKind = 'plugin' | 'webapp';
@@ -156,6 +225,12 @@ export interface PluginDefinition {
   routes: PluginRoute[];
   /** Sidebar entries registered by this plugin. */
   sidebarItems: PluginSidebarItem[];
+  /** Optional build-time hook handlers contributed by this plugin. */
+  hooks?: PluginHookContribution[];
+  /** Optional runtime-discovery API metadata. */
+  apiMetadata?: PluginApiMetadata;
+  /** Optional runtime-discovery capability metadata. */
+  capabilities?: PluginCapabilityDescriptor[];
 }
 
 // ─── Database Record ─────────────────────────────────────────────────────────

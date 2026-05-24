@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import Logo from "@/components/shared/Logo";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { Loader2, AlertCircle } from "lucide-react";
@@ -56,6 +57,9 @@ const Login = () => {
     <div className="container flex items-center justify-center min-h-screen">
       <div className="w-full max-w-md space-y-8 glass p-8 rounded-xl">
         <div className="space-y-2 text-center">
+          <div className="flex justify-center pb-2">
+            <Logo className="h-14 w-auto" />
+          </div>
           <h1 className="text-3xl font-bold">
             {language === "en" ? "Welcome back" : "Willkommen zurück"}
           </h1>

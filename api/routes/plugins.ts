@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
+import { getRegisteredPluginMetadata } from '../plugin-metadata';
 
 const plugins = new Hono<{ Bindings: Env }>();
 
@@ -25,6 +26,7 @@ interface PluginRow {
  */
 plugins.get('/', async (c) => {
   const supabase = await createSupabaseClient(c.env);
+  const metadata = getRegisteredPluginMetadata();
 
   const { data, error } = await supabase
     .from('plugins')
@@ -56,6 +58,17 @@ plugins.get('/', async (c) => {
       installed_at: p.installed_at,
       created_at: p.created_at,
       updated_at: p.updated_at,
+    })),
+    registry: metadata.map((entry) => ({
+      pluginId: entry.pluginId,
+      hook_metadata: entry.hookMetadata,
+      api_metadata: entry.apiMetadata
+        ? {
+            ...entry.apiMetadata,
+            basePath: entry.apiMetadata.basePath ?? `/api/plugin/${entry.pluginId}`,
+          }
+        : null,
+      capabilities: entry.capabilities,
     })),
   });
 });

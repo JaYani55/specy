@@ -5,6 +5,7 @@ const MAIL_NAMESPACE = 'mail';
 const LOGGING_NAMESPACE = 'logging';
 
 type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url' | 'media.extra_sources' | 'media.source_mounts';
+type BrandingConfigKey = 'branding.logo_url';
 type MailConfigKey =
   | 'provider'
   | 'from_name'
@@ -26,6 +27,10 @@ export interface StorageConfigValues {
   provider: 'supabase' | 'r2' | '';
   bucket: string;
   r2PublicUrl: string;
+}
+
+export interface BrandingConfigValues {
+  logoUrl: string;
 }
 
 export type MediaSourceType = 'supabase' | 'r2' | 's3';
@@ -242,6 +247,26 @@ export async function upsertStorageConfig(env: Env, input: StorageConfigValues):
     { namespace: CORE_NAMESPACE, key: 'storage.provider', value: input.provider },
     { namespace: CORE_NAMESPACE, key: 'storage.bucket', value: input.bucket },
     { namespace: CORE_NAMESPACE, key: 'storage.r2_public_url', value: input.r2PublicUrl },
+  ];
+
+  const { error } = await admin.from('system_config').upsert(rows, { onConflict: 'namespace,key' });
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getBrandingConfig(env: Env): Promise<BrandingConfigValues> {
+  const logoUrl = await getConfigValue(env, CORE_NAMESPACE, 'branding.logo_url');
+
+  return {
+    logoUrl,
+  };
+}
+
+export async function upsertBrandingConfig(env: Env, input: BrandingConfigValues): Promise<void> {
+  const admin = await createSupabaseAdminClient(env);
+  const rows: Array<{ namespace: string; key: BrandingConfigKey; value: string }> = [
+    { namespace: CORE_NAMESPACE, key: 'branding.logo_url', value: input.logoUrl },
   ];
 
   const { error } = await admin.from('system_config').upsert(rows, { onConflict: 'namespace,key' });
