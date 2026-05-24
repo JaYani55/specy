@@ -484,9 +484,16 @@ set owner_user_id = coalesce(
   set tenant_id = coalesce(ls.tenant_id, public.default_tenant_for_user(ls.created_by));
 
   update public.page_schema_specs pss
-  set tenant_id = coalesce(pss.tenant_id, ps.tenant_id, ls.tenant_id)
+  set tenant_id = coalesce(
+    pss.tenant_id,
+    ps.tenant_id,
+    (
+      select ls.tenant_id
+      from public.llm_specs ls
+      where ls.id = pss.spec_id
+    )
+  )
   from public.page_schemas ps
-  left join public.llm_specs ls on ls.id = pss.spec_id
   where pss.schema_id = ps.id;
 
 update public.employers e
