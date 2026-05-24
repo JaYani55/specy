@@ -15,7 +15,7 @@ const Logo = ({ className = "" }: { className?: string }) => {
     <img
       src={src}
       alt="Service CMS Logo"
-      className={`h-8 ${className}`}
+      className={`block h-12 w-auto max-w-full object-contain ${className}`}
       onError={() => setSrc(DEFAULT_LOGO_URL)}
     />
   );
