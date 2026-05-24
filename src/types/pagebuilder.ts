@@ -160,6 +160,8 @@ export interface PageSchema {
   slug_structure: string;
   integration_requirements: SchemaIntegrationRequirements | null;
   is_default: boolean;
+  tenant_id?: string | null;
+  owner_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -200,6 +202,8 @@ export interface PageRecord {
   is_draft: boolean;
   content: Record<string, unknown>;
   schema_id: string | null;
+  tenant_id?: string | null;
+  owner_user_id?: string | null;
   domain_url: string | null;
   updated_at: string;
   published_at: string | null;

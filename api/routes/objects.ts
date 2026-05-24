@@ -71,16 +71,53 @@ objects.get('/', async (c) => {
 objects.get('/:idOrSlug', async (c) => {
   const idOrSlug = c.req.param('idOrSlug');
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
-
-  // Resolve object regardless of auth first (to check requires_auth)
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+  const hasConsoleAccess = token
+    ? getRolesFromToken(token).some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin')
+    : false;
 
+  if (hasConsoleAccess) {
+    const supabase = await createSupabaseClient(c.env, token);
+    const { data: user, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !user.user) {
+      return c.json({ error: 'Invalid or expired session.' }, 401);
+    }
+
+    const query = supabase
+      .from('objects')
+      .select('*');
+
+    const { data: rows, error: dbError } = isUuid
+      ? await query.eq('id', idOrSlug).limit(1)
+      : await query.eq('slug', idOrSlug).limit(1);
+
+    if (dbError) {
+      return c.json({ error: 'Failed to load object.' }, 500);
+    }
+
+    const obj = rows?.[0] as ObjectRow | undefined;
+    if (!obj || obj.status === 'archived') {
+      return c.json({ error: 'Object not found.' }, 404);
+    }
+
+    return c.json({
+      id: obj.id,
+      name: obj.name,
+      slug: obj.slug,
+      description: obj.description,
+      schema: obj.schema,
+      data: obj.data,
+      updated_at: obj.updated_at,
+    });
+  }
+
+  const supabase = await createSupabaseClient(c.env);
   const query = supabase
     .from('objects')
     .select('*')
     .eq('status', 'published')
-    .eq('api_enabled', true);
+    .eq('api_enabled', true)
+    .eq('requires_auth', false);
 
   const { data: rows, error: dbError } = isUuid
     ? await query.eq('id', idOrSlug).limit(1)
@@ -94,17 +131,6 @@ objects.get('/:idOrSlug', async (c) => {
 
   if (!obj) {
     return c.json({ error: 'Object not found.' }, 404);
-  }
-
-  // Check auth requirement
-  if (obj.requires_auth) {
-    if (!token) {
-      return c.json({ error: 'Authentication required.' }, 401);
-    }
-    const { data: user, error } = await supabase.auth.getUser(token);
-    if (error || !user.user) {
-      return c.json({ error: 'Invalid or expired session.' }, 401);
-    }
   }
 
   return c.json({
@@ -130,7 +156,7 @@ objects.post('/', async (c) => {
     return c.json({ error: 'Invalid JSON body.' }, 400);
   }
 
-  const { name, slug, description, schema, data, status, requires_auth, api_enabled } = body;
+  const { name, slug, description, schema, data, status, requires_auth, api_enabled, tenant_id } = body;
 
   if (typeof name !== 'string' || !name.trim()) {
     return c.json({ error: 'name is required.' }, 400);
@@ -151,6 +177,7 @@ objects.post('/', async (c) => {
       status: status === 'archived' ? 'archived' : 'published',
       requires_auth: Boolean(requires_auth),
       api_enabled: api_enabled !== false,
+      tenant_id: typeof tenant_id === 'string' && tenant_id.trim() ? tenant_id.trim() : null,
     })
     .select()
     .single();
@@ -179,7 +206,7 @@ objects.put('/:id', async (c) => {
     return c.json({ error: 'Invalid JSON body.' }, 400);
   }
 
-  const { name, slug, description, schema, data, status, requires_auth, api_enabled } = body;
+  const { name, slug, description, schema, data, status, requires_auth, api_enabled, tenant_id } = body;
 
   const patch: Record<string, unknown> = {};
   if (typeof name === 'string' && name.trim()) patch.name = name.trim();
@@ -190,6 +217,8 @@ objects.put('/:id', async (c) => {
   if (status === 'published' || status === 'archived') patch.status = status;
   if (typeof requires_auth === 'boolean') patch.requires_auth = requires_auth;
   if (typeof api_enabled === 'boolean') patch.api_enabled = api_enabled;
+  if (tenant_id === null || tenant_id === '') patch.tenant_id = null;
+  else if (typeof tenant_id === 'string' && tenant_id.trim()) patch.tenant_id = tenant_id.trim();
 
   if (Object.keys(patch).length === 0) {
     return c.json({ error: 'No valid fields to update.' }, 400);

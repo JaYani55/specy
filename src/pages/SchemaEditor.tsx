@@ -30,6 +30,7 @@ import {
 } from '@/types/pagebuilder';
 import type { SchemaSpecBundle, SpecRecord } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
+import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { toast } from 'sonner';
 import { SCHEMA_TEMPLATES, type SchemaTemplate } from '@/config/schemaTemplates';
 import { normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
@@ -636,12 +637,32 @@ const SchemaEditor: React.FC = () => {
   const [schemaJsonResult, setSchemaJsonResult] = useState<SchemaJsonParseResult | null>(null);
   const [availableTemplates, setAvailableTemplates] = useState<SchemaTemplateDefinition[]>(SCHEMA_TEMPLATES);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [tenantId, setTenantId] = useState('');
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
   const [availableSpecs, setAvailableSpecs] = useState<SpecRecord[]>([]);
   const [schemaSpecBundle, setSchemaSpecBundle] = useState<SchemaSpecBundle | null>(null);
   const [selectedMainSpecId, setSelectedMainSpecId] = useState<string>('');
   const [selectedAdditionalSpecIds, setSelectedAdditionalSpecIds] = useState<string[]>([]);
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
   const [isSavingSpecAssignments, setIsSavingSpecAssignments] = useState(false);
+
+  useEffect(() => {
+    const loadTenantOptions = async () => {
+      try {
+        setTenantOptionsLoading(true);
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setTenantId((current) => pickInitialTenantId(options, current));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
+      } finally {
+        setTenantOptionsLoading(false);
+      }
+    };
+
+    void loadTenantOptions();
+  }, []);
 
   useEffect(() => {
     if (isEditing && schemaSlug) {
@@ -652,6 +673,7 @@ const SchemaEditor: React.FC = () => {
           setName(data.name);
           setDescription(data.description || '');
           setLlmInstructions(data.llm_instructions || '');
+          setTenantId(data.tenant_id ?? '');
           setIntegrationRequirements(normalizeSchemaIntegrationRequirements(data.integration_requirements));
           setFields(jsonSchemaToFields(data.schema as Record<string, unknown>));
         })
@@ -706,6 +728,10 @@ const SchemaEditor: React.FC = () => {
       toast.error(language === 'en' ? 'At least one field is required' : 'Mindestens ein Feld ist erforderlich');
       return;
     }
+    if (tenantOptions.length > 0 && !tenantId) {
+      toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
+      return;
+    }
 
     const normalizedIntegrationRequirements = normalizeSchemaIntegrationRequirements(integrationRequirements);
     if (normalizedIntegrationRequirements.required_slug_structure && !normalizedIntegrationRequirements.required_slug_structure.includes(':slug')) {
@@ -737,6 +763,7 @@ const SchemaEditor: React.FC = () => {
           schema: schemaJson,
           llm_instructions: llmInstructions,
           integration_requirements: normalizedIntegrationRequirements,
+          tenant_id: tenantId || null,
         });
         toast.success(language === 'en' ? 'Schema updated' : 'Schema aktualisiert');
         navigate(`/pages/schema/${existingSchema.slug}`);
@@ -747,6 +774,7 @@ const SchemaEditor: React.FC = () => {
           schema: schemaJson,
           llm_instructions: llmInstructions,
           integration_requirements: normalizedIntegrationRequirements,
+          tenant_id: tenantId || null,
         });
         toast.success(language === 'en' ? 'Schema created' : 'Schema erstellt');
         navigate(`/pages/schema/${newSchema.slug}`);
@@ -967,6 +995,29 @@ const SchemaEditor: React.FC = () => {
                 placeholder={language === 'en' ? 'What is this schema for?' : 'Wofür ist dieses Schema gedacht?'}
                 rows={3}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-base font-semibold">
+                {language === 'en' ? 'Workspace' : 'Workspace'}
+              </Label>
+              <Select value={tenantId} onValueChange={setTenantId} disabled={tenantOptionsLoading || tenantOptions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'en' ? 'Select workspace...' : 'Workspace auswählen...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}{option.is_default ? (language === 'en' ? ' (default)' : ' (Standard)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'Registered schemas and the pages created from them inherit this tenant so other members can see the connections.'
+                  : 'Registrierte Schemata und die daraus erstellten Seiten erben diesen Tenant, damit andere Mitglieder die Verknüpfungen sehen können.'}
+              </p>
             </div>
           </div>
         </CardContent>

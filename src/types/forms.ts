@@ -75,6 +75,7 @@ export interface FormRecord {
   share_slug: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  tenant_id?: string | null;
   owner_user_id?: string | null;
   notification_settings?: FormNotificationSettings | null;
   created_at: string;

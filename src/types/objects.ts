@@ -38,6 +38,8 @@ export interface ObjectRecord {
   status: ObjectStatus;
   requires_auth: boolean;
   api_enabled: boolean;
+  tenant_id?: string | null;
+  owner_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }

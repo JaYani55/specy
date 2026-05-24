@@ -804,7 +804,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
         if (activeOptional.has(f.name)) content[f.name] = formData[f.name];
       }
 
-      const result = await savePage(pageId, content, pageName, schema.id, pageSlug);
+      const result = await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
       setSavedSlug(result.slug);
       toast.success(`Seite "${pageName}" gespeichert als /${result.slug}`);
 

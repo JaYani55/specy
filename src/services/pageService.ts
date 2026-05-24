@@ -225,6 +225,7 @@ export const createSchema = async (input: {
   schema: Record<string, unknown>;
   llm_instructions?: string;
   integration_requirements?: Partial<SchemaIntegrationRequirements> | null;
+  tenant_id?: string | null;
 }): Promise<PageSchema> => {
   const slug = generateSlug(input.name);
   const registrationCode = generateRegistrationCode();
@@ -238,6 +239,7 @@ export const createSchema = async (input: {
       schema: input.schema,
       llm_instructions: input.llm_instructions || null,
       integration_requirements: normalizeIntegrationRequirements(input.integration_requirements),
+      tenant_id: input.tenant_id || null,
       registration_code: registrationCode,
       registration_status: 'waiting',
     })
@@ -275,6 +277,7 @@ export const updateSchema = async (
     schema: Record<string, unknown>;
     llm_instructions: string;
     integration_requirements: Partial<SchemaIntegrationRequirements> | null;
+    tenant_id: string | null;
   }>
 ): Promise<PageSchema> => {
   const updateData: Record<string, unknown> = { ...input };
@@ -400,14 +403,16 @@ export const savePage = async (
   pageName: string,
   schemaId: string,
   requestedSlug?: string,
+  tenantId?: string | null,
 ): Promise<{ id: string; slug: string }> => {
   const slug = await ensureUniquePageSlug(requestedSlug || pageName, pageId);
+  const normalizedTenantId = tenantId || null;
 
   if (pageId) {
     // Update existing page
     const { data, error } = await supabase
       .from('pages')
-      .update({ content, slug, name: pageName })
+      .update({ content, slug, name: pageName, tenant_id: normalizedTenantId })
       .eq('id', pageId)
       .select('id, slug')
       .single();
@@ -424,6 +429,7 @@ export const savePage = async (
         content,
         status: 'draft',
         schema_id: schemaId,
+        tenant_id: normalizedTenantId,
       })
       .select('id, slug')
       .single();
@@ -586,7 +592,7 @@ export const saveProductPage = async (
     // Get the service-product schema id for legacy pages
     const { data: schemaData } = await supabase
       .from('page_schemas')
-      .select('id')
+      .select('id, tenant_id')
       .eq('slug', 'service-product')
       .single();
 
@@ -598,6 +604,7 @@ export const saveProductPage = async (
         content,
         status: 'draft',
         schema_id: schemaData?.id || null,
+        tenant_id: schemaData?.tenant_id || null,
       })
       .select('id')
       .single();

@@ -59,6 +59,7 @@ export interface CreateObjectInput {
   status?: 'published' | 'archived';
   requires_auth?: boolean;
   api_enabled?: boolean;
+  tenant_id?: string | null;
 }
 
 export const createObject = async (input: CreateObjectInput): Promise<ObjectRecord> => {

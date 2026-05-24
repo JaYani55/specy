@@ -121,6 +121,7 @@ interface SaveFormInput {
   share_slug?: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  tenant_id?: string | null;
   notification_settings?: {
     notify_owner: boolean;
     notify_staff: boolean;
@@ -149,6 +150,7 @@ const normalizeInput = (input: SaveFormInput, ownerUserId?: string | null) => {
     share_slug: shareSlug,
     requires_auth: input.requires_auth,
     api_enabled: input.api_enabled,
+    tenant_id: input.tenant_id || null,
     owner_user_id: ownerUserId ?? undefined,
     published_at: input.status === 'published' ? new Date().toISOString() : null,
   };

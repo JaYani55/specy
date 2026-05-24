@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
 import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from '@/services/formService';
+import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { type FormFieldDefinition, type FormNotificationStaffOption, type FormRecord } from '@/types/forms';
 import { formFieldsToSchema, formatFormSchema, parseFormSchema } from '@/utils/forms';
 
@@ -75,6 +76,9 @@ const FormEditor = () => {
   const [shareSlug, setShareSlug] = useState('');
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [apiEnabled, setApiEnabled] = useState(true);
+  const [tenantId, setTenantId] = useState('');
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
   const [notifyOwner, setNotifyOwner] = useState(false);
   const [notifyStaff, setNotifyStaff] = useState(false);
   const [deleteAnswerAfterEmail, setDeleteAnswerAfterEmail] = useState(false);
@@ -84,6 +88,23 @@ const FormEditor = () => {
   const [staffOptionsLoading, setStaffOptionsLoading] = useState(false);
   const [builderFields, setBuilderFields] = useState<FormFieldDefinition[]>(withEditorIds(parseFormSchema(JSON.stringify(DEFAULT_SCHEMA)).fields));
   const schemaSyncSourceRef = useRef<'builder' | 'json' | 'load'>('load');
+
+  useEffect(() => {
+    const loadTenantOptions = async () => {
+      try {
+        setTenantOptionsLoading(true);
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setTenantId((current) => pickInitialTenantId(options, current));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
+      } finally {
+        setTenantOptionsLoading(false);
+      }
+    };
+
+    void loadTenantOptions();
+  }, []);
 
   useEffect(() => {
     const loadStaffOptions = async () => {
@@ -122,6 +143,7 @@ const FormEditor = () => {
         setShareSlug(form.share_slug ?? '');
         setRequiresAuth(form.requires_auth);
         setApiEnabled(form.api_enabled);
+        setTenantId(form.tenant_id ?? '');
         setNotifyOwner(Boolean(form.notification_settings?.notify_owner));
         setNotifyStaff(Boolean(form.notification_settings?.notify_staff));
         setDeleteAnswerAfterEmail(Boolean(form.notification_settings?.delete_answer_after_email));
@@ -171,6 +193,11 @@ const FormEditor = () => {
       return;
     }
 
+    if (tenantOptions.length > 0 && !tenantId) {
+      toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
+      return;
+    }
+
     try {
       setIsSaving(true);
       const payload = {
@@ -183,6 +210,7 @@ const FormEditor = () => {
         share_slug: shareEnabled ? shareSlug || name : null,
         requires_auth: requiresAuth,
         api_enabled: apiEnabled,
+        tenant_id: tenantId || null,
         notification_settings: {
           notify_owner: notifyOwner,
           notify_staff: notifyStaff,
@@ -273,6 +301,27 @@ const FormEditor = () => {
             <div className="space-y-2">
               <Label htmlFor="form-description">{language === 'en' ? 'Description' : 'Beschreibung'}</Label>
               <Textarea id="form-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
+              <Select value={tenantId} onValueChange={setTenantId} disabled={tenantOptionsLoading || tenantOptions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'en' ? 'Select workspace...' : 'Workspace auswählen...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}{option.is_default ? (language === 'en' ? ' (default)' : ' (Standard)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'This controls which tenant can manage the form, notifications, and embedded page connections.'
+                  : 'Dies steuert, welcher Tenant das Formular, Benachrichtigungen und eingebettete Seitenverknüpfungen verwalten kann.'}
+              </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">

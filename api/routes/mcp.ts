@@ -377,7 +377,7 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
         .neq('status', 'archived');
 
       // Without auth, only show public objects. With auth, rely on RLS for tenant/user scoping.
-      if (!includeClosed) {
+      if (!authToken) {
         query = query
           .eq('status', 'published')
           .eq('api_enabled', true)
@@ -419,9 +419,10 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
 
       let query = supabase
         .from('objects')
-        .select('*');
+        .select('*')
+        .neq('status', 'archived');
 
-      if (!includeClosed) {
+      if (!authToken) {
         query = query
           .eq('status', 'published')
           .eq('api_enabled', true)

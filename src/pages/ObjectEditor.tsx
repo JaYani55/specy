@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
 import { createObject, generateObjectSlug, getObject, updateObject } from '@/services/objectService';
+import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import type { ObjectFieldDefinition, ObjectFieldType, ObjectRecord } from '@/types/objects';
 import { toast } from 'sonner';
 
@@ -1130,6 +1131,9 @@ const ObjectEditor: React.FC = () => {
   const [status, setStatus] = useState<ObjectRecord['status']>('published');
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [apiEnabled, setApiEnabled] = useState(true);
+  const [tenantId, setTenantId] = useState('');
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
 
   // Schema editor
   const [fields, setFields] = useState<EditorField[]>([]);
@@ -1147,6 +1151,23 @@ const ObjectEditor: React.FC = () => {
 
   const slugManualRef = useRef(false);
 
+  useEffect(() => {
+    const loadTenantOptions = async () => {
+      try {
+        setTenantOptionsLoading(true);
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setTenantId((current) => pickInitialTenantId(options, current));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
+      } finally {
+        setTenantOptionsLoading(false);
+      }
+    };
+
+    void loadTenantOptions();
+  }, []);
+
   // Load existing object when editing
   useEffect(() => {
     if (!isEditing || !objectId) return;
@@ -1161,6 +1182,7 @@ const ObjectEditor: React.FC = () => {
         setStatus(obj.status);
         setRequiresAuth(obj.requires_auth);
         setApiEnabled(obj.api_enabled);
+        setTenantId(obj.tenant_id ?? '');
         setFields(schemaToFields(obj.schema as Record<string, unknown>));
         const loadedData = obj.data as Record<string, unknown> | unknown[];
         if (Array.isArray(loadedData)) {
@@ -1274,6 +1296,10 @@ const ObjectEditor: React.FC = () => {
       toast.error(language === 'en' ? 'Slug is required.' : 'Slug ist erforderlich.');
       return;
     }
+    if (tenantOptions.length > 0 && !tenantId) {
+      toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
+      return;
+    }
 
     let parsedData: Record<string, unknown> | unknown[];
     try {
@@ -1302,6 +1328,7 @@ const ObjectEditor: React.FC = () => {
       status,
       requires_auth: requiresAuth,
       api_enabled: apiEnabled,
+      tenant_id: tenantId || null,
     };
 
     try {
@@ -1416,6 +1443,27 @@ const ObjectEditor: React.FC = () => {
                     : 'Wofür wird dieses Objekt verwendet?'
                 }
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
+              <Select value={tenantId} onValueChange={setTenantId} disabled={tenantOptionsLoading || tenantOptions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'en' ? 'Select workspace...' : 'Workspace auswählen...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}{option.is_default ? (language === 'en' ? ' (default)' : ' (Standard)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'Objects stay readable and editable for members of the assigned tenant via RLS and MCP.'
+                  : 'Objekte bleiben fuer Mitglieder des zugewiesenen Tenants ueber RLS und MCP lesbar und bearbeitbar.'}
+              </p>
             </div>
           </CardContent>
         </Card>
