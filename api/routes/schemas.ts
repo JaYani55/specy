@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { requireAppRole } from '../lib/auth';
+import { parseBearerToken, requireAppRole } from '../lib/auth';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 import {
   buildRevalidationSecretName,
@@ -333,7 +333,7 @@ function generateSlug(value: string): string {
 }
 
 async function ensureUniqueTemplateSlug(
-  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  client: Awaited<ReturnType<typeof createSupabaseClient>>,
   requestedSlug: string,
 ): Promise<string> {
   const baseSlug = generateSlug(requestedSlug);
@@ -341,7 +341,7 @@ async function ensureUniqueTemplateSlug(
   let suffix = 2;
 
   while (true) {
-    const { data, error } = await admin
+    const { data, error } = await client
       .from('page_schema_templates')
       .select('id')
       .eq('slug', candidate)
@@ -392,15 +392,15 @@ function parseTemplateInput(payload: unknown): SchemaTemplateInput {
 }
 
 async function saveSchemaTemplate(
-  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  client: Awaited<ReturnType<typeof createSupabaseClient>>,
   input: SchemaTemplateInput,
   options?: { preferProvidedSlug?: boolean },
 ): Promise<SchemaTemplateRow> {
   const slug = options?.preferProvidedSlug && input.slug
     ? generateSlug(input.slug)
-    : await ensureUniqueTemplateSlug(admin, input.slug || input.name);
+    : await ensureUniqueTemplateSlug(client, input.slug || input.name);
 
-  const { data, error } = await admin
+  const { data, error } = await client
     .from('page_schema_templates')
     .insert({
       name: input.name,
@@ -639,7 +639,8 @@ async function getSchemaSecretStatus(
 
 // GET /api/schemas — Discovery endpoint: list all available schemas
 schemas.get('/', async (c) => {
-  const supabase = await createSupabaseClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   const { data, error } = await supabase
     .from('page_schemas')
@@ -677,8 +678,11 @@ schemas.get('/', async (c) => {
 });
 
 schemas.get('/templates', async (c) => {
-  const admin = await createSupabaseAdminClient(c.env);
-  const { data, error } = await admin
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data, error } = await supabase
     .from('page_schema_templates')
     .select('*')
     .order('created_at', { ascending: true });
@@ -691,9 +695,12 @@ schemas.get('/templates', async (c) => {
 });
 
 schemas.get('/templates/:slug', async (c) => {
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+
   const slug = c.req.param('slug');
-  const admin = await createSupabaseAdminClient(c.env);
-  const { data, error } = await admin
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data, error } = await supabase
     .from('page_schema_templates')
     .select('*')
     .eq('slug', slug)
@@ -707,7 +714,7 @@ schemas.get('/templates/:slug', async (c) => {
 });
 
 schemas.post('/templates', async (c) => {
-  const auth = await requireAppRole(c, 'admin');
+  const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
   let body: unknown;
@@ -718,8 +725,8 @@ schemas.post('/templates', async (c) => {
   }
 
   try {
-    const admin = await createSupabaseAdminClient(c.env);
-    const template = await saveSchemaTemplate(admin, parseTemplateInput(body));
+    const supabase = await createSupabaseClient(c.env, auth.token);
+    const template = await saveSchemaTemplate(supabase, parseTemplateInput(body));
     return c.json({ template }, 201);
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Failed to create template' }, 400);
@@ -727,7 +734,7 @@ schemas.post('/templates', async (c) => {
 });
 
 schemas.post('/templates/import', async (c) => {
-  const auth = await requireAppRole(c, 'admin');
+  const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
   let body: { url?: string };
@@ -757,8 +764,8 @@ schemas.post('/templates/import', async (c) => {
     }
 
     const payload = await response.json();
-    const admin = await createSupabaseAdminClient(c.env);
-    const template = await saveSchemaTemplate(admin, {
+    const supabase = await createSupabaseClient(c.env, auth.token);
+    const template = await saveSchemaTemplate(supabase, {
       ...parseTemplateInput(payload),
       external_source_url: validated.url.toString(),
     });
@@ -772,7 +779,8 @@ schemas.post('/templates/import', async (c) => {
 // GET /api/schemas/:slug/spec.txt — LLM-ready plaintext schema specification
 schemas.get('/:slug/spec.txt', async (c) => {
   const slug = c.req.param('slug');
-  const supabase = await createSupabaseClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
@@ -790,7 +798,7 @@ schemas.get('/:slug/spec.txt', async (c) => {
     .select('*', { count: 'exact', head: true })
     .eq('schema_id', schema.id);
 
-  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id });
+  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
   const lines = buildSpecSections(schema, count ?? 0, new URL(c.req.url).origin, specBundle);
   lines.push(
     '--- CODE BLOCK FIELD TYPE ---',
@@ -813,7 +821,8 @@ schemas.get('/:slug/spec.txt', async (c) => {
 
 schemas.get('/:slug/spec', async (c) => {
   const slug = c.req.param('slug');
-  const supabase = await createSupabaseClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
@@ -830,7 +839,7 @@ schemas.get('/:slug/spec', async (c) => {
     .select('*', { count: 'exact', head: true })
     .eq('schema_id', schema.id);
 
-  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id });
+  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
 
   return c.json({
     schema,
@@ -845,7 +854,8 @@ schemas.get('/:slug/spec', async (c) => {
 
 schemas.get('/:slug/pages', async (c) => {
   const slug = c.req.param('slug');
-  const supabase = await createSupabaseClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')

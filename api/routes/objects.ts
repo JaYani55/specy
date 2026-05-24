@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
+import { createSupabaseClient, type Env } from '../lib/supabase';
 import { parseBearerToken, getRolesFromToken, requireAppRole } from '../lib/auth';
 
 const objects = new Hono<{ Bindings: Env }>();
@@ -20,37 +20,37 @@ interface ObjectRow {
 
 // GET /api/objects
 // List all published, api-enabled objects (public or authenticated depending on requires_auth).
-// Admin/super-admin always see all non-archived objects.
+// Authenticated users see the rows allowed by RLS, including their own managed objects.
 objects.get('/', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const roles = token ? getRolesFromToken(token) : [];
-  const isAdmin = roles.some((r) => r === 'admin' || r === 'super-admin');
+  if (token) {
+    const roles = getRolesFromToken(token);
+    const hasConsoleAccess = roles.some((r) => r === 'user' || r === 'staff' || r === 'admin' || r === 'super-admin');
 
-  if (isAdmin) {
-    // Verify token is valid for admin path
-    const supabase = await createSupabaseClient(c.env, token!);
-    const { data: user, error } = await supabase.auth.getUser(token!);
-    if (error || !user.user) {
-      return c.json({ error: 'Invalid or expired session.' }, 401);
+    if (hasConsoleAccess) {
+      const supabase = await createSupabaseClient(c.env, token);
+      const { data: user, error } = await supabase.auth.getUser(token);
+      if (error || !user.user) {
+        return c.json({ error: 'Invalid or expired session.' }, 401);
+      }
+
+      const { data, error: dbError } = await supabase
+        .from('objects')
+        .select('id, name, slug, description, status, requires_auth, api_enabled, created_at, updated_at')
+        .neq('status', 'archived')
+        .order('updated_at', { ascending: false });
+
+      if (dbError) {
+        return c.json({ error: 'Failed to load objects.' }, 500);
+      }
+
+      return c.json({ objects: data ?? [] });
     }
-
-    const admin = await createSupabaseAdminClient(c.env);
-    const { data, error: dbError } = await admin
-      .from('objects')
-      .select('id, name, slug, description, status, requires_auth, api_enabled, created_at, updated_at')
-      .neq('status', 'archived')
-      .order('updated_at', { ascending: false });
-
-    if (dbError) {
-      return c.json({ error: 'Failed to load objects.' }, 500);
-    }
-
-    return c.json({ objects: data ?? [] });
   }
 
   // Public path: only published, api_enabled, non-auth objects
-  const admin = await createSupabaseAdminClient(c.env);
-  const { data, error: dbError } = await admin
+  const supabase = await createSupabaseClient(c.env);
+  const { data, error: dbError } = await supabase
     .from('objects')
     .select('id, name, slug, description, created_at, updated_at')
     .eq('status', 'published')
@@ -70,12 +70,13 @@ objects.get('/', async (c) => {
 // Returns the schema definition and full data payload.
 objects.get('/:idOrSlug', async (c) => {
   const idOrSlug = c.req.param('idOrSlug');
-  const admin = await createSupabaseAdminClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   // Resolve object regardless of auth first (to check requires_auth)
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
 
-  const query = admin
+  const query = supabase
     .from('objects')
     .select('*')
     .eq('status', 'published')
@@ -97,11 +98,9 @@ objects.get('/:idOrSlug', async (c) => {
 
   // Check auth requirement
   if (obj.requires_auth) {
-    const token = parseBearerToken(c.req.header('Authorization'));
     if (!token) {
       return c.json({ error: 'Authentication required.' }, 401);
     }
-    const supabase = await createSupabaseClient(c.env, token);
     const { data: user, error } = await supabase.auth.getUser(token);
     if (error || !user.user) {
       return c.json({ error: 'Invalid or expired session.' }, 401);
@@ -119,9 +118,9 @@ objects.get('/:idOrSlug', async (c) => {
   });
 });
 
-// POST /api/objects — create (admin/super-admin only)
+// POST /api/objects — create (user content, enforced by RLS)
 objects.post('/', async (c) => {
-  const auth = await requireAppRole(c, 'admin');
+  const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
   let body: Record<string, unknown>;
@@ -140,8 +139,8 @@ objects.post('/', async (c) => {
     return c.json({ error: 'slug is required.' }, 400);
   }
 
-  const admin = await createSupabaseAdminClient(c.env);
-  const { data: created, error } = await admin
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data: created, error } = await supabase
     .from('objects')
     .insert({
       name: name.trim(),
@@ -166,9 +165,9 @@ objects.post('/', async (c) => {
   return c.json(created, 201);
 });
 
-// PUT /api/objects/:id — update (admin/super-admin only)
+// PUT /api/objects/:id — update (user content, enforced by RLS)
 objects.put('/:id', async (c) => {
-  const auth = await requireAppRole(c, 'admin');
+  const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
   const id = c.req.param('id');
@@ -196,8 +195,8 @@ objects.put('/:id', async (c) => {
     return c.json({ error: 'No valid fields to update.' }, 400);
   }
 
-  const admin = await createSupabaseAdminClient(c.env);
-  const { data: updated, error } = await admin
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data: updated, error } = await supabase
     .from('objects')
     .update(patch)
     .eq('id', id)
@@ -218,15 +217,15 @@ objects.put('/:id', async (c) => {
   return c.json(updated);
 });
 
-// DELETE /api/objects/:id — archive (super-admin only)
+// DELETE /api/objects/:id — archive (user content, enforced by RLS)
 objects.delete('/:id', async (c) => {
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
   const id = c.req.param('id');
-  const admin = await createSupabaseAdminClient(c.env);
+  const supabase = await createSupabaseClient(c.env, auth.token);
 
-  const { error } = await admin
+  const { error } = await supabase
     .from('objects')
     .update({ status: 'archived' })
     .eq('id', id);

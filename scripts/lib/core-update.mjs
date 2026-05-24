@@ -45,6 +45,10 @@ export const MIGRATION_ORDER = [
   'mentorbooking_notifications.sql',
   'agent_logs.sql',
   'agent_logs_hardening.sql',
+  '202605240001_multi_tenant_foundation.sql',
+  '202605240002_multi_tenant_backfill_and_ownership.sql',
+  '202605240003_multi_tenant_rls_hardening.sql',
+  'objects.sql',
   'Auth/Access_hook.sql',
 ];
 
@@ -221,6 +225,33 @@ export async function fetchCoreUpdateState(projectRef, pat) {
     }
     throw error;
   }
+}
+
+export async function detectLegacyCoreInstall(projectRef, pat) {
+  const payload = await runSqlQuery(
+    projectRef,
+    pat,
+    `
+      select coalesce(json_agg(table_name order by table_name), '[]'::json) as tables
+      from information_schema.tables
+      where table_schema = 'public'
+        and table_name in (
+          'user_profile',
+          'roles',
+          'objects',
+          'page_schemas',
+          'pages',
+          'system_config'
+        );
+    `,
+  );
+
+  const tables = extractJsonColumn(payload, 'tables');
+
+  return {
+    hasCoreSchema: tables.length > 0,
+    tables,
+  };
 }
 
 export function analyzeCoreUpdates(migrations, functions, remoteState) {

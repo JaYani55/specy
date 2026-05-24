@@ -101,7 +101,7 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
     version: '1.0.0',
   });
 
-  const supabase = await createSupabaseClient(env);
+  const supabase = await createSupabaseClient(env, authToken ?? undefined);
 
   server.tool(
     'start_here',
@@ -371,13 +371,12 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
     'List all available data objects. Objects are arbitrarily definable JSONB data structures (e.g. price lists, configurations).',
     {},
     async () => {
-      const admin = await createSupabaseAdminClient(env);
-      let query = admin
+      let query = supabase
         .from('objects')
         .select('id, name, slug, description, status, requires_auth, api_enabled, updated_at')
         .neq('status', 'archived');
 
-      // If no valid auth, only show public ones
+      // Without auth, only show public objects. With auth, rely on RLS for tenant/user scoping.
       if (!includeClosed) {
         query = query
           .eq('status', 'published')
@@ -417,11 +416,17 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
     { idOrSlug: z.string().describe('The object slug or UUID') },
     async ({ idOrSlug }) => {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
-      const admin = await createSupabaseAdminClient(env);
 
-      let query = admin
+      let query = supabase
         .from('objects')
         .select('*');
+
+      if (!includeClosed) {
+        query = query
+          .eq('status', 'published')
+          .eq('api_enabled', true)
+          .eq('requires_auth', false);
+      }
 
       query = isUuid ? query.eq('id', idOrSlug) : query.eq('slug', idOrSlug);
 
@@ -429,11 +434,6 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
 
       if (error || !rows) {
         return { content: [{ type: 'text' as const, text: `Object "${idOrSlug}" not found or error: ${error?.message}` }] };
-      }
-
-      // Check auth requirement if not admin
-      if (rows.requires_auth && !includeClosed) {
-        return { content: [{ type: 'text' as const, text: 'This object requires authentication. Call login first.' }] };
       }
 
       return {

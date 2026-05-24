@@ -10,6 +10,7 @@ import {
   buildFunctionManifest,
   buildMigrationManifest,
   CORE_EDGE_FUNCTIONS,
+  detectLegacyCoreInstall,
   deployEdgeFunction,
   extractProjectRef,
   fetchCoreUpdateState,
@@ -290,11 +291,27 @@ function buildStateRecord(item, head) {
 }
 
 async function applyPendingMigrations(plan, projectRef, pat, head) {
+  const pendingRecords = [];
+  let canRecordState = !plan.bootstrapRequired || plan.systemConfigAvailable;
+
   for (const migration of plan.pendingMigrations) {
     info(`Applying migration ${migration.name}...`);
     await runSqlQuery(projectRef, pat, migration.sql);
-    await upsertCoreUpdateRecords(projectRef, pat, [buildStateRecord(migration, head)]);
+    pendingRecords.push(buildStateRecord(migration, head));
+
+    if (!canRecordState && migration.name === 'system_config.sql') {
+      canRecordState = true;
+    }
+
+    if (canRecordState && pendingRecords.length > 0) {
+      await upsertCoreUpdateRecords(projectRef, pat, pendingRecords.splice(0, pendingRecords.length));
+    }
+
     ok(`Applied ${migration.name}.`);
+  }
+
+  if (pendingRecords.length > 0) {
+    throw new Error('Applied core migrations but could not record state because public.system_config is still unavailable.');
   }
 
   if (plan.pendingMigrations.length > 0) {
@@ -375,7 +392,47 @@ async function runSupabaseUpdatePhase() {
 
   info(`Checking Supabase core state for project ${projectRef}...`);
   const remote = await fetchCoreUpdateState(projectRef, pat);
-  const plan = analyzeCoreUpdates(migrations, functions, remote.state);
+  let plan = analyzeCoreUpdates(migrations, functions, remote.state);
+  plan.systemConfigAvailable = remote.available;
+
+  if (remote.available && remote.state.size === 0 && migrations.length > 0) {
+    const legacy = await detectLegacyCoreInstall(projectRef, pat);
+
+    if (legacy.hasCoreSchema) {
+      warn(`Core tables already exist but ${'core_update'} metadata is empty. Matching tables: ${legacy.tables.join(', ')}`);
+
+      if (options.dryRun) {
+        warn('Dry run requested. This instance would baseline migration state instead of replaying historical migrations.');
+        return { shouldStop: true };
+      }
+
+      const bootstrap = bailOnCancel(
+        await confirm({
+          message: 'Record the current core migration manifest as the baseline for this existing instance and continue without replaying historical migrations?',
+          initialValue: true,
+        }),
+        'Supabase baseline confirmation cancelled.',
+      );
+
+      if (!bootstrap) {
+        warn('Supabase core baseline was not recorded. Stopping before build/deploy.');
+        return { shouldStop: true };
+      }
+
+      const head = capture('git', ['rev-parse', 'HEAD']);
+      await upsertCoreUpdateRecords(projectRef, pat, migrations.map((migration) => buildStateRecord(migration, head)));
+      ok('Recorded baseline core migration state for the existing instance.');
+
+      const bootstrappedState = new Map(remote.state);
+      for (const migration of migrations) {
+        bootstrappedState.set(migration.id, buildStateRecord(migration, head).value);
+      }
+
+      plan = analyzeCoreUpdates(migrations, functions, bootstrappedState);
+      plan.systemConfigAvailable = true;
+    }
+  }
+
   printSupabasePlan(plan);
 
   if (plan.driftedMigrations.length > 0) {
