@@ -142,6 +142,14 @@ export interface PluginCapabilityDescriptor {
   description?: string;
 }
 
+export interface PluginAccessRule {
+  /**
+   * User must have at least one of these JWT claim roles to access the plugin.
+   * Example: ['support', 'super-admin']
+   */
+  anyRole?: string[];
+}
+
 export type PluginRegistrationKind = 'plugin' | 'webapp';
 
 // ─── Route ───────────────────────────────────────────────────────────────────
@@ -225,6 +233,8 @@ export interface PluginDefinition {
   routes: PluginRoute[];
   /** Sidebar entries registered by this plugin. */
   sidebarItems: PluginSidebarItem[];
+  /** Optional access contract evaluated against JWT user_roles claims. */
+  access?: PluginAccessRule;
   /** Optional build-time hook handlers contributed by this plugin. */
   hooks?: PluginHookContribution[];
   /** Optional runtime-discovery API metadata. */

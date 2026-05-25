@@ -92,7 +92,7 @@ export function AppSidebar() {
 
   // Dynamic sidebar items from installed plugins (admin group)
   const pluginAdminItems = canAccessVerwaltung
-    ? getPluginSidebarItems('admin').filter((item) => {
+    ? getPluginSidebarItems('admin', user?.roles ?? []).filter((item) => {
         if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
         if (item.requiredRole === 'admin') return canManagePlugins;
         return true;
@@ -100,7 +100,11 @@ export function AppSidebar() {
     : [];
 
   // Dynamic sidebar items from installed plugins (main group — visible to all authenticated users)
-  const pluginMainItems = getPluginSidebarItems('main');
+  const pluginMainItems = getPluginSidebarItems('main', user?.roles ?? []).filter((item) => {
+    if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
+    if (item.requiredRole === 'admin') return canManagePlugins;
+    return true;
+  });
   const webappItems = webapps;
 
   return (

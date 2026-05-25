@@ -198,6 +198,24 @@ This is the metadata file the install script reads and validates.
 | `capabilities` | `object[]` | `[]` | Optional high-level capability descriptors for discovery/admin tooling. Each entry declares `key`, `kind` (`"interface" | "hook" | "api"`), optional `targets[]`, and `description`. |
 | `config_schema` | `object[]` | `[]` | Configuration fields the plugin needs. Each entry has `key`, `label`, optional `description`, `type` (`"text" | "textarea" | "url" | "secret"`), optional `required`, optional `placeholder`, and optional `expose_to_frontend`. The install script prints these at the end; values are set via the Plugins admin UI at `/plugins`. |
 
+### Optional runtime access contract
+
+`PluginDefinition` also supports an optional frontend access contract for JWT-claim-based visibility:
+
+```typescript
+access: {
+  anyRole: ['support', 'super-admin'],
+}
+```
+
+Use this when your plugin must only appear for a custom role that is outside the core `requiredRole` union (`user`, `admin`, `super-admin`).
+
+Rules:
+
+- `access.anyRole` is evaluated against the authenticated user's JWT `user_roles` claim
+- when the user lacks those roles, the plugin's routes, navbar entry, sidebar items, and executable hooks are not registered into the active app surface
+- keep route-level `requiredRole` for normal core-role gating; use `access.anyRole` for plugin-specific roles such as `support`
+
 ### Hook metadata vs. executable hooks
 
 There are two separate concerns:
@@ -272,6 +290,9 @@ interface PluginDefinition {
   version: string;
   routes: PluginRoute[];
   sidebarItems: PluginSidebarItem[];
+  access?: {
+    anyRole?: string[];
+  };
   hooks?: PluginHookContribution[];
   apiMetadata?: PluginApiMetadata;
   capabilities?: PluginCapabilityDescriptor[];
@@ -300,6 +321,40 @@ hooks: [
   },
 ]
 ```
+
+### Core hook targets available today
+
+The following UI hook targets are currently supported for default landing page integration:
+
+1. `settings.defaultLanding.options`
+2. `settings.defaultLanding.resolve`
+
+Contracts:
+
+```typescript
+type DefaultLandingOptionsHookContext = {
+  options: Array<{
+    value: string;
+    label: { en: string; de: string };
+  }>;
+  userRoles: string[];
+};
+
+type DefaultLandingResolveHookContext = {
+  storedView: string;
+  resolvedView: string;
+  fallbackView: string;
+  availableValues: string[];
+  userRoles: string[];
+};
+```
+
+Usage guidance:
+
+- `settings.defaultLanding.options` should append or adjust selectable landing destinations shown in `/settings`
+- `settings.defaultLanding.resolve` should normalize or override the final landing destination used by the root route after login
+- hook handlers should return the full updated context object
+- only rely on values present in `availableValues` when resolving a final landing route
 
 > **Important:** the registry exists centrally, but core hook targets are still being adopted incrementally. Only use targets that the CMS explicitly documents as supported.
 

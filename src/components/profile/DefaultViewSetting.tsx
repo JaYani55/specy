@@ -3,16 +3,22 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Home } from "lucide-react";
+import type { DefaultLandingOption } from '@/services/defaultLandingService';
 
 interface DefaultViewSettingProps {
   defaultView?: string;
   language: 'en' | 'de';
+  options: DefaultLandingOption[];
   onUpdate: (view: string) => Promise<boolean>;
 }
 
-export const DefaultViewSetting = ({ defaultView = 'events', language, onUpdate }: DefaultViewSettingProps) => {
+export const DefaultViewSetting = ({ defaultView = 'events', language, options, onUpdate }: DefaultViewSettingProps) => {
   const [selectedView, setSelectedView] = useState(defaultView);
   const [isSaving, setIsSaving] = useState(false);
+
+  React.useEffect(() => {
+    setSelectedView(defaultView);
+  }, [defaultView]);
   
   const handleSave = async () => {
     try {
@@ -59,9 +65,11 @@ export const DefaultViewSetting = ({ defaultView = 'events', language, onUpdate 
             <SelectValue placeholder={language === "en" ? "Select view" : "Ansicht wählen"} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="events">{language === "en" ? "Events" : "Veranstaltungen"}</SelectItem>
-            <SelectItem value="calendar">{language === "en" ? "Calendar" : "Kalender"}</SelectItem>
-            <SelectItem value="list">{language === "en" ? "List" : "Liste"}</SelectItem>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label[language]}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         

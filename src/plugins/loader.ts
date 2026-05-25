@@ -6,7 +6,6 @@
  */
 
 import registeredPlugins from './registry';
-import registeredHooks from './hooks-registry';
 import type {
   PluginCapabilityDescriptor,
   PluginDefinition,
@@ -15,20 +14,39 @@ import type {
   PluginSidebarItem,
 } from '@/types/plugin';
 
+export function isPluginAccessible(plugin: PluginDefinition, userRoles?: string[]): boolean {
+  const requiredRoles = plugin.access?.anyRole;
+
+  if (!requiredRoles?.length) {
+    return true;
+  }
+
+  if (!userRoles?.length) {
+    return false;
+  }
+
+  return requiredRoles.some((role) => userRoles.includes(role));
+}
+
 /**
  * Returns all page routes contributed by installed+registered plugins.
  * Used in App.tsx to render dynamic <Route> elements.
  */
-export function getPluginRoutes(): PluginRoute[] {
-  return registeredPlugins.flatMap((plugin) => plugin.routes);
+export function getPluginRoutes(userRoles?: string[]): PluginRoute[] {
+  return registeredPlugins
+    .filter((plugin) => isPluginAccessible(plugin, userRoles))
+    .flatMap((plugin) => plugin.routes);
 }
 
 /**
  * Returns all sidebar items contributed by plugins, optionally filtered by group.
  * @param group  If provided, only returns items from that group.
  */
-export function getPluginSidebarItems(group?: 'main' | 'admin'): PluginSidebarItem[] {
-  const items = registeredPlugins.flatMap((plugin) => plugin.sidebarItems);
+export function getPluginSidebarItems(group?: 'main' | 'admin', userRoles?: string[]): PluginSidebarItem[] {
+  const items = registeredPlugins
+    .filter((plugin) => isPluginAccessible(plugin, userRoles))
+    .flatMap((plugin) => plugin.sidebarItems);
+
   if (group) return items.filter((item) => item.group === group);
   return items;
 }
@@ -37,16 +55,17 @@ export function getPluginSidebarItems(group?: 'main' | 'admin'): PluginSidebarIt
  * Returns all registered plugin definitions.
  * Useful for listing installed plugins in the Plugins admin page.
  */
-export function getPlugins(): PluginDefinition[] {
-  return registeredPlugins;
+export function getPlugins(userRoles?: string[]): PluginDefinition[] {
+  return registeredPlugins.filter((plugin) => isPluginAccessible(plugin, userRoles));
 }
 
 /**
  * Returns all build-time hook contributions, optionally filtered by target.
  */
-export function getPluginHooks(target?: string): PluginHookContribution[] {
-  if (!target) return registeredHooks;
-  return registeredHooks.filter((hook) => hook.target === target);
+export function getPluginHooks(target?: string, userRoles?: string[]): PluginHookContribution[] {
+  const hooks = getPlugins(userRoles).flatMap((plugin) => plugin.hooks ?? []);
+  if (!target) return hooks;
+  return hooks.filter((hook) => hook.target === target);
 }
 
 /**
@@ -55,15 +74,16 @@ export function getPluginHooks(target?: string): PluginHookContribution[] {
 export function getPluginHooksByScope(
   scope: PluginHookContribution['scope'],
   target?: string,
+  userRoles?: string[],
 ): PluginHookContribution[] {
-  return registeredHooks.filter((hook) => hook.scope === scope && (!target || hook.target === target));
+  return getPluginHooks(target, userRoles).filter((hook) => hook.scope === scope);
 }
 
 /**
  * Returns all declared plugin capabilities for discovery and admin tooling.
  */
-export function getPluginCapabilities(): Array<PluginCapabilityDescriptor & { pluginId: string }> {
-  return registeredPlugins.flatMap((plugin) =>
+export function getPluginCapabilities(userRoles?: string[]): Array<PluginCapabilityDescriptor & { pluginId: string }> {
+  return getPlugins(userRoles).flatMap((plugin) =>
     (plugin.capabilities ?? []).map((capability) => ({
       ...capability,
       pluginId: plugin.id,

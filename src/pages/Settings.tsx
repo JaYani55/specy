@@ -7,50 +7,20 @@ import { ArrowLeft, LayoutDashboard, PanelLeft, Globe } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ProfileSkeleton } from '@/components/profile/ProfileSkeleton';
-
-// Helper functions for localStorage
-const STORAGE_KEY_PREFIX = 'mentor_app_settings_';
-
-const getUserStorageKey = (userId: string, setting: string) => {
-  return `${STORAGE_KEY_PREFIX}${userId}_${setting}`;
-};
-
-const getStoredSetting = <T,>(userId: string, setting: string, defaultValue: T): T => {
-  try {
-    const key = getUserStorageKey(userId, setting);
-    const stored = localStorage.getItem(key);
-    if (!stored) {
-      return defaultValue;
-    }
-
-    try {
-      return JSON.parse(stored) as T;
-    } catch (parseError) {
-      console.warn(`Failed to parse setting ${setting}:`, parseError);
-      return defaultValue;
-    }
-  } catch (error) {
-    console.warn(`Failed to load setting ${setting}:`, error);
-    return defaultValue;
-  }
-};
-
-const storeSetting = <T,>(userId: string, setting: string, value: T): boolean => {
-  try {
-    const key = getUserStorageKey(userId, setting);
-    localStorage.setItem(key, JSON.stringify(value));
-    return true;
-  } catch (error) {
-    console.error(`Failed to store setting ${setting}:`, error);
-    return false;
-  }
-};
+import {
+  getDefaultLandingOptions,
+  getStoredSetting,
+  resolveDefaultLandingView,
+  storeSetting,
+  type DefaultLandingOption,
+} from '@/services/defaultLandingService';
 
 const Settings = () => {
   const { language, layoutMode, setLayoutMode, changeLanguage } = useTheme();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [defaultView, setDefaultView] = React.useState<string>('events');
+  const [defaultViewOptions, setDefaultViewOptions] = React.useState<DefaultLandingOption[]>([]);
   const [isLoading, setIsLoading] = React.useState<boolean>(true);
   const [isUpdating, setIsUpdating] = React.useState<boolean>(false);
 
@@ -58,9 +28,13 @@ const Settings = () => {
     const loadSettings = async () => {
       if (user) {
         try {
-          // Get default view from localStorage
-          const userDefaultView = getStoredSetting(user.id, 'default_view', 'events');
-          setDefaultView(userDefaultView);
+          const options = await getDefaultLandingOptions(user.roles);
+          setDefaultViewOptions(options);
+
+          const storedDefaultView = getStoredSetting(user.id, 'default_view', '');
+          const resolvedDefaultView = await resolveDefaultLandingView(storedDefaultView, user.roles);
+
+          setDefaultView(resolvedDefaultView);
         } catch (error) {
           console.error("Failed to load user settings:", error);
         } finally {
@@ -168,6 +142,7 @@ const Settings = () => {
             <DefaultViewSetting 
               defaultView={defaultView}
               language={language}
+              options={defaultViewOptions}
               onUpdate={handleUpdateDefaultView}
             />
           </Card>

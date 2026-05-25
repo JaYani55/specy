@@ -55,6 +55,7 @@ import VerwaltungConnections from "./pages/VerwaltungConnections";
 import VerwaltungApi from "./pages/VerwaltungApi";
 import VerwaltungBranding from "./pages/VerwaltungBranding";
 import Plugins from "./pages/Plugins";
+import { getDefaultLandingPath, getStoredSetting, resolveDefaultLandingView } from './services/defaultLandingService';
 
 // Plugin loader — provides build-time routes from installed plugins
 import { getPluginRoutes } from "./plugins/loader";
@@ -81,8 +82,10 @@ const RootRoute = () => {
   useEffect(() => {
     const loadDefaultView = async () => {
       if (user) {
-        console.log("[DEBUG] RootRoute: Redirecting user to events", user.id);
-        navigate('/events', { replace: true });
+        const storedDefaultView = getStoredSetting(user.id, 'default_view', '');
+        const resolvedDefaultView = await resolveDefaultLandingView(storedDefaultView, user.roles);
+
+        navigate(getDefaultLandingPath(resolvedDefaultView), { replace: true });
       }
       setIsLoading(false);
     };
@@ -116,6 +119,8 @@ const DocumentLanguageUpdater = () => {
 
 // Content component must be used inside Router
 const AppContent = () => {
+  const { user } = useAuth();
+
   return (
     <>
       <DocumentLanguageUpdater />
@@ -284,7 +289,7 @@ const AppContent = () => {
           <Route path="/plugins" element={<ProtectedRoute requiredRole="admin"><Plugins /></ProtectedRoute>} />
 
           {/* Dynamic plugin routes (build-time, from src/plugins/registry.ts) */}
-          {getPluginRoutes().map((r) => (
+          {getPluginRoutes(user?.roles ?? []).map((r) => (
             <Route
               key={r.path}
               path={r.path}

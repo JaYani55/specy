@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { usePermissions } from '@/hooks/usePermissions';
 import { useEnabledWebapps } from '@/hooks/useEnabledWebapps';
+import { getPluginSidebarItems } from '@/plugins/loader';
 import { Moon, Sun, Menu, Calendar, Users, List, X, Settings, LogOut, HelpCircle, SlidersHorizontal, FileText, Globe, ClipboardList } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -15,6 +16,7 @@ const Navbar = () => {
   const { webapps } = useEnabledWebapps();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const userRoles = user?.roles ?? [];
 
   const menuItems = [
     { icon: Users, label: language === "en" ? "Events" : "Veranstaltungen", href: "/events" },
@@ -43,6 +45,12 @@ const Navbar = () => {
     );
   }
 
+  const pluginMainItems = getPluginSidebarItems('main', userRoles).filter((item) => {
+    if (item.requiredRole === 'super-admin') return userRoles.includes('super-admin');
+    if (item.requiredRole === 'admin') return userRoles.includes('admin') || userRoles.includes('super-admin');
+    return true;
+  });
+
   const webappItems = webapps;
 
   const toggleMobileMenu = () => setMobileMenuOpen(!mobileMenuOpen);
@@ -63,6 +71,18 @@ const Navbar = () => {
                 key={item.href}
                 to={item.href}
                 className={`nav-button${location.pathname === item.href || location.pathname.startsWith(`${item.href}/`) ? " nav-button-active" : ""}`}
+              >
+                <div className="flex items-center space-x-1">
+                  <item.icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </div>
+              </Link>
+            ))}
+            {pluginMainItems.map((item) => (
+              <Link
+                key={item.key}
+                to={item.path}
+                className={`nav-button${location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) ? " nav-button-active" : ""}`}
               >
                 <div className="flex items-center space-x-1">
                   <item.icon className="h-4 w-4" />
@@ -151,6 +171,21 @@ const Navbar = () => {
                 to={item.href}
                 className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
                   location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
+                    ? "bg-primary text-primary-foreground"
+                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <item.icon className="h-5 w-5 mr-2" />
+                <span>{item.label}</span>
+              </Link>
+            ))}
+            {pluginMainItems.map((item) => (
+              <Link
+                key={item.key}
+                to={item.path}
+                className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
+                  location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
                     ? "bg-primary text-primary-foreground"
                     : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
                 }`}
