@@ -27,7 +27,9 @@ interface LoggingConfigPayload {
 }
 
 interface BrandingConfigPayload {
-  logoUrl?: string;
+  logoMode?: 'default' | 'custom';
+  customLogoUrl?: string;
+  logoScale?: number;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -125,14 +127,18 @@ config.put('/branding', async (c) => {
   }
 
   await upsertBrandingConfig(c.env, {
-    logoUrl: body.logoUrl?.trim() ?? '',
+    logoMode: body.logoMode === 'custom' ? 'custom' : 'default',
+    customLogoUrl: body.customLogoUrl?.trim() ?? '',
+    logoScale: Number.isFinite(body.logoScale)
+      ? Math.min(180, Math.max(50, Math.round(Number(body.logoScale))))
+      : 100,
   });
+
+  const branding = await getBrandingConfig(c.env);
 
   return c.json({
     success: true,
-    branding: {
-      logoUrl: body.logoUrl?.trim() ?? '',
-    },
+    branding,
   });
 });
 

@@ -52,8 +52,8 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <div className="flex-shrink-0">
-            <Link to="/events">
-              <Logo />
+            <Link to="/events" className="flex items-center">
+              <Logo variant="navbar" />
             </Link>
           </div>
 

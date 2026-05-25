@@ -106,11 +106,9 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center justify-center py-4">
-           <Link to="/events" className="flex items-center justify-center w-full">
-              <div className="scale-90 origin-left">
-                <Logo />
-              </div>
+        <div className="flex items-center justify-center px-3 py-4">
+          <Link to="/events" className="flex min-h-[56px] w-full items-center justify-center">
+            <Logo variant="sidebar" className="max-w-full" />
            </Link>
         </div>
       </SidebarHeader>

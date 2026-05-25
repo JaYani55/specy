@@ -58,7 +58,7 @@ const Login = () => {
       <div className="w-full max-w-md space-y-8 glass p-8 rounded-xl">
         <div className="space-y-2 text-center">
           <div className="flex justify-center pb-2">
-            <Logo className="h-14 w-auto" />
+            <Logo variant="login" className="max-w-full" />
           </div>
           <h1 className="text-3xl font-bold">
             {language === "en" ? "Welcome back" : "Willkommen zurück"}

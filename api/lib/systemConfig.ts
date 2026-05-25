@@ -5,7 +5,7 @@ const MAIL_NAMESPACE = 'mail';
 const LOGGING_NAMESPACE = 'logging';
 
 type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url' | 'media.extra_sources' | 'media.source_mounts';
-type BrandingConfigKey = 'branding.logo_url';
+type BrandingConfigKey = 'branding.logo_mode' | 'branding.logo_url' | 'branding.logo_scale';
 type MailConfigKey =
   | 'provider'
   | 'from_name'
@@ -30,7 +30,30 @@ export interface StorageConfigValues {
 }
 
 export interface BrandingConfigValues {
-  logoUrl: string;
+  logoMode: 'default' | 'custom';
+  customLogoUrl: string;
+  logoScale: number;
+}
+
+function normalizeBrandingConfig(input: Partial<BrandingConfigValues>): BrandingConfigValues {
+  const customLogoUrl = trimString(input.customLogoUrl);
+  const requestedMode = input.logoMode;
+  const logoMode = requestedMode === 'custom' && customLogoUrl
+    ? 'custom'
+    : requestedMode === 'default'
+      ? 'default'
+      : customLogoUrl
+        ? 'custom'
+        : 'default';
+  const logoScale = Number.isFinite(Number(input.logoScale))
+    ? Math.min(180, Math.max(50, Math.round(Number(input.logoScale))))
+    : 100;
+
+  return {
+    logoMode,
+    customLogoUrl,
+    logoScale,
+  };
 }
 
 export type MediaSourceType = 'supabase' | 'r2' | 's3';
@@ -256,17 +279,26 @@ export async function upsertStorageConfig(env: Env, input: StorageConfigValues):
 }
 
 export async function getBrandingConfig(env: Env): Promise<BrandingConfigValues> {
-  const logoUrl = await getConfigValue(env, CORE_NAMESPACE, 'branding.logo_url');
+  const [logoModeRaw, customLogoUrl, logoScaleRaw] = await Promise.all([
+    getConfigValue(env, CORE_NAMESPACE, 'branding.logo_mode'),
+    getConfigValue(env, CORE_NAMESPACE, 'branding.logo_url'),
+    getConfigValue(env, CORE_NAMESPACE, 'branding.logo_scale'),
+  ]);
 
-  return {
-    logoUrl,
-  };
+  return normalizeBrandingConfig({
+    logoMode: logoModeRaw === 'custom' || logoModeRaw === 'default' ? logoModeRaw : undefined,
+    customLogoUrl,
+    logoScale: Number(logoScaleRaw),
+  });
 }
 
 export async function upsertBrandingConfig(env: Env, input: BrandingConfigValues): Promise<void> {
   const admin = await createSupabaseAdminClient(env);
+  const normalized = normalizeBrandingConfig(input);
   const rows: Array<{ namespace: string; key: BrandingConfigKey; value: string }> = [
-    { namespace: CORE_NAMESPACE, key: 'branding.logo_url', value: input.logoUrl },
+    { namespace: CORE_NAMESPACE, key: 'branding.logo_mode', value: normalized.logoMode },
+    { namespace: CORE_NAMESPACE, key: 'branding.logo_url', value: normalized.customLogoUrl },
+    { namespace: CORE_NAMESPACE, key: 'branding.logo_scale', value: String(normalized.logoScale) },
   ];
 
   const { error } = await admin.from('system_config').upsert(rows, { onConflict: 'namespace,key' });
