@@ -8,7 +8,7 @@
  * Usage:
  *   node scripts/install-plugins.mjs               # fetch from DB → interactive picker
  *   node scripts/install-plugins.mjs --all         # fetch from DB → install all (no picker, CI-safe)
- *   node scripts/install-plugins.mjs --local       # install from local plugins.json (no DB)
+ *   node scripts/install-plugins.mjs --local       # install remote entries from plugins.json (no DB)
  *   node scripts/install-plugins.mjs --add <url>   # register a GitHub URL + install it directly
  *   node scripts/install-plugins.mjs --list        # list plugins (DB + local state)
  *   node scripts/install-plugins.mjs --help        # show usage
@@ -34,11 +34,12 @@ import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
 import { createInterface } from 'readline';
 import { createClient } from '@supabase/supabase-js';
+import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR } from './lib/plugin-workspace.mjs';
 
 const __dirname     = dirname(fileURLToPath(import.meta.url));
 const ROOT          = resolve(__dirname, '..');
 const PLUGINS_JSON       = join(ROOT, 'plugins.json');
-const PLUGINS_DIR        = join(ROOT, 'src', 'plugins');
+const PLUGINS_DIR        = WORKSPACE_PLUGINS_DIR;
 const REGISTRY_FILE      = join(PLUGINS_DIR, 'registry.ts');
 const HOOKS_REGISTRY_FILE = join(PLUGINS_DIR, 'hooks-registry.ts');
 const PLUGIN_ROUTES_FILE = join(ROOT, 'api', 'plugin-routes.ts');
@@ -270,7 +271,7 @@ async function pickPlugins(rows) {
 // ─── plugins.json helpers ─────────────────────────────────────────────────────
 
 function readPluginsJson() {
-  if (!existsSync(PLUGINS_JSON)) die(`plugins.json not found at ${PLUGINS_JSON}`);
+  if (!existsSync(PLUGINS_JSON)) return { version: '1', description: 'Remote plugin sources for installer use.', plugins: [] };
   try { return JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')); }
   catch (e) { die(`Failed to parse plugins.json: ${e.message}`); }
 }
@@ -374,7 +375,7 @@ async function downloadAndExtract(zipUrl, targetDir) {
     if (existsSync(targetDir)) await rm(targetDir, { recursive: true, force: true });
     await rename(innerDir, targetDir);
 
-    ok(`  Extracted to src/plugins/${targetDir.split(/[\\/]src[\\/]plugins[\\/]/)[1]}`);
+    ok(`  Extracted to plugins/${targetDir.split(/[\\/]plugins[\\/]/)[1]}`);
   } finally {
     if (existsSync(tmpZip)) { try { await rm(tmpZip, { force: true }); } catch {} }
     if (existsSync(tmpDir)) { try { await rm(tmpDir, { recursive: true, force: true }); } catch {} }
@@ -532,7 +533,7 @@ function validatePluginMigrations(slug) {
 
   if (!schemaDefined) {
     errors.push(
-      `src/plugins/${slug}/migrations/: missing CREATE SCHEMA for plugin schema (${allowedSchemas.join(' or ')}).`,
+      `plugins/${slug}/migrations/: missing CREATE SCHEMA for plugin schema (${allowedSchemas.join(' or ')}).`,
     );
   }
 
@@ -921,12 +922,8 @@ async function _doInstall(entries, supabase) {
     }
   }
 
-  // Rebuild registry and plugin API routes from ALL entries in plugins.json
-  const allSlugs = (readPluginsJson().plugins ?? []).map((p) => p.id);
-  const installed = rebuildRegistry(allSlugs);
-  rebuildHookRegistry(installed);
-  rebuildPluginRoutes(allSlugs);
-  rebuildPluginMetadata(allSlugs);
+  // Rebuild generated plugin artifacts from the current /plugins workspace folder.
+  rebuildWorkspacePluginArtifacts();
   await applyPluginMigrations(results.ok);
 
   log(`\n${c.bold}Done${c.reset}`);
@@ -981,12 +978,11 @@ async function cmdList() {
     } catch (e) { await client.auth.signOut().catch(() => {}); warn(`Could not fetch from Supabase: ${e.message}`); }
   }
   // Fallback — local only
-  const { plugins = [] } = readPluginsJson();
-  if (!plugins.length) { info('No plugins registered in plugins.json.'); return; }
-  log(`\n${c.bold}Registered plugins (local plugins.json):${c.reset}`);
-  plugins.forEach((p) => {
-    const state = existsSync(join(PLUGINS_DIR, p.id)) ? `${c.green}installed${c.reset}` : `${c.yellow}not installed${c.reset}`;
-    log(`  ${c.cyan}${p.id}${c.reset}  ${p.repo_url}  [${p.ref ?? 'HEAD'}]  ${state}`);
+  const plugins = scanWorkspacePlugins();
+  if (!plugins.length) { info('No workspace plugins found in /plugins.'); return; }
+  log(`\n${c.bold}Workspace plugins:${c.reset}`);
+  plugins.forEach((plugin) => {
+    log(`  ${c.cyan}${plugin.id}${c.reset}  plugins/${plugin.dirName}`);
   });
   log('');
 }
@@ -1067,7 +1063,7 @@ async function cmdPickAndInstall(installAll = false) {
 async function cmdLocalInstall() {
   const data       = readPluginsJson();
   const allPlugins = data.plugins ?? [];
-  if (!allPlugins.length) { info('No plugins in plugins.json.'); rebuildRegistry([]); return; }
+  if (!allPlugins.length) { info('No plugins in plugins.json.'); rebuildWorkspacePluginArtifacts(); return; }
   // No DB connection — pass null; DB status updates will be skipped
   await _doInstall(allPlugins, null);
 }
@@ -1080,7 +1076,7 @@ if (args.includes('--help') || args.includes('-h')) {
   log('Usage:');
   log('  node scripts/install-plugins.mjs               Fetch from DB → interactive picker');
   log('  node scripts/install-plugins.mjs --all         Fetch from DB → install all registered (CI-safe)');
-  log('  node scripts/install-plugins.mjs --local       Install from local plugins.json (no DB required)');
+  log('  node scripts/install-plugins.mjs --local       Install remote entries from plugins.json (no DB required)');
   log('  node scripts/install-plugins.mjs --add <url>   Register + install a GitHub repo directly');
   log('  node scripts/install-plugins.mjs --list        List plugins (DB status + local state)');
   log('');

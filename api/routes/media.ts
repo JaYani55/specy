@@ -16,9 +16,22 @@
 
 import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
-import { requireAppRole } from '../lib/auth';
+import { getOptionalAuthSession, requireAuthSession } from '../lib/auth';
 import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig, type ResolvedMediaSourceMount } from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
+import {
+  assertTenantStorageAccess,
+  assertTenantStorageQuota,
+  buildTenantStorageObjectKey,
+  deleteTenantStorageObject,
+  ensureTenantStorageSummary,
+  filterTenantStorageSources,
+  getTenantStorageObjectByKey,
+  isManagedTenantStorageObject,
+  listTenantStorageItems,
+  normalizeTenantStorageFolderPath,
+  registerTenantStorageObject,
+} from '../lib/tenantStorageMgt';
 import { Env, createSupabaseClient, createSupabaseAdminClient } from '../lib/supabase';
 import { getMediaSourceMounts, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
 
@@ -218,7 +231,10 @@ media.get('/config', async (c) => {
 
 // GET /api/media/sources — returns all configured sources for the media picker
 media.get('/sources', async (c) => {
-  const sources = (await resolveAllMediaSourceMounts(c.env, c.req.url))
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  const allSources = (await resolveAllMediaSourceMounts(c.env, c.req.url))
     .filter((mount) => mount.type !== 'unconfigured')
     .map((mount) => ({
       id: mount.id,
@@ -227,6 +243,8 @@ media.get('/sources', async (c) => {
       configured: mount.configured,
       isDefault: mount.isDefault,
     }));
+
+  const sources = await filterTenantStorageSources(auth, allSources);
 
   return c.json({ sources });
 });
@@ -255,30 +273,16 @@ media.get('/list', async (c) => {
     }
 
     if (cfg.provider === 'r2') {
-      // ── R2 ──────────────────────────────────────────────────────────────
-      const bucket = c.env.MEDIA_BUCKET!;
-      const prefix = path ? (path.endsWith('/') ? path : `${path}/`) : '';
-      const result = await bucket.list({ prefix, delimiter: '/' });
+      const auth = await requireAuthSession(c);
+      if (auth instanceof Response) return auth;
 
-      const folders: MediaItem[] = result.delimitedPrefixes.map((p) => ({
-        name: p.replace(prefix, '').replace(/\/$/, ''),
-        path: p,
-        url: '',
-        isFolder: true,
-      }));
+      const { items, summary } = await listTenantStorageItems(c.env, auth, {
+        scope: 'media',
+        folderPath: path,
+        requestUrl: c.req.url,
+      });
 
-      const files: MediaItem[] = result.objects
-        .filter((o) => o.key !== prefix)
-        .map((o) => ({
-          name: o.key.replace(prefix, ''),
-          path: o.key,
-          url: buildMediaMountUrl(cfg, c.req.url, o.key),
-          isFolder: false,
-          size: o.size,
-          createdAt: o.uploaded?.toISOString(),
-        }));
-
-      return c.json({ items: [...folders, ...files] });
+      return c.json({ items, storage: summary });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
       const supabase = await createStorageClient(c.env, token);
@@ -324,7 +328,7 @@ media.get('/list', async (c) => {
 
 // POST /api/media/upload  (multipart/form-data: file, path?, source?)
 media.post('/upload', async (c) => {
-  const auth = await requireAppRole(c, 'user');
+  const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
 
   let formData: FormData;
@@ -337,7 +341,7 @@ media.post('/upload', async (c) => {
   const file = formData.get('file') as File | null;
   if (!file) return c.json({ error: 'No file provided' }, 400);
 
-  const folder = (formData.get('path') as string | null) ?? '';
+  const folder = normalizeTenantStorageFolderPath((formData.get('path') as string | null) ?? '');
   const sourceParam = (formData.get('source') as string | null) ?? c.req.query('source');
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = folder ? `${folder.replace(/\/$/, '')}/${safeName}` : safeName;
@@ -361,12 +365,40 @@ media.post('/upload', async (c) => {
     }
 
     if (cfg.provider === 'r2') {
-      // ── R2 ──────────────────────────────────────────────────────────────
-      const bucket = c.env.MEDIA_BUCKET!;
+      const summary = await ensureTenantStorageSummary(c.env, auth, { scope: 'media' });
+      assertTenantStorageAccess(summary);
       const buf = await file.arrayBuffer();
-      await bucket.put(key, buf, { httpMetadata: { contentType: file.type } });
-      const url = buildMediaMountUrl(cfg, c.req.url, key);
-      return c.json({ url, path: key });
+      assertTenantStorageQuota(summary, buf.byteLength);
+
+      const scoped = buildTenantStorageObjectKey({
+        tenantId: summary.tenantId,
+        userId: summary.userId,
+        scope: 'media',
+        folderPath: folder,
+        filename: safeName,
+      });
+
+      const bucket = c.env.MEDIA_BUCKET!;
+      await bucket.put(scoped.objectKey, buf, { httpMetadata: { contentType: file.type } });
+
+      try {
+        await registerTenantStorageObject(c.env, auth, {
+          tenantId: summary.tenantId,
+          scope: 'media',
+          sourceMountId: cfg.id,
+          folderPath: scoped.folderPath,
+          objectKey: scoped.objectKey,
+          filename: scoped.filename,
+          contentType: file.type || null,
+          sizeBytes: buf.byteLength,
+        });
+      } catch (error) {
+        await bucket.delete(scoped.objectKey);
+        throw error;
+      }
+
+      const url = buildMediaMountUrl(cfg, c.req.url, scoped.objectKey);
+      return c.json({ url, path: scoped.objectKey });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
       const supabase = await createStorageClient(c.env, token);
@@ -390,7 +422,7 @@ media.delete('/file', async (c) => {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path query param required' }, 400);
 
-  const auth = await requireAppRole(c, 'user');
+  const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
 
   const sourceParam = c.req.query('source');
@@ -409,7 +441,9 @@ media.delete('/file', async (c) => {
 
       await s3Delete(toExtraMediaSource(cfg), secretAccessKey, path);
     } else if (cfg.provider === 'r2') {
-      await c.env.MEDIA_BUCKET!.delete(path);
+      const summary = await ensureTenantStorageSummary(c.env, auth, { scope: 'media' });
+      assertTenantStorageAccess(summary);
+      await deleteTenantStorageObject(c.env, auth, path);
     } else {
       const supabase = await createStorageClient(c.env, token);
       const { error } = await supabase.storage.from(cfg.bucket!).remove([path]);
@@ -449,6 +483,21 @@ media.get('/file', async (c) => {
     return c.redirect(url, 302);
   }
 
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  if (!auth) {
+    const isManagedObject = await isManagedTenantStorageObject(c.env, path);
+    if (isManagedObject) {
+      return c.json({ error: 'Authentication required.' }, 401);
+    }
+  } else {
+    const trackedObject = await getTenantStorageObjectByKey(c.env, auth, path, 'media');
+    if (!trackedObject) {
+      return c.json({ error: 'File not found' }, 404);
+    }
+  }
+
   const object = await c.env.MEDIA_BUCKET!.get(path);
   if (!object) {
     return c.json({ error: 'File not found' }, 404);
@@ -460,7 +509,7 @@ media.get('/file', async (c) => {
   }
   headers.set('Cache-Control', 'public, max-age=300');
 
-  return new Response(object.body, { headers });
+  return new Response(await object.arrayBuffer(), { headers });
 });
 
 export default media;

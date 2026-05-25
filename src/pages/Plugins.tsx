@@ -578,8 +578,9 @@ export default function Plugins() {
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          <strong>Workflow:</strong> Plugins werden hier registriert und anschliessend per <code>plugins.json</code>,{' '}
-          <code>node scripts/install-plugins.mjs</code>, Build und Deploy aktiviert. Webapps werden direkt als externer
+          <strong>Workflow:</strong> Plugins werden aus dem Workspace-Ordner <code>plugins/</code> registriert und per{' '}
+          <code>node scripts/register-plugins.mjs</code> in die generierten Registry-Dateien übernommen.{' '}
+          <code>plugins.json</code> dient nur noch als optionale Quellenliste für Remote-Installationen. Webapps werden direkt als externer
           Navigationspunkt gespeichert und erscheinen nach dem Aktivieren automatisch in Navbar und Sidebar.
         </AlertDescription>
       </Alert>
@@ -1021,7 +1022,7 @@ export default function Plugins() {
             <AlertDialogDescription>
               {deleteTarget && isWebappRegistration(deleteTarget)
                 ? <>Dies entfernt den Datenbankeintrag für <strong>{deleteTarget.name}</strong> und entfernt den Navigationspunkt aus der Anwendung.</>
-                : <>Dies entfernt den Datenbankeintrag für <strong>{deleteTarget?.name}</strong>. Installierte Dateien in <code>src/plugins/{deleteTarget?.slug}/</code> bleiben erhalten und müssen manuell gelöscht werden.</>}
+                : <>Dies entfernt den Datenbankeintrag für <strong>{deleteTarget?.name}</strong>. Lokale Plugin-Dateien in <code>plugins/{deleteTarget?.slug}/</code> bleiben erhalten und müssen bei Bedarf separat entfernt werden.</>}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -12,9 +12,9 @@
  *
  * What it does:
  *   1. Reads the plugin manifest to collect deps, api_entrypoint, and migrations
- *   2. Deletes src/plugins/{id}/
+ *   2. Deletes plugins/{id}/
  *   3. Removes the entry from plugins.json
- *   4. Rebuilds src/plugins/registry.ts
+ *   4. Rebuilds generated plugin registry artifacts
  *   5. (--prune-deps) npm-uninstalls packages not used by any other plugin
  *   6. Prints manual cleanup steps (API route in api/index.ts, Supabase migrations)
  *
@@ -30,11 +30,12 @@ import { spawn } from 'child_process';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'readline';
+import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR } from './lib/plugin-workspace.mjs';
 
 const __dirname          = dirname(fileURLToPath(import.meta.url));
 const ROOT               = resolve(__dirname, '..');
 const PLUGINS_JSON       = join(ROOT, 'plugins.json');
-const PLUGINS_DIR        = join(ROOT, 'src', 'plugins');
+const PLUGINS_DIR        = WORKSPACE_PLUGINS_DIR;
 const REGISTRY_FILE      = join(PLUGINS_DIR, 'registry.ts');
 const HOOKS_REGISTRY_FILE = join(PLUGINS_DIR, 'hooks-registry.ts');
 const PLUGIN_DEPS_FILE   = join(ROOT, 'plugin-deps.json');
@@ -410,7 +411,7 @@ const die  = (m) => { fail(m); process.exit(1); };
 // ─── plugins.json helpers ─────────────────────────────────────────────────────
 
 function readPluginsJson() {
-  if (!existsSync(PLUGINS_JSON)) die(`plugins.json not found at ${PLUGINS_JSON}`);
+  if (!existsSync(PLUGINS_JSON)) return { version: '1', description: 'Remote plugin sources for installer use.', plugins: [] };
   try { return JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')); }
   catch (e) { die(`Failed to parse plugins.json: ${e.message}`); }
 }
@@ -654,13 +655,11 @@ function confirm(question) {
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 async function cmdList() {
-  const { plugins = [] } = readPluginsJson();
-  if (!plugins.length) { info('No plugins registered in plugins.json.'); return; }
-  log(`\n${c.bold}Registered plugins:${c.reset}`);
-  plugins.forEach((p) => {
-    const installed = existsSync(join(PLUGINS_DIR, p.id))
-      ? `${c.green}installed${c.reset}` : `${c.yellow}not installed${c.reset}`;
-    log(`  ${c.cyan}${p.id}${c.reset}  ${p.repo_url ?? ''}  [${p.ref ?? 'HEAD'}]  ${installed}`);
+  const plugins = scanWorkspacePlugins();
+  if (!plugins.length) { info('No workspace plugins found in /plugins.'); return; }
+  log(`\n${c.bold}Workspace plugins:${c.reset}`);
+  plugins.forEach((plugin) => {
+    log(`  ${c.cyan}${plugin.id}${c.reset}  plugins/${plugin.dirName}`);
   });
   log('');
 }
@@ -668,10 +667,11 @@ async function cmdList() {
 async function cmdUninstall(pluginId, pruneDepsFlag) {
   const data    = readPluginsJson();
   const plugins = data.plugins ?? [];
-  const entry   = plugins.find((p) => p.id === pluginId);
+  const entry   = plugins.find((p) => p.id === pluginId) ?? null;
+  const pluginDir = join(PLUGINS_DIR, pluginId);
 
-  if (!entry) {
-    die(`Plugin "${pluginId}" not found in plugins.json.\nRun --list to see registered plugins.`);
+  if (!entry && !existsSync(pluginDir)) {
+    die(`Plugin "${pluginId}" not found in /plugins or plugins.json.\nRun --list to see workspace plugins.`);
   }
 
   // ── Supabase auth (best-effort — local cleanup proceeds even if login fails) ─
@@ -687,7 +687,6 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     warn('Supabase credentials not found \u2014 DB status will not be updated.');
   }
 
-  const pluginDir = join(PLUGINS_DIR, pluginId);
   const manifest  = existsSync(pluginDir) ? loadManifest(pluginDir) : null;
 
   // ── Summary ────────────────────────────────────────────────────────────────
@@ -699,7 +698,7 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   log('');
 
   if (!process.argv.includes('--yes') && !process.argv.includes('-y')) {
-    const confirmed = await confirm(`Remove "${pluginId}" and delete src/plugins/${pluginId}/?`);
+    const confirmed = await confirm(`Remove "${pluginId}" and delete plugins/${pluginId}/?`);
     if (!confirmed) { info('Aborted.'); process.exit(0); }
   }
 
@@ -720,21 +719,20 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   // ── 2. Delete directory ────────────────────────────────────────────────────
   if (existsSync(pluginDir)) {
     await rm(pluginDir, { recursive: true, force: true });
-    ok(`Deleted src/plugins/${pluginId}/`);
+    ok(`Deleted plugins/${pluginId}/`);
   } else {
-    warn(`src/plugins/${pluginId}/ not found — already deleted?`);
+    warn(`plugins/${pluginId}/ not found — already deleted?`);
   }
 
   // ── 3. Remove from plugins.json ────────────────────────────────────────────
-  data.plugins = plugins.filter((p) => p.id !== pluginId);
-  writePluginsJson(data);
-  ok(`Removed "${pluginId}" from plugins.json`);
+  if (entry) {
+    data.plugins = plugins.filter((p) => p.id !== pluginId);
+    writePluginsJson(data);
+    ok(`Removed "${pluginId}" from plugins.json`);
+  }
 
   // ── 4. Rebuild registry + plugin API routes ────────────────────────────────
-  rebuildRegistry();
-  rebuildHookRegistry();
-  rebuildPluginRoutes();
-  rebuildPluginMetadata();
+  rebuildWorkspacePluginArtifacts();
 
   // ── 5. Clean plugin-deps.json ──────────────────────────────────────────────
   const pluginDeps = readPluginDeps();

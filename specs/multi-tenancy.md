@@ -39,6 +39,12 @@ The refactor uses two overlapping concepts:
 - `tenant_users.is_tenant_admin` grants delegated administration within one tenant
 - Tenant membership is separate from global roles and is used to determine which users and rows a tenant admin may manage
 
+3. Tenant-scoped managed storage
+
+- managed file/media storage is tracked in core tenant-scoped tables rather than inferred from bucket listing
+- storage entitlement is resolved separately from package presence through backend hook targets
+- plugins may contribute storage policy rules without taking ownership of the core storage schema
+
 ### Ownership Model
 
 The target ownership model is hybrid in storage but user-centric in enforcement:
@@ -83,17 +89,18 @@ The following multi-tenancy migrations were added:
 3. `migrations/202605240003_multi_tenant_rls_hardening.sql`
 4. `migrations/202605240004_tenant_assignment_rls_fix.sql`
 5. `migrations/202605240005_console_visibility_hardening.sql`
+6. `migrations/202605250001_tenant_storage_management.sql`
 
 Manifest status:
 
-- `scripts/lib/core-update.mjs` contains `001` through `005`
-- `scripts/setup.mjs` now also contains `001` through `005`
+- `scripts/lib/core-update.mjs` contains `001` through `005` plus `202605250001_tenant_storage_management.sql`
+- `scripts/setup.mjs` now also contains `001` through `005` plus `202605250001_tenant_storage_management.sql`
 
 This distinction matters operationally:
 
 - update runs now apply the two follow-up fixes automatically
 - fresh setup now applies the same tenancy follow-up fixes as updater-driven environments
-- update and fresh setup are back in sync for the current tenancy migration set
+- update and fresh setup are back in sync for the current tenancy migration set, including managed storage
 
 ---
 
@@ -466,6 +473,108 @@ This migration narrows authenticated console reads so users no longer see other 
 
 ---
 
+## Migration 6: Tenant Storage Management
+
+File: `migrations/202605250001_tenant_storage_management.sql`
+
+### Purpose
+
+This migration introduces an authoritative tenant-scoped storage ledger for managed files and media.
+
+The key design decision is:
+
+- bucket contents are not the source of truth for quota, access, or visibility
+- the database is the source of truth
+- object delivery and quota enforcement must therefore align with tenant-aware RLS and user ownership
+
+### New Tables
+
+#### `public.tenant_storage_allocations`
+
+Tracks provisioned storage allocations per tenant and per user.
+
+Fields:
+
+- `tenant_id`
+- `user_id`
+- `quota_bytes`
+- `used_bytes_cached`
+- `status`
+- `provisioned_by`
+- `provisioned_at`
+- `created_at`
+- `updated_at`
+
+Operational meaning:
+
+- one row represents the storage allocation for one user inside one tenant
+- `quota_bytes` is the effective managed quota unless hook logic declares the user unlimited
+- `used_bytes_cached` is maintained automatically from object inserts, updates, and deletes
+
+#### `public.tenant_storage_objects`
+
+Tracks every managed object stored under tenant-scoped storage.
+
+Fields:
+
+- `id`
+- `tenant_id`
+- `user_id`
+- `scope`
+- `source_mount_id`
+- `folder_path`
+- `object_key`
+- `filename`
+- `content_type`
+- `size_bytes`
+- `metadata`
+- `created_by`
+- `created_at`
+- `updated_at`
+
+Important semantics:
+
+- `scope` is currently constrained to `media` and `files`
+- `object_key` is globally unique and is the storage-key reference into the underlying bucket
+- `source_mount_id` allows the object ledger to remain independent of one hardcoded storage provider label
+
+### Usage-Sync Function And Triggers
+
+The migration adds:
+
+- `public.sync_tenant_storage_allocation_usage()`
+- updated-at triggers for allocations and objects
+- an insert/update/delete trigger on `tenant_storage_objects` that keeps `tenant_storage_allocations.used_bytes_cached` synchronized
+
+This is the mechanism that makes cached quota enforcement viable without trusting raw bucket scans.
+
+### RLS Added
+
+RLS is enabled on:
+
+- `tenant_storage_allocations`
+- `tenant_storage_objects`
+
+Policy behavior:
+
+- a user may read their own allocation when they are also a member of that tenant
+- tenant admins may manage allocations inside their tenant
+- users may insert and delete their own objects inside their tenant
+- tenant admins may update storage objects for members of their tenant
+- `super-admin` retains global visibility and control
+
+### Architectural Boundary
+
+This migration is intentionally core, not plugin-owned.
+
+That means:
+
+- managed storage tables are part of the platform tenancy model
+- plugins may add entitlement and source-filtering logic through backend hooks
+- plugins should not own the base storage ledger schema just because one plugin consumes it first
+
+---
+
 ## Route-Level Changes
 
 Database hardening alone is not sufficient when route handlers use a service client that bypasses RLS. The following route changes were therefore included.
@@ -529,6 +638,29 @@ Effect:
 
 - MCP specs can now be explicitly assigned to a workspace from the editor
 - schema attachments and MCP discovery remain consistent with tenant-aware RLS
+
+### Media API And Tenant Storage
+
+Files: `api/routes/media.ts`, `api/lib/tenantStorageMgt.ts`, `api/lib/tenantStorageHooks.ts`
+
+Changes:
+
+- R2-backed managed uploads now go through `tenantStorageMgt` instead of raw bucket traversal
+- object visibility is resolved from `tenant_storage_objects`, not from global bucket listing
+- quota is enforced against `tenant_storage_allocations`
+- anonymous reads of managed objects are blocked even if the raw key is known
+- the core service exposes backend hook targets so plugin-specific storage policy stays outside core business logic
+
+Current hook targets:
+
+- `storage.tenant.policy`
+- `storage.tenant.sources`
+
+Effect:
+
+- tenant storage now follows the same ownership and membership model as other content surfaces
+- managed R2 objects are no longer implicitly public because a bucket key exists
+- core storage remains plugin-neutral while entitlement remains extensible
 
 ### Remaining Admin-Client Uses
 
@@ -654,6 +786,24 @@ Impact:
 - `admin` no longer implies access to global secrets or runtime configuration
 - database-level protection now exists in addition to route guards
 
+### Managed Storage And Media
+
+Affected tables and surfaces:
+
+- `tenant_storage_allocations`
+- `tenant_storage_objects`
+- `api/routes/media.ts`
+- `api/lib/tenantStorageMgt.ts`
+- `api/lib/tenantStorageHooks.ts`
+
+Impact:
+
+- managed storage is now tenant-aware and user-scoped at the database layer
+- media visibility no longer depends on raw object listing from the bound R2 bucket
+- quota is tracked from the database ledger instead of inferred from provider-side listing
+- support-style or paid addon storage entitlements can be layered in through plugin hooks instead of hardcoding plugin business logic into core
+- scoped object keys follow the tenant/user ownership model rather than arbitrary caller-provided paths
+
 ### Plugins And Webapps
 
 Affected tables and surfaces:
@@ -668,6 +818,7 @@ Current status:
 
 - plugin registry writes are still platform-level
 - plugin and webapp tenancy is documented here as the target model, but is not fully implemented yet
+- plugin-specific storage entitlements now use backend hook targets so package presence and storage entitlement remain separate concerns
 
 Target model:
 
@@ -681,6 +832,26 @@ Important boundary:
 
 - plugin package presence in the repo is not the same thing as plugin entitlement
 - a plugin may be installed globally while only some tenant users are authorized to use it
+- a plugin may also contribute storage entitlement logic without owning the underlying storage tables or bypassing tenant-aware RLS
+
+### Storage Hook Decision
+
+The managed storage model now explicitly separates:
+
+1. Core storage management
+
+- tenant/user storage tables
+- quota cache synchronization
+- media route enforcement
+- scoped key generation and tracked object lifecycle
+
+2. Plugin-specific entitlement logic
+
+- storage quotas for specific addon packages
+- source filtering rules for specific user roles
+- plugin-owned dashboard/reporting surfaces
+
+This keeps tenancy infrastructure generic while still allowing addon-specific commercial or support logic.
 
 ---
 
@@ -747,6 +918,7 @@ This prevents accidental creation of a globally visible template library.
 - `api/routes/schemas.ts`
 - `api/routes/mcp.ts`
 - `api/routes/specs.ts`
+- `api/routes/media.ts`
 
 ### Frontend And Shared Service Files
 
@@ -767,6 +939,12 @@ This prevents accidental creation of a globally visible template library.
 - `src/types/objects.ts`
 - `src/types/pagebuilder.ts`
 - `src/types/specs.ts`
+- `api/lib/tenantStorageMgt.ts`
+- `api/lib/tenantStorageHooks.ts`
+- `plugins/pluradash/api/storageHooks.ts`
+- `plugins/pluradash/api/index.ts`
+- `plugins/pluradash/src/pages/WelcomePage.tsx`
+- `plugins/pluradash/src/services/pluradashService.ts`
 
 These changes are functionally part of the multi-tenancy rollout because they ensure the new RLS policies are actually respected at runtime.
 
@@ -813,20 +991,22 @@ Because there is only one production database, deployment should be treated as a
 ### Pre-Deployment Checklist
 
 1. Review all five multi-tenancy migrations in full.
-2. Confirm update environments will apply `004` and `005` through `scripts/lib/core-update.mjs`.
-3. Confirm both `scripts/lib/core-update.mjs` and `scripts/setup.mjs` still include `004` and `005` before release.
-4. Review the ownership backfill rules for legacy content.
-5. Identify which tables may contain rows with no trustworthy owner signal.
-6. Confirm operational owners for:
+3. Review `202605250001_tenant_storage_management.sql` in full before rollout.
+4. Confirm update environments will apply `004`, `005`, and `202605250001_tenant_storage_management.sql` through `scripts/lib/core-update.mjs`.
+5. Confirm both `scripts/lib/core-update.mjs` and `scripts/setup.mjs` still include `004`, `005`, and `202605250001_tenant_storage_management.sql` before release.
+6. Review the ownership backfill rules for legacy content.
+7. Identify which tables may contain rows with no trustworthy owner signal.
+8. Confirm operational owners for:
    - existing page schemas
    - existing pages
    - existing objects
    - existing MCP specs and schema attachments
    - existing templates
    - existing products and events
-7. Confirm that platform secrets and runtime config should remain `super-admin` only.
-8. Confirm that no external automation depends on the old globally readable authenticated behavior.
-9. Verify the new tenant-management UI with a real `super-admin` account before handing the system to tenant operators.
+9. Confirm that platform secrets and runtime config should remain `super-admin` only.
+10. Confirm that no external automation depends on the old globally readable authenticated behavior.
+11. Verify the new tenant-management UI with a real `super-admin` account before handing the system to tenant operators.
+12. Verify that managed storage should be enabled only through explicit entitlement logic and not by raw bucket access.
 
 ### Recommended Deployment Order
 
@@ -852,6 +1032,9 @@ Verify the following surfaces:
 - events and calendar
 - products
 - mentor groups
+- managed media uploads and deletes
+- managed file downloads
+- quota and allocation behavior
 - forms and answers
 - objects API
 - page schemas
@@ -882,6 +1065,15 @@ The original system allowed very open `anon` behavior on `page_schemas`. The new
 
 The helper model is explicit, but real-world data may expose edge cases where tenant membership and ownership do not line up cleanly in legacy rows.
 
+### 5. Managed Storage Entitlement Logic Is Hook-Driven
+
+Core storage is now generic, but actual entitlement may depend on plugin-supplied backend hooks.
+
+That means deployment review must consider both:
+
+- whether the core storage migration and routes are correct
+- whether the installed plugin hooks grant storage only to the intended users
+
 ---
 
 ## Future Follow-Up Work
@@ -896,6 +1088,7 @@ Recommended next steps:
 4. Keep `scripts/lib/core-update.mjs` and `scripts/setup.mjs` in sync whenever a new tenancy migration is added.
 5. Document tenant bootstrap and tenant membership administration in user/operator-facing docs.
 6. Consider introducing an explicit migration audit report after production rollout.
+7. Add integration tests that verify managed storage visibility, quota enforcement, and unauthenticated object access for tracked objects.
 
 ---
 
@@ -905,6 +1098,8 @@ Recommended next steps:
 
 - `tenants`
 - `tenant_users`
+- `tenant_storage_allocations`
+- `tenant_storage_objects`
 
 ### New Core Migration Files
 
@@ -913,6 +1108,7 @@ Recommended next steps:
 - `202605240003_multi_tenant_rls_hardening.sql`
 - `202605240004_tenant_assignment_rls_fix.sql`
 - `202605240005_console_visibility_hardening.sql`
+- `202605250001_tenant_storage_management.sql`
 
 ### Platform-Only Tables After This Change
 

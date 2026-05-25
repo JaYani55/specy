@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "setup": "node scripts/setup.mjs",
+    "plugin:register": "node scripts/register-plugins.mjs",
     "plugin:install": "node scripts/install-plugins.mjs",
     "plugin:install:all": "node scripts/install-plugins.mjs --all",
     "plugin:install:local": "node scripts/install-plugins.mjs --local",

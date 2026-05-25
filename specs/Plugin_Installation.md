@@ -75,12 +75,22 @@ scripts\install-plugins.bat --add https://github.com/owner/my-plugin
 
 1. Appends an entry to `plugins.json`
 2. Downloads the repository as a ZIP from GitHub
-3. Extracts it to `src/plugins/{slug}/`
+3. Extracts it to `plugins/{slug}/`
 4. **ID reconciliation** — if `plugin.json` declares an `id` that differs from the GitHub-derived slug (e.g. `yatda` vs `jayani55-yatda`), the directory is automatically renamed and `plugins.json` is updated to use the canonical id
 5. **npm dependencies** — if `plugin.json` declares `required_npm_dependencies`, runs `npm install` for those packages automatically
-6. Rebuilds `src/plugins/registry.ts` so the new plugin is wired into the build
+6. Rebuilds the generated plugin registries and API mount files from the `plugins/` folder
 7. Prints any SQL migration files that need to be applied
 8. Prints any `config_schema` keys that need to be set
+
+### Registering workspace plugins
+
+Plugins that already exist locally under `plugins/{slug}/` do not need the remote installer. Rebuild the generated registries directly:
+
+```bash
+node scripts/register-plugins.mjs
+```
+
+This regenerates `src/plugins/registry.ts`, `src/plugins/hooks-registry.ts`, `api/plugin-routes.ts`, `api/plugin-hooks.ts`, and `api/plugin-metadata.ts` from the contents of `plugins/`.
 
 ### Installing all registered plugins
 
@@ -104,13 +114,13 @@ Plugin authors are required to ship matching downmigrations for every forward mi
 
 **Via Supabase Dashboard:**
 1. Open the Supabase Dashboard → SQL Editor
-2. Open each migration file from `src/plugins/{slug}/migrations/` in order
+2. Open each migration file from `plugins/{slug}/migrations/` in order
 3. Run them sequentially
 
 **Files are printed in the terminal output**, for example:
 ```
-> src/plugins/yatda/migrations/001_create_extensions.sql
-> src/plugins/yatda/migrations/002_create_connectors.sql
+> plugins/yatda/migrations/001_create_extensions.sql
+> plugins/yatda/migrations/002_create_connectors.sql
 ...
 ```
 
@@ -120,22 +130,13 @@ Plugin authors are required to ship matching downmigrations for every forward mi
 
 ---
 
-## 5. Step 4 — Mount API routes
+## 5. Step 4 — Generated API mounting
 
-Plugin API routes are **not** mounted automatically. This is intentional: it requires an explicit code-review step before new endpoints are exposed.
+Plugin API routes are now mounted through the generated [api/plugin-routes.ts](../api/plugin-routes.ts) file. If a plugin's `plugin.json` declares an `api_entrypoint`, `node scripts/register-plugins.mjs` or the normal prebuild/predev flow will regenerate the mount table automatically.
 
-If the plugin's `plugin.json` declares an `api_entrypoint`, add one import and one route line to [api/index.ts](../api/index.ts):
+Plugin API endpoints are reachable under `/api/plugin/{id}/`.
 
-```typescript
-// api/index.ts
-import myPluginRoute from '../src/plugins/my-plugin/api/index';
-
-app.route('/api/plugins/my-plugin', myPluginRoute);
-```
-
-Replace `my-plugin` with the plugin's actual `id`. The plugin's own route handlers will then be reachable under `/api/plugins/{id}/`.
-
-> If the plugin has no `api_entrypoint` field, skip this step.
+If the plugin also declares `api_hooks_entrypoint`, its backend hook contributions are regenerated into [api/plugin-hooks.ts](../api/plugin-hooks.ts) the same way.
 
 ---
 
@@ -210,7 +211,7 @@ node scripts/install-plugins.mjs --add https://github.com/owner/my-plugin
 ```
 
 The script will:
-- Re-download and overwrite `src/plugins/{slug}/`
+- Re-download and overwrite `plugins/{slug}/`
 - Re-run npm dep installation if `required_npm_dependencies` changed
 - Rebuild the registry
 - Print any new migration files
@@ -273,9 +274,9 @@ npm run plugin:remove -- yatda
 
 1. Reads `plugin.json` from the plugin directory to collect its API entrypoint, migrations, and npm packages
 2. Prompts for confirmation (skipped with `--yes`)
-3. Deletes `src/plugins/{id}/`
+3. Deletes `plugins/{id}/`
 4. Removes the entry from `plugins.json`
-5. Rebuilds `src/plugins/registry.ts`
+5. Rebuilds the generated plugin registry artifacts
 6. (`--prune-deps`) Runs `npm uninstall` for packages not shared with other installed plugins
 7. Prints the remaining **manual steps** required
 

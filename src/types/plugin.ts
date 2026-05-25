@@ -35,6 +35,12 @@ export interface PluginManifest {
    */
   api_entrypoint?: string;
   /**
+   * Path (relative to plugin root) to backend hook contributions consumed by core services.
+   * Optional — only needed if the plugin contributes API/service hooks.
+   * Default: none
+   */
+  api_hooks_entrypoint?: string;
+  /**
    * List of SQL migration files (relative to plugin root) that must be
    * applied to the database before the plugin can run.
    * E.g. ["migrations/001_create_my_table.sql"]
@@ -202,7 +208,7 @@ export interface PluginSidebarItem {
  *
  * @example
  * ```ts
- * // src/plugins/my-plugin/src/index.tsx
+ * // plugins/my-plugin/src/index.tsx
  * import { PluginDefinition } from '@/types/plugin';
  * import Dashboard from './pages/Dashboard';
  * import { LayoutDashboard } from 'lucide-react';

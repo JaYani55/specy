@@ -41,20 +41,19 @@ dist-ssr
 wrangler.jsonc
 
 # ─── Plugins ──────────────────────────────────────────────────────────────────
-# Installed plugin directories are downloaded by install-plugins.mjs at build
-# time and must NOT be committed to the origin repository.
-src/plugins/*/
+# Workspace plugin directories are local development/install artifacts and are not committed.
+plugins/*/
 
-# Auto-generated registry is rebuilt by install-plugins.mjs and ensure-registry.mjs.
-# It must not be committed with plugin content — it is recreated from plugins.json.
+# Auto-generated registry artifacts are rebuilt from workspace plugins in /plugins.
 src/plugins/registry.ts
+src/plugins/hooks-registry.ts
 
-# Auto-generated plugin API route wiring (rebuilt by install-plugins.mjs).
+# Auto-generated plugin API wiring.
 api/plugin-routes.ts
+api/plugin-hooks.ts
+api/plugin-metadata.ts
 
 # Per-plugin npm dependency tracking (gitignored — keeps plugin deps out of package.json).
 # Reinstalled automatically by ensure-registry.mjs on every predev/prebuild.
 plugin-deps.json
 
-# Local standalone plugin development workspace.
-/PluraDash/

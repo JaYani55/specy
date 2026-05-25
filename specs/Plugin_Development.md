@@ -26,10 +26,10 @@ This document is the definitive reference for developing, installing, and mainta
 
 ## 1. Overview
 
-The plugin system works similarly to WordPress plugins with a key difference: it is **build-time, not runtime**. Plugins are GitHub repositories. The install script downloads them, copies their code into `src/plugins/{slug}/`, and rewrites a registry file that the main application imports at compile time. A **rebuild and redeploy is required** after installing or updating a plugin.
+The plugin system works similarly to WordPress plugins with a key difference: it is **build-time, not runtime**. The workspace source of truth is now the top-level `plugins/{slug}/` directory. Local plugins live there directly, and remote plugins are downloaded there by the installer. Generated registry files then wire those plugins into the build. A **rebuild and redeploy is required** after installing or updating a plugin.
 
 ```
-GitHub repo  →  install script  →  src/plugins/{slug}/  →  registry.ts  →  build  →  deploy
+local plugin or GitHub repo  →  plugins/{slug}/  →  register-plugins.mjs  →  generated registries  →  build  →  deploy
 ```
 
 Plugins can contribute:
@@ -43,11 +43,13 @@ Plugins can contribute:
 
 ### Central Registry Model
 
-The CMS now maintains **multiple generated plugin registries** from the same install step:
+The CMS now maintains **multiple generated plugin registries** from the workspace plugin folder:
 
-- `src/plugins/registry.ts` — installed plugin entrypoints (`PluginDefinition[]`)
+- `plugins/{slug}/` — workspace plugin source code and manifests
+- `src/plugins/registry.ts` — generated plugin entrypoints (`PluginDefinition[]`)
 - `src/plugins/hooks-registry.ts` — flattened build-time hook contributions (`PluginHookContribution[]`)
 - `api/plugin-routes.ts` — generated Hono mount table for plugin APIs
+- `api/plugin-hooks.ts` — generated backend hook contributions for core API/service hook runners
 - `api/plugin-metadata.ts` — generated runtime-discovery metadata for hooks, APIs, and capabilities
 
 This keeps the extension boundary centralized and explicit for EUPL-safe interoperability:
@@ -65,7 +67,7 @@ Plugin tenancy is not fully implemented yet, but new plugin work should follow t
 There are currently two registry categories:
 
 - `kind = 'webapp'`: external applications represented as links or registrations
-- `kind = 'plugin'`: build-time addon packages installed into `src/plugins/{slug}/` and shipped with the CMS build
+- `kind = 'plugin'`: build-time addon packages installed into `plugins/{slug}/` and shipped with the CMS build
 
 Target tenancy model:
 
@@ -175,7 +177,7 @@ This is the metadata file the install script reads and validates.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Unique lowercase identifier. Used as directory name in `src/plugins/`. URL-safe characters only (`a-z`, `0-9`, `-`). |
+| `id` | `string` | Unique lowercase identifier. Used as directory name in `plugins/`. URL-safe characters only (`a-z`, `0-9`, `-`). |
 | `name` | `string` | Human-readable display name. |
 | `version` | `string` | Semantic version (e.g. `"1.2.0"`). |
 | `author` | `string` | Author name. |

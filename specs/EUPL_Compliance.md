@@ -29,7 +29,7 @@ Only use the official `PluginDefinition` and `PluginManifest` interfaces to regi
 - **WHY**: This is a "communication" mechanism. The CMS acts as a **Provider** (providing the router and sidebar), and your plugin acts as a **Consumer** of those slots.
 
 ### B. Namespacing and Separation
-- **DO**: Keep all your plugin logic within your plugin directory (`src/plugins/{slug}/`).
+- **DO**: Keep all your plugin logic within your plugin directory (`plugins/{slug}/`).
 - **DO**: Namespace your routes under `/plugins/{slug}/`.
 - **DON'T**: Modify files in `src/components/`, `src/pages/`, or `api/` directly. 
 - **WHY**: The CMS build system automatically gathers your plugin code without you having to touch the core "Original Work". Modifying core files directly creates a Derivative Work.
@@ -43,7 +43,7 @@ The CMS provides shared infrastructure that is safe to import without triggering
 ### D. API Integration
 When adding backend functionality:
 - **DO**: Use the `api/index.ts` entrypoint in your plugin.
-- **DO**: Let the CMS mount your routes under `/api/plugins/{slug}/`.
+- **DO**: Let the generated plugin router mount your routes under `/api/plugin/{slug}/`.
 - **WHY**: This uses the "Sidecar" pattern. Your API logic runs alongside the CMS but is logically distinct.
 
 ---
@@ -64,7 +64,7 @@ Because the Plugin does not require the *internal logic* of the CMS to function 
 ## 4. Summary: Required Workflow
 
 1. **Keep it separate**: Never `git commit` your plugin code into the main CMS repository. Distribute it as a separate repository.
-2. **Use the Registry**: The `scripts/install-plugins.mjs` script handles the build-time integration. This "assembly" step at build-time is an automated process and does not turn your plugin into a derivative work of the source code.
+2. **Use the Registry**: The generated registry flow (`scripts/register-plugins.mjs` and `scripts/ensure-registry.mjs`) handles build-time integration from the `plugins/` folder. Remote installations may populate that folder, but registration is a separate generated step.
 3. **Declare your License**: Even if your plugin is not EUPL, clearly state your chosen license in `plugin.json`.
 
 ---

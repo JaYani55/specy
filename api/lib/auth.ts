@@ -57,6 +57,11 @@ function hasRequiredRole(userRoles: string[], requiredRole: AppRole): boolean {
   return ROLE_ORDER.some((role, index) => index >= minimumRank && normalizedRoles.has(role));
 }
 
+function hasAnyJwtRole(userRoles: string[], requiredRoles: string[]): boolean {
+  const normalizedRoles = new Set<string>(userRoles.map((role) => role === 'staff' ? 'user' : role));
+  return requiredRoles.some((role) => normalizedRoles.has(role));
+}
+
 export async function verifyAuthSession(env: Env, token: string): Promise<VerifiedAuthSession | null> {
   const supabase = await createSupabaseClient(env, token);
   const { data, error } = await supabase.auth.getClaims(token);
@@ -90,6 +95,45 @@ export async function requireAppRole(
 
   if (!hasRequiredRole(auth.roles, requiredRole)) {
     return c.json({ error: 'Insufficient permissions.' }, 403);
+  }
+
+  return auth;
+}
+
+export async function requireAnyJwtRole(
+  c: Context<{ Bindings: Env }>,
+  requiredRoles: string[],
+): Promise<VerifiedAuthSession | Response> {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  if (!token) {
+    return c.json({ error: 'Authentication required.' }, 401);
+  }
+
+  const auth = await verifyAuthSession(c.env, token);
+
+  if (!auth) {
+    return c.json({ error: 'Invalid or expired session.' }, 401);
+  }
+
+  if (!hasAnyJwtRole(auth.roles, requiredRoles)) {
+    return c.json({ error: 'Insufficient permissions.' }, 403);
+  }
+
+  return auth;
+}
+
+export async function requireAuthSession(
+  c: Context<{ Bindings: Env }>,
+): Promise<VerifiedAuthSession | Response> {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  if (!token) {
+    return c.json({ error: 'Authentication required.' }, 401);
+  }
+
+  const auth = await verifyAuthSession(c.env, token);
+
+  if (!auth) {
+    return c.json({ error: 'Invalid or expired session.' }, 401);
   }
 
   return auth;
