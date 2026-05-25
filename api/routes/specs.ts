@@ -373,10 +373,9 @@ specs.post('/bootstrap/schema/:schemaId', async (c) => {
     return c.json({ error: `Schema "${schemaId}" not found` }, 404);
   }
 
-  const { data: userData } = await supabase.auth.getUser(auth.token);
   const result = await bootstrapSchemaMainSpec(c.env, schema, {
     token: auth.token,
-    createdBy: userData.user?.id ?? null,
+    createdBy: auth.userId,
   });
 
   return c.json(result, result.created ? 201 : 200);

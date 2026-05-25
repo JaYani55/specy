@@ -309,10 +309,12 @@ npx wrangler deploy
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_SUPABASE_URL` | Required for DB mode | Supabase project URL (also used by the frontend). |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Required for DB mode | Supabase anon/publishable key. This is **not** a secret — it is already embedded in the frontend bundle. |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Required for DB mode | Supabase publishable key. Legacy JWT-based anon keys still work during migration, but the target state is the modern publishable key. This is **not** a secret — it is already embedded in the frontend bundle. |
 | `GITHUB_TOKEN` | Recommended | GitHub personal access token. Avoids unauthenticated rate limits (60 req/hr). Required for private repositories. |
 
-> **No service role key is needed.** The installer uses the anon key and authenticates as a regular user. Access to the `plugins` table is enforced by Supabase RLS + the project's custom JWT hook — only accounts with the `admin` or `super-admin` role can read and update plugin records.
+> **No secret key is needed.** The installer uses the publishable key and authenticates as a regular user. Access to the `plugins` table is enforced by Supabase RLS + the project's custom JWT hook — only accounts with the `admin` or `super-admin` role can read and update plugin records.
+
+> **JWT signing-key compatibility:** the installer and API surfaces in this repo do not verify access tokens against the legacy shared JWT secret. They rely on Supabase-managed token validation plus the `user_roles` claim injected by the custom access token hook, which is compatible with asymmetric signing keys.
 
 ### Supabase credentials
 

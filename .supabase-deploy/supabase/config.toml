@@ -1,4 +1,4 @@
 project_id = "service-cms"
 
 [functions.send_email]
-verify_jwt = true
+verify_jwt = false

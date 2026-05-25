@@ -1,4 +1,5 @@
 import { bootstrapSchemaMainSpec } from './specRegistry';
+import { verifyAuthSession } from './auth';
 import { createSupabaseClient, type Env } from './supabase';
 import {
   normalizeSchemaIntegrationRequirements,
@@ -98,10 +99,14 @@ export async function createPendingSchema(
     throw new Error(createError?.message || 'Failed to create schema.');
   }
 
-  const { data: userData } = await client.auth.getUser(token);
+  const auth = await verifyAuthSession(env, token);
+  if (!auth) {
+    throw new Error('Invalid or expired session.');
+  }
+
   const bootstrap = await bootstrapSchemaMainSpec(env, createdSchema as CreatedSchemaRow, {
     token,
-    createdBy: userData.user?.id ?? null,
+    createdBy: auth.userId,
   });
 
   return {

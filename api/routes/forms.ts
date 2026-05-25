@@ -2,6 +2,7 @@ import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
 import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig } from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
+import { verifyAuthSession } from '../lib/auth';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 
 const forms = new Hono<{ Bindings: Env }>();
@@ -797,8 +798,9 @@ forms.post('/share/:shareSlug/answers', async (c) => {
 
   let submittedBy: string | null = null;
   if (token) {
-    const { data } = await supabase.auth.getUser(token);
-    submittedBy = data.user?.id ?? null;
+    const auth = await verifyAuthSession(c.env, token);
+    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+    submittedBy = auth.userId;
   }
 
   const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.share_slug;
@@ -892,8 +894,9 @@ forms.post('/:identifier/answers', async (c) => {
 
   let submittedBy: string | null = null;
   if (token) {
-    const { data } = await supabase.auth.getUser(token);
-    submittedBy = data.user?.id ?? null;
+    const auth = await verifyAuthSession(c.env, token);
+    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+    submittedBy = auth.userId;
   }
 
   const submittedVia = body.submitted_via === 'page' ? 'page' : 'api';

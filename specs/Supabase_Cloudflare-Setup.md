@@ -261,6 +261,15 @@ On every JWT issuance, Supabase calls the hook with the event payload. The hook:
 
 The frontend reads `user_roles` from the decoded JWT — no extra Supabase query is needed to check permissions.
 
+### JWT signing key compatibility
+
+This project is intended to run on Supabase's modern JWT signing-key system rather than the legacy shared JWT secret.
+
+- backend token validation should go through Supabase client methods such as `auth.getClaims()` / `auth.getUser()`, not a locally configured shared JWT secret
+- the `custom_access_token_hook` above remains valid after migrating to asymmetric signing keys because it runs inside Supabase Auth when tokens are minted
+- existing `user_roles` consumers in the frontend and API continue to work as long as the hook remains enabled and freshly issued tokens still contain `claims.user_roles`
+- both `functions/config.toml` and the staged deploy copy should keep `verify_jwt = false` for `send_email`, because that function is invoked server-to-server with the Supabase secret key rather than an end-user JWT; leaving Supabase Edge Function JWT verification enabled can block zero-downtime signing-key rotation
+
 ### Permissions required
 
 The migration file (`Auth/Access_hook.sql`) includes these statements after the function body:
@@ -425,7 +434,7 @@ npx -y supabase functions deploy send_email --use-api --project-ref <project-ref
 Remove-Item $deployRoot -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
-The function reads `SUPABASE_URL` from the hosted Supabase Edge runtime and expects `APP_SUPABASE_SECRET_KEY` plus `SECRETS_ENCRYPTION_KEY` to be synced before deploy. `functions/config.toml` ships with `verify_jwt = false` because the Worker invokes the function server-to-server with the Supabase secret key rather than an end-user JWT.
+The function reads `SUPABASE_URL` from the hosted Supabase Edge runtime and expects `APP_SUPABASE_SECRET_KEY` plus `SECRETS_ENCRYPTION_KEY` to be synced before deploy. `functions/config.toml` ships with `verify_jwt = false`, and the staged deploy copy under `.supabase-deploy/supabase/config.toml` must match, because the Worker invokes the function server-to-server with the Supabase secret key rather than an end-user JWT.
 
 ### 10.9 Build and deploy
 

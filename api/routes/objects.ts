@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
-import { parseBearerToken, getRolesFromToken, requireAppRole } from '../lib/auth';
+import { getOptionalAuthSession, parseBearerToken, requireAppRole } from '../lib/auth';
 
 const objects = new Hono<{ Bindings: Env }>();
 
@@ -22,17 +22,14 @@ interface ObjectRow {
 // List all published, api-enabled objects (public or authenticated depending on requires_auth).
 // Authenticated users see the rows allowed by RLS, including their own managed objects.
 objects.get('/', async (c) => {
-  const token = parseBearerToken(c.req.header('Authorization'));
-  if (token) {
-    const roles = getRolesFromToken(token);
-    const hasConsoleAccess = roles.some((r) => r === 'user' || r === 'staff' || r === 'admin' || r === 'super-admin');
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  if (auth) {
+    const hasConsoleAccess = auth.roles.some((r) => r === 'user' || r === 'staff' || r === 'admin' || r === 'super-admin');
 
     if (hasConsoleAccess) {
-      const supabase = await createSupabaseClient(c.env, token);
-      const { data: user, error } = await supabase.auth.getUser(token);
-      if (error || !user.user) {
-        return c.json({ error: 'Invalid or expired session.' }, 401);
-      }
+      const supabase = await createSupabaseClient(c.env, auth.token);
 
       const { data, error: dbError } = await supabase
         .from('objects')
@@ -70,18 +67,16 @@ objects.get('/', async (c) => {
 // Returns the schema definition and full data payload.
 objects.get('/:idOrSlug', async (c) => {
   const idOrSlug = c.req.param('idOrSlug');
-  const token = parseBearerToken(c.req.header('Authorization'));
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
-  const hasConsoleAccess = token
-    ? getRolesFromToken(token).some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin')
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  const hasConsoleAccess = auth
+    ? auth.roles.some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin')
     : false;
 
   if (hasConsoleAccess) {
-    const supabase = await createSupabaseClient(c.env, token);
-    const { data: user, error: userError } = await supabase.auth.getUser(token);
-    if (userError || !user.user) {
-      return c.json({ error: 'Invalid or expired session.' }, 401);
-    }
+    const supabase = await createSupabaseClient(c.env, auth.token);
 
     const query = supabase
       .from('objects')

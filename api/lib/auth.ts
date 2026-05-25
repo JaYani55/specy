@@ -4,7 +4,16 @@ import { createSupabaseClient, type Env } from './supabase';
 export type AppRole = 'user' | 'admin' | 'super-admin';
 
 interface JwtPayload {
+  sub?: unknown;
   user_roles?: unknown;
+  [key: string]: unknown;
+}
+
+export interface VerifiedAuthSession {
+  token: string;
+  roles: string[];
+  userId: string | null;
+  claims: JwtPayload;
 }
 
 const ROLE_ORDER: AppRole[] = ['user', 'admin', 'super-admin'];
@@ -37,6 +46,10 @@ export function getRolesFromToken(token: string): string[] {
   return normalizeRoles(payload?.user_roles);
 }
 
+function normalizeUserId(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 function hasRequiredRole(userRoles: string[], requiredRole: AppRole): boolean {
   const normalizedRoles = new Set<string>(userRoles.map((role) => role === 'staff' ? 'user' : role));
   const minimumRank = ROLE_ORDER.indexOf(requiredRole);
@@ -44,47 +57,57 @@ function hasRequiredRole(userRoles: string[], requiredRole: AppRole): boolean {
   return ROLE_ORDER.some((role, index) => index >= minimumRank && normalizedRoles.has(role));
 }
 
+export async function verifyAuthSession(env: Env, token: string): Promise<VerifiedAuthSession | null> {
+  const supabase = await createSupabaseClient(env, token);
+  const { data, error } = await supabase.auth.getClaims(token);
+
+  if (error || !data) {
+    return null;
+  }
+
+  return {
+    token,
+    roles: normalizeRoles(data.claims.user_roles),
+    userId: normalizeUserId(data.claims.sub),
+    claims: data.claims as JwtPayload,
+  };
+}
+
 export async function requireAppRole(
   c: Context<{ Bindings: Env }>,
   requiredRole: AppRole,
-): Promise<{ token: string; roles: string[] } | Response> {
+): Promise<VerifiedAuthSession | Response> {
   const token = parseBearerToken(c.req.header('Authorization'));
   if (!token) {
     return c.json({ error: 'Authentication required.' }, 401);
   }
 
-  const supabase = await createSupabaseClient(c.env, token);
-  const { data, error } = await supabase.auth.getUser(token);
+  const auth = await verifyAuthSession(c.env, token);
 
-  if (error || !data.user) {
+  if (!auth) {
     return c.json({ error: 'Invalid or expired session.' }, 401);
   }
 
-  const roles = getRolesFromToken(token);
-
-  if (!hasRequiredRole(roles, requiredRole)) {
+  if (!hasRequiredRole(auth.roles, requiredRole)) {
     return c.json({ error: 'Insufficient permissions.' }, 403);
   }
 
-  return { token, roles };
+  return auth;
 }
 
 export async function getOptionalAuthSession(
   c: Context<{ Bindings: Env }>,
-): Promise<{ token: string; roles: string[] } | null | Response> {
+): Promise<VerifiedAuthSession | null | Response> {
   const token = parseBearerToken(c.req.header('Authorization'));
   if (!token) {
     return null;
   }
 
-  const supabase = await createSupabaseClient(c.env, token);
-  const { data, error } = await supabase.auth.getUser(token);
+  const auth = await verifyAuthSession(c.env, token);
 
-  if (error || !data.user) {
+  if (!auth) {
     return c.json({ error: 'Invalid or expired session.' }, 401);
   }
 
-  const roles = getRolesFromToken(token);
-
-  return { token, roles };
+  return auth;
 }
