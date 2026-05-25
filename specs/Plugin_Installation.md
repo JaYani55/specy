@@ -100,6 +100,8 @@ node scripts/install-plugins.mjs --list
 
 If the install script printed SQL migration files, apply them to your Supabase project before the next build.
 
+Plugin authors are required to ship matching downmigrations for every forward migration under `migrations/down/NNN_name.sql`. Plugin-owned tables, views, functions, types, policies, triggers, and sequences must live in a dedicated plugin schema such as `yatda` or `my_plugin`; the `public` schema is reserved for CMS core objects.
+
 **Via Supabase Dashboard:**
 1. Open the Supabase Dashboard → SQL Editor
 2. Open each migration file from `src/plugins/{slug}/migrations/` in order
@@ -113,6 +115,8 @@ If the install script printed SQL migration files, apply them to your Supabase p
 ```
 
 > Apply migrations in numeric order. Never modify an already-applied migration — create a new numbered file instead.
+
+> The installer validates these requirements before a plugin is accepted: explicit downmigrations under `migrations/down/` and plugin-owned DDL scoped to the plugin's own schema rather than `public`.
 
 ---
 
@@ -246,6 +250,8 @@ Valid values for `ref`: any Git tag, branch name, or full commit SHA.
 
 Use the uninstall script — it handles directory deletion, `plugins.json` cleanup, and registry rebuild in one step.
 
+Before you run it, locate or copy the plugin's matching `migrations/down/*.sql` files. You will need them for the required manual database rollback after the filesystem cleanup, and the plugin directory will be removed by the script.
+
 ```bash
 # macOS / Linux — interactive (prompts for confirmation)
 node scripts/uninstall-plugin.mjs yatda
@@ -279,7 +285,9 @@ The script prints these explicitly, but the things that require manual action ar
 
 **API route** — if the plugin had an `api_entrypoint`, remove its import and `app.route(...)` line from [api/index.ts](../api/index.ts).
 
-**Database tables** — the script prints the plugin's migration files as a reminder. Drop the tables manually in Supabase if you no longer need the data.
+**Database rollback** — run the plugin's matching files from `migrations/down/` manually in reverse order using the copy you saved before uninstall, or from the plugin repository at the exact installed ref. This is required unless you are intentionally retaining the plugin's schema and data. Do not treat uninstall as complete while forward migrations remain applied unintentionally.
+
+**Database tables and data** — if you intentionally skip downmigrations because data must be retained, document that operational exception. Otherwise the expected uninstall path is to reverse the schema changes via the provided downmigrations, not to leave plugin-owned tables behind.
 
 **Plugins UI** — go to `/plugins` as a SUPERADMIN and click **Entfernen** to remove the database record.
 
@@ -291,6 +299,8 @@ npx wrangler deploy
 ```
 
 > Database tables created by the plugin's migrations are **not** dropped automatically. Drop them manually in Supabase if they are no longer needed.
+
+> Every plugin migration set is expected to include matching downmigrations. Operators should run those downmigrations in reverse order during uninstall, rollback, or failed deployment recovery.
 
 ---
 

@@ -97,11 +97,15 @@ my-plugin/
 ├── api/
 │   └── index.ts         ← OPTIONAL: Hono route file for API additions
 ├── migrations/
-│   └── 001_create_my_table.sql   ← OPTIONAL: SQL migration files
+│   ├── 001_create_my_table.sql   ← OPTIONAL: forward migration
+│   └── down/
+│       └── 001_create_my_table.sql   ← REQUIRED when a forward migration exists
 └── README.md
 ```
 
 The only **strictly required** files are `plugin.json` and the entrypoint declared in it (defaults to `src/index.tsx`).
+
+If a plugin ships any forward SQL migration, it must also ship a matching downmigration file under `migrations/down/` that cleanly reverses it.
 
 ---
 
@@ -186,7 +190,7 @@ This is the metadata file the install script reads and validates.
 | `author_url` | `string` | — | Author website or GitHub profile URL. |
 | `entrypoint` | `string` | `"src/index.tsx"` | Path to the frontend TS/TSX entrypoint relative to the plugin root. |
 | `api_entrypoint` | `string` | `"api/index.ts"` | Path to the Hono API route file (only needed if the plugin adds API routes). |
-| `migrations` | `string[]` | `[]` | SQL migration file paths relative to the plugin root. The install script prints these — you must apply them manually. |
+| `migrations` | `string[]` | `[]` | Forward SQL migration file paths relative to the plugin root. The install script prints these — you must apply them manually. Every listed forward migration must have a matching rollback file under `migrations/down/` with the same filename, even though downmigrations are not listed in `plugin.json`. |
 | `min_cms_version` | `string` | — | Minimum CMS version required (semver range). Informational only. |
 | `required_npm_dependencies` | `object` | `{}` | npm packages this plugin requires, as `{"package-name": "semver-range"}`. The install script runs `npm install` for these automatically. |
 | `hook_metadata` | `object[]` | `[]` | Optional descriptive hook registry metadata. Each entry declares `key`, `target`, `scope` (`"ui" | "page" | "service" | "api"`), `kind` (`"observer" | "validator" | "transform"`), optional `order`, and `description`. This metadata is exposed via `/api/plugins`. |
@@ -408,7 +412,7 @@ myPlugin.get('/data', async (c) => {
   const token = c.req.header('Authorization')?.slice(7) ?? '';
   if (!token) return c.json({ error: 'Unauthorized' }, 401);
   const supabase = getSupabaseClient(c.env, token);
-  const { data, error } = await supabase.from('my_plugin_table').select('*');
+  const { data, error } = await supabase.schema('my_plugin').from('my_plugin_table').select('*');
   if (error) return c.json({ error: 'Failed to fetch data' }, 500);
   return c.json({ data });
 });
@@ -532,7 +536,7 @@ myPlugin.get('/data', async (c) => {
   const token = c.req.header('Authorization')?.slice(7) ?? '';
   if (!token) return c.json({ error: 'Unauthorized' }, 401);
   const supabase = getSupabaseClient(c.env, token); // token sets Authorization header
-  const { data, error } = await supabase.from('my_plugin_table').select('*');
+  const { data, error } = await supabase.schema('my_plugin').from('my_plugin_table').select('*');
   // RLS ensures this user can only see their own rows
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ data });
@@ -554,7 +558,7 @@ Do **not** implement role checks in your API route handlers. The CMS uses a JWT 
 ```sql
 -- Check roles in an RLS policy
 CREATE POLICY "admins_can_delete"
-  ON public.my_plugin_data
+  ON my_plugin.my_plugin_data
   FOR DELETE TO authenticated
   USING (
     (current_setting('request.jwt.claims', true))::jsonb -> 'user_roles' ?| array['admin', 'super-admin']
@@ -568,16 +572,40 @@ CREATE POLICY "admins_can_delete"
 If your plugin requires new database tables or schema changes:
 
 1. Create a SQL file in `my-plugin/migrations/`, e.g. `001_create_my_table.sql`
-2. Declare it in `plugin.json` under `"migrations"`
-3. When the install script runs, it detects and **prints** these files — you must apply them manually
+2. Create the matching downmigration file in `my-plugin/migrations/down/001_create_my_table.sql`
+3. Declare only the forward migration in `plugin.json` under `"migrations"`
+4. When the install script runs, it detects and **prints** the forward migration files — you must apply them manually
+
+### Downmigration requirement
+
+**Downmigrations are mandatory for every plugin-managed schema change.** If your plugin adds or changes any database object, you must provide a matching rollback file under `migrations/down/` so uninstall and rollback can be completed safely.
+
+Required rules:
+
+- Every forward migration `NNN_description.sql` must have a paired `migrations/down/NNN_description.sql`
+- Downmigrations must be runnable in reverse order during uninstall or rollback
+- Downmigrations must drop dependent policies, triggers, views, and functions before the objects they depend on
+- Plugin removal is not considered complete until the matching downmigrations have either been applied or the operator has explicitly decided to retain the schema and data
+
+### Schema ownership requirement
+
+**Plugin migrations must create and modify objects only inside a dedicated plugin schema.** The `public` schema is reserved for the CMS core.
+
+Required rules:
+
+- Create your plugin schema explicitly with `CREATE SCHEMA IF NOT EXISTS your_plugin_schema`
+- Store plugin-owned tables, views, functions, types, triggers, sequences, and policies in that plugin schema, not `public`
+- If your plugin id contains `-`, use a Postgres-safe schema name derived from it, typically with underscores instead of dashes, e.g. `my-plugin` → `my_plugin`
+- Cross-schema references to core objects may exist where necessary, but the plugin must not create or mutate core-owned objects in `public`
 
 ### Migration file conventions
 
 Follow the same patterns used in the CMS's own migrations:
-- Use `public.` schema prefix
+- Create and use your plugin schema, e.g. `yatda.` or `my_plugin.`; do not create plugin-owned objects in `public.`
 - Enable RLS and add appropriate policies
 - Reference the `set_current_timestamp_updated_at()` trigger for `updated_at` columns
-- Prefix table names with your plugin slug to avoid conflicts: `{plugin_slug}_{table_name}`
+- Prefix object names with your plugin slug where it improves readability, even inside the plugin schema
+- Keep forward and down migrations in sync whenever later changes add policies, triggers, helper functions, or other dependencies
 
 ### Idempotency requirement
 
@@ -587,37 +615,42 @@ Key patterns:
 
 ```sql
 -- Trigger functions: always use CREATE OR REPLACE
-CREATE OR REPLACE FUNCTION public.my_plugin_on_insert() ...
+CREATE OR REPLACE FUNCTION my_plugin.my_plugin_on_insert() ...
 
 -- Triggers: drop before creating (works on Postgres 14+)
-DROP TRIGGER IF EXISTS trg_my_plugin_insert ON my_table;
+DROP TRIGGER IF EXISTS trg_my_plugin_insert ON my_plugin.my_plugin_data;
 CREATE TRIGGER trg_my_plugin_insert
-  AFTER INSERT ON my_table
-  FOR EACH ROW EXECUTE FUNCTION public.my_plugin_on_insert();
+  AFTER INSERT ON my_plugin.my_plugin_data
+  FOR EACH ROW EXECUTE FUNCTION my_plugin.my_plugin_on_insert();
 
--- Tables: use IF NOT EXISTS
-CREATE TABLE IF NOT EXISTS public.my_plugin_data ( ... );
+-- Create the plugin schema first
+CREATE SCHEMA IF NOT EXISTS my_plugin;
+
+-- Tables: use IF NOT EXISTS inside the plugin schema
+CREATE TABLE IF NOT EXISTS my_plugin.my_plugin_data ( ... );
 
 -- ENUM types: guard with a DO block
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'my_status_enum') THEN
-    CREATE TYPE my_status_enum AS ENUM ('open', 'closed');
+    CREATE TYPE my_plugin.my_status_enum AS ENUM ('open', 'closed');
   END IF;
 END $$;
 
 -- Indexes: use IF NOT EXISTS
-CREATE INDEX IF NOT EXISTS idx_my_plugin_data_user_id ON public.my_plugin_data(user_id);
+CREATE INDEX IF NOT EXISTS idx_my_plugin_data_user_id ON my_plugin.my_plugin_data(user_id);
 
 -- Policies: drop before recreating
-DROP POLICY IF EXISTS "my_policy" ON public.my_plugin_data;
-CREATE POLICY "my_policy" ON public.my_plugin_data ...
+DROP POLICY IF EXISTS "my_policy" ON my_plugin.my_plugin_data;
+CREATE POLICY "my_policy" ON my_plugin.my_plugin_data ...
 ```
 
 > **Why this matters**: Postgres does not support `CREATE TRIGGER IF NOT EXISTS` (before Postgres 17) or `CREATE TYPE IF NOT EXISTS`. Always use the patterns above — bare `CREATE TRIGGER` and `CREATE TYPE` will error on second run.
 
 ```sql
 -- migrations/001_create_my_table.sql
-CREATE TABLE public.my_plugin_data (
+CREATE SCHEMA IF NOT EXISTS my_plugin;
+
+CREATE TABLE my_plugin.my_plugin_data (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   content    TEXT NOT NULL,
@@ -626,18 +659,18 @@ CREATE TABLE public.my_plugin_data (
 );
 
 CREATE TRIGGER trg_my_plugin_data_updated_at
-  BEFORE UPDATE ON public.my_plugin_data
+  BEFORE UPDATE ON my_plugin.my_plugin_data
   FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
 
-ALTER TABLE public.my_plugin_data ENABLE ROW LEVEL SECURITY;
+ALTER TABLE my_plugin.my_plugin_data ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "users_select_own_my_plugin_data"
-  ON public.my_plugin_data
+  ON my_plugin.my_plugin_data
   FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
 
 CREATE POLICY "users_insert_my_plugin_data"
-  ON public.my_plugin_data
+  ON my_plugin.my_plugin_data
   FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
 ```
@@ -855,6 +888,7 @@ For more detailed information, see the [EUPL Compliance Guide](EUPL_Compliance.m
 ### Database migration versioning
 - Prefix migration files with a zero-padded sequence: `001_`, `002_`, etc.
 - Never modify an already-applied migration — create a new one instead
+- For every `NNN_name.sql`, include `migrations/down/NNN_name.sql` that reverses it
 
 ---
 
