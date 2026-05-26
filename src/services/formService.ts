@@ -291,8 +291,8 @@ export const getFormAnswers = async (formId: string): Promise<FormAnswerRecord[]
   return (data ?? []) as FormAnswerRecord[];
 };
 
-export const getPublicFormByShareSlug = async (shareSlug: string): Promise<PublicFormDefinition> => {
-  const response = await fetch(`${API_URL}/api/forms/share/${encodeURIComponent(shareSlug)}`, {
+export const getPublicFormByShareSlug = async (tenantName: string, shareSlug: string): Promise<PublicFormDefinition> => {
+  const response = await fetch(`${API_URL}/api/forms/share/${encodeURIComponent(tenantName)}/${encodeURIComponent(shareSlug)}`, {
     headers: await buildHeaders(),
   });
 
@@ -318,7 +318,7 @@ export const getApiFormDefinition = async (identifier: string): Promise<PublicFo
 };
 
 export const submitFormAnswers = async (
-  identifier: string,
+  identifier: string | { tenantName: string; identifier: string },
   payload: {
     answers: Record<string, unknown>;
     source_slug?: string;
@@ -327,8 +327,13 @@ export const submitFormAnswers = async (
   mode: 'share' | 'api' = 'share',
 ): Promise<{ success: boolean; answer_id: string }> => {
   const url = mode === 'share'
-    ? `${API_URL}/api/forms/share/${encodeURIComponent(identifier)}/answers`
-    : `${API_URL}/api/forms/${encodeURIComponent(identifier)}/answers`;
+    ? (() => {
+      if (typeof identifier === 'string') {
+        throw new Error('Share form submission requires tenantName and identifier.');
+      }
+      return `${API_URL}/api/forms/share/${encodeURIComponent(identifier.tenantName)}/${encodeURIComponent(identifier.identifier)}/answers`;
+    })()
+    : `${API_URL}/api/forms/${encodeURIComponent(typeof identifier === 'string' ? identifier : identifier.identifier)}/answers`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -345,7 +350,7 @@ export const submitFormAnswers = async (
 };
 
 export const uploadFormFile = async (
-  identifier: string,
+  identifier: string | { tenantName: string; identifier: string },
   payload: {
     file: File;
     field_name: string;
@@ -354,8 +359,13 @@ export const uploadFormFile = async (
   mode: 'share' | 'api' = 'share',
 ): Promise<FormUploadedFileValue> => {
   const url = mode === 'share'
-    ? `${API_URL}/api/forms/share/${encodeURIComponent(identifier)}/upload`
-    : `${API_URL}/api/forms/${encodeURIComponent(identifier)}/upload`;
+    ? (() => {
+      if (typeof identifier === 'string') {
+        throw new Error('Share file upload requires tenantName and identifier.');
+      }
+      return `${API_URL}/api/forms/share/${encodeURIComponent(identifier.tenantName)}/${encodeURIComponent(identifier.identifier)}/upload`;
+    })()
+    : `${API_URL}/api/forms/${encodeURIComponent(typeof identifier === 'string' ? identifier : identifier.identifier)}/upload`;
 
   const formData = new FormData();
   formData.append('file', payload.file);

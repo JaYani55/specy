@@ -17,7 +17,7 @@ import type { FormAnswerValue, FormUploadedFileValue, PublicFormDefinition } fro
 import { buildInitialAnswers } from '@/utils/forms';
 
 const FormSharePage = () => {
-  const { formShareSlug } = useParams<{ formShareSlug: string }>();
+  const { tenantName, formShareSlug } = useParams<{ tenantName: string; formShareSlug: string }>();
   const { language } = useTheme();
   const [formDefinition, setFormDefinition] = useState<PublicFormDefinition | null>(null);
   const [answers, setAnswers] = useState<Record<string, FormAnswerValue>>({});
@@ -34,7 +34,7 @@ const FormSharePage = () => {
   }, []);
 
   useEffect(() => {
-    if (!formShareSlug) {
+    if (!tenantName || !formShareSlug) {
       setError('not-found');
       setIsLoading(false);
       return;
@@ -43,7 +43,7 @@ const FormSharePage = () => {
     const loadForm = async () => {
       try {
         setIsLoading(true);
-        const definition = await getPublicFormByShareSlug(formShareSlug);
+        const definition = await getPublicFormByShareSlug(tenantName, formShareSlug);
         setFormDefinition(definition);
         setAnswers(buildInitialAnswers(definition.fields));
         setError(null);
@@ -55,7 +55,7 @@ const FormSharePage = () => {
     };
 
     void loadForm();
-  }, [formShareSlug]);
+  }, [tenantName, formShareSlug]);
 
   const requiredFieldNames = useMemo(
     () => new Set(formDefinition?.fields.filter((field) => field.required).map((field) => field.name) ?? []),
@@ -63,13 +63,13 @@ const FormSharePage = () => {
   );
 
   const handleFileSelect = async (fieldName: string, file: File | null) => {
-    if (!file || !formShareSlug) {
+    if (!file || !tenantName || !formShareSlug) {
       return;
     }
 
     try {
       setUploadingFields((current) => ({ ...current, [fieldName]: true }));
-      const uploaded = await uploadFormFile(formShareSlug, {
+      const uploaded = await uploadFormFile({ tenantName, identifier: formShareSlug }, {
         file,
         field_name: fieldName,
         submission_id: submissionId,
@@ -126,7 +126,7 @@ const FormSharePage = () => {
   }
 
   const handleSubmit = async () => {
-    if (!formShareSlug) return;
+    if (!tenantName || !formShareSlug) return;
 
     const missingRequiredField = formDefinition.fields.find((field) => {
       if (!requiredFieldNames.has(field.name)) return false;
@@ -143,7 +143,7 @@ const FormSharePage = () => {
 
     try {
       setIsSubmitting(true);
-      await submitFormAnswers(formShareSlug, {
+      await submitFormAnswers({ tenantName, identifier: formShareSlug }, {
         answers,
         source_slug: formDefinition.form.share_slug || formShareSlug,
       }, 'share');

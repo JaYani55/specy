@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { deleteForm, getForms } from '@/services/formService';
-import { getVisibleTenantNameMap } from '@/services/tenantService';
+import { getVisibleTenantInfoMap } from '@/services/tenantService';
 import type { FormRecord } from '@/types/forms';
+import { generateFormSlug } from '@/utils/forms';
 
 const statusVariant: Record<FormRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
@@ -20,14 +21,14 @@ const Forms = () => {
   const { language } = useTheme();
   const [forms, setForms] = useState<FormRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
+  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string }>>({});
 
   const loadForms = useCallback(async () => {
     try {
       setIsLoading(true);
       const records = await getForms();
       setForms(records);
-      setTenantNames(await getVisibleTenantNameMap(records.map((form) => form.tenant_id)));
+      setTenantInfo(await getVisibleTenantInfoMap(records.map((form) => form.tenant_id)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load forms.');
     } finally {
@@ -98,62 +99,69 @@ const Forms = () => {
         emptyState
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
-          {forms.map((form) => (
-            <AdminCard
-              key={form.id}
-              title={form.name}
-              icon={ClipboardList}
-              iconColor="from-emerald-500 to-teal-600"
-              actions={(
-                <Badge variant={statusVariant[form.status]}>{form.status}</Badge>
-              )}
-            >
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  {form.description || (language === 'en' ? 'No description yet.' : 'Noch keine Beschreibung.')}
-                </p>
+          {forms.map((form) => {
+            const currentTenantInfo = form.tenant_id ? tenantInfo[form.tenant_id] : undefined;
+            const sharePath = form.share_enabled && form.share_slug && currentTenantInfo
+              ? `/forms/share/${generateFormSlug(currentTenantInfo.name)}/${form.share_slug}`
+              : null;
 
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline">/{form.slug}</Badge>
-                  {form.tenant_id && tenantNames[form.tenant_id] && (
-                    <Badge variant="outline">{tenantNames[form.tenant_id]}</Badge>
-                  )}
-                  <Badge variant="outline">API {form.api_enabled ? 'on' : 'off'}</Badge>
-                  <Badge variant="outline">{form.requires_auth ? (language === 'en' ? 'Auth required' : 'Mit Anmeldung') : (language === 'en' ? 'Public' : 'Öffentlich')}</Badge>
-                  {form.share_enabled && form.share_slug && (
-                    <Badge variant="outline">/{form.share_slug}</Badge>
-                  )}
-                </div>
+            return (
+              <AdminCard
+                key={form.id}
+                title={form.name}
+                icon={ClipboardList}
+                iconColor="from-emerald-500 to-teal-600"
+                actions={(
+                  <Badge variant={statusVariant[form.status]}>{form.status}</Badge>
+                )}
+              >
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {form.description || (language === 'en' ? 'No description yet.' : 'Noch keine Beschreibung.')}
+                  </p>
 
-                <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="outline" size="sm">
-                    <Link to={`/forms/${form.id}`}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {language === 'en' ? 'Edit' : 'Bearbeiten'}
-                    </Link>
-                  </Button>
-                  <Button asChild variant="outline" size="sm">
-                    <Link to={`/forms/${form.id}/answers`}>
-                      <MessageSquare className="mr-2 h-4 w-4" />
-                      {language === 'en' ? 'Answers' : 'Antworten'}
-                    </Link>
-                  </Button>
-                  {form.share_enabled && form.share_slug && (
+                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <Badge variant="outline">/{form.slug}</Badge>
+                    {form.tenant_id && currentTenantInfo && (
+                      <Badge variant="outline">{currentTenantInfo.name}</Badge>
+                    )}
+                    <Badge variant="outline">API {form.api_enabled ? 'on' : 'off'}</Badge>
+                    <Badge variant="outline">{form.requires_auth ? (language === 'en' ? 'Auth required' : 'Mit Anmeldung') : (language === 'en' ? 'Public' : 'Öffentlich')}</Badge>
+                    {sharePath && (
+                      <Badge variant="outline">{sharePath}</Badge>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline" size="sm">
-                      <a href={`/${form.share_slug}`} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        {language === 'en' ? 'Open share page' : 'Share-Seite öffnen'}
-                      </a>
+                      <Link to={`/forms/${form.id}`}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {language === 'en' ? 'Edit' : 'Bearbeiten'}
+                      </Link>
                     </Button>
-                  )}
-                  <Button variant="destructive" size="sm" onClick={() => void handleArchive(form.id)}>
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    {language === 'en' ? 'Archive' : 'Archivieren'}
-                  </Button>
+                    <Button asChild variant="outline" size="sm">
+                      <Link to={`/forms/${form.id}/answers`}>
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        {language === 'en' ? 'Answers' : 'Antworten'}
+                      </Link>
+                    </Button>
+                    {sharePath && (
+                      <Button asChild variant="outline" size="sm">
+                        <a href={sharePath} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="mr-2 h-4 w-4" />
+                          {language === 'en' ? 'Open share page' : 'Share-Seite öffnen'}
+                        </a>
+                      </Button>
+                    )}
+                    <Button variant="destructive" size="sm" onClick={() => void handleArchive(form.id)}>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {language === 'en' ? 'Archive' : 'Archivieren'}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </AdminCard>
-          ))}
+              </AdminCard>
+            );
+          })}
         </div>
       )}
     </AdminPageLayout>

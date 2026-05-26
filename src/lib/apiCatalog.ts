@@ -669,7 +669,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     id: 'forms-share-get',
     tag: 'Forms',
     method: 'GET',
-    path: '/api/forms/share/:shareSlug',
+    path: '/api/forms/share/:tenantName/:shareSlug',
     summary: 'Resolve a public or auth-gated share form definition',
     description: 'Returns one form definition by share slug, provided share links are enabled and auth requirements are satisfied.',
     auth: 'bearer-optional',
@@ -677,6 +677,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/forms.ts',
     logging: 'agentLogger',
     parameters: [
+      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace name segment derived from tenants.name.' },
       { name: 'shareSlug', in: 'path', required: true, type: 'string', description: 'Public share slug stored in forms.share_slug.' },
       { name: 'Authorization', in: 'header', required: false, type: 'Bearer token', description: 'Required when the form requires authentication.' },
     ],
@@ -703,7 +704,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     id: 'forms-share-submit',
     tag: 'Forms',
     method: 'POST',
-    path: '/api/forms/share/:shareSlug/answers',
+    path: '/api/forms/share/:tenantName/:shareSlug/answers',
     summary: 'Submit answers through a share link',
     description: 'Validates incoming answers against the stored JSONB schema, writes one row to forms_answers, and enqueues configured notification e-mails.',
     auth: 'bearer-optional',
@@ -711,6 +712,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/forms.ts',
     logging: 'agentLogger',
     parameters: [
+      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace name segment derived from tenants.name.' },
       { name: 'shareSlug', in: 'path', required: true, type: 'string', description: 'Public share slug.' },
       { name: 'answers', in: 'body', required: true, type: 'object', description: 'Field-value map keyed by schema field name.' },
       { name: 'source_slug', in: 'body', required: false, type: 'string', description: 'Origin page slug or surface identifier.' },

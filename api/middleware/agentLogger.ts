@@ -73,7 +73,7 @@ async function shouldLogRequest(env: Env, method: string, pathname: string): Pro
 }
 
 function shouldSkipBodyLogging(pathname: string): boolean {
-  return /^\/api\/forms\/(share\/[^/]+\/answers|[^/]+\/answers)$/.test(pathname)
+  return /^\/api\/forms\/(share\/[^/]+\/[^/]+\/answers|[^/]+\/answers)$/.test(pathname)
     || pathname === '/api/media/upload';
 }
 

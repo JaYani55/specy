@@ -303,7 +303,7 @@ const AppContent = () => {
 
           <Route path="/test-loader" element={<ProtectedRoute><TestLoader /></ProtectedRoute>} />
         </Route>
-        <Route path="/:formShareSlug" element={<FormSharePage />} />
+        <Route path="/forms/share/:tenantName/:formShareSlug" element={<FormSharePage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
       

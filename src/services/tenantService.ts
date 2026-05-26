@@ -86,6 +86,22 @@ export const getVisibleTenantNameMap = async (
   }, {});
 };
 
+export const getVisibleTenantInfoMap = async (
+  tenantIds?: Array<string | null | undefined>,
+): Promise<Record<string, { name: string; slug: string }>> => {
+  const visibleTenants = await getVisibleTenants();
+  const allowedIds = tenantIds
+    ? new Set(tenantIds.filter((tenantId): tenantId is string => Boolean(tenantId)))
+    : null;
+
+  return visibleTenants.reduce<Record<string, { name: string; slug: string }>>((accumulator, tenant) => {
+    if (!allowedIds || allowedIds.has(tenant.id)) {
+      accumulator[tenant.id] = { name: tenant.name, slug: tenant.slug };
+    }
+    return accumulator;
+  }, {});
+};
+
 export const getTenantOptions = async (): Promise<TenantOption[]> => {
   const userId = await getCurrentUserId();
   if (!userId) {

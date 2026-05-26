@@ -47,6 +47,23 @@ interface FormRow {
   owner_user_id?: string | null;
 }
 
+interface FormWithTenantRow extends FormRow {
+  tenants?: {
+    name: string;
+  } | null;
+}
+
+const normalizeTenantNameSegment = (value: string): string => value
+  .toLowerCase()
+  .replace(/ä/g, 'ae')
+  .replace(/ö/g, 'oe')
+  .replace(/ü/g, 'ue')
+  .replace(/ß/g, 'ss')
+  .replace(/[^a-z0-9\s-]/g, '')
+  .replace(/\s+/g, '-')
+  .replace(/-+/g, '-')
+  .replace(/^-|-$/g, '');
+
 interface NotificationRecipient {
   email: string;
   label: string;
@@ -702,16 +719,20 @@ const getFormByIdentifier = async (
 
 const getFormByShareSlug = async (
   supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
+  tenantNameSegment: string,
   shareSlug: string,
 ): Promise<FormRow | null> => {
   const { data, error } = await supabase
     .from('forms')
-    .select('*')
+    .select('*, tenants:tenant_id (name)')
     .eq('share_slug', shareSlug)
     .maybeSingle();
 
   if (error) throw error;
-  return (data as FormRow | null) ?? null;
+  const form = (data as FormWithTenantRow | null) ?? null;
+  if (!form) return null;
+  if (!form.tenants?.name || normalizeTenantNameSegment(form.tenants.name) !== normalizeTenantNameSegment(tenantNameSegment)) return null;
+  return form;
 };
 
 const serializeForm = (form: FormRow, fields: FormFieldDefinition[]) => ({
@@ -743,11 +764,11 @@ forms.get('/', async (c) => {
   return c.json({ forms: data ?? [] });
 });
 
-forms.get('/share/:shareSlug', async (c) => {
+forms.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
 
-  const form = await getFormByShareSlug(supabase, c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
@@ -758,10 +779,10 @@ forms.get('/share/:shareSlug', async (c) => {
   return c.json(serializeForm(form, fields));
 });
 
-forms.post('/share/:shareSlug/upload', async (c) => {
+forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(supabase, c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
   const formData = await c.req.formData().catch(() => null);
 
   if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
@@ -778,10 +799,10 @@ forms.post('/share/:shareSlug/upload', async (c) => {
   return response;
 });
 
-forms.post('/share/:shareSlug/answers', async (c) => {
+forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(supabase, c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
