@@ -29,10 +29,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { ObjectContentBlocksEditor } from '@/components/objects/ObjectContentBlocksEditor';
 import { useTheme } from '@/contexts/ThemeContext';
 import { createObject, generateObjectSlug, getObject, updateObject } from '@/services/objectService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
-import type { ObjectFieldDefinition, ObjectFieldType, ObjectRecord } from '@/types/objects';
+import type { ContentBlock } from '@/types/pagebuilder';
+import type { MarkdownObjectData, ObjectFieldDefinition, ObjectFieldType, ObjectRecord, ObjectType } from '@/types/objects';
 import { toast } from 'sonner';
 
 // ----- Currency options for price fields -----
@@ -171,6 +173,12 @@ interface SchemaParseResult {
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const isMarkdownObjectData = (value: unknown): value is MarkdownObjectData => (
+  isPlainObject(value)
+  && isPlainObject(value.metadata)
+  && Array.isArray(value.content)
+);
 
 const parseSchemaJson = (raw: string): SchemaParseResult => {
   const trimmed = raw.trim();
@@ -1128,9 +1136,13 @@ const ObjectEditor: React.FC = () => {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
+  const [agentDescription, setAgentDescription] = useState('');
+  const [objectType, setObjectType] = useState<ObjectType>('json');
   const [status, setStatus] = useState<ObjectRecord['status']>('published');
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [apiEnabled, setApiEnabled] = useState(true);
+  const [shareEnabled, setShareEnabled] = useState(false);
+  const [shareSlug, setShareSlug] = useState('');
   const [tenantId, setTenantId] = useState('');
   const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
@@ -1148,8 +1160,10 @@ const ObjectEditor: React.FC = () => {
   const [dataMode, setDataMode] = useState<'form' | 'json'>('form');
   const [dataIsListMode, setDataIsListMode] = useState(false);
   const [dataRows, setDataRows] = useState<Record<string, unknown>[]>([{}]);
+  const [markdownBlocks, setMarkdownBlocks] = useState<ContentBlock[]>([]);
 
   const slugManualRef = useRef(false);
+  const shareSlugManualRef = useRef(false);
 
   useEffect(() => {
     const loadTenantOptions = async () => {
@@ -1179,21 +1193,34 @@ const ObjectEditor: React.FC = () => {
         setName(obj.name);
         setSlug(obj.slug);
         setDescription(obj.description ?? '');
+        setAgentDescription(obj.agent_description ?? '');
+        setObjectType(obj.object_type ?? 'json');
         setStatus(obj.status);
         setRequiresAuth(obj.requires_auth);
         setApiEnabled(obj.api_enabled);
+        setShareEnabled(Boolean(obj.share_enabled));
+        setShareSlug(obj.share_slug ?? '');
         setTenantId(obj.tenant_id ?? '');
         setFields(schemaToFields(obj.schema as Record<string, unknown>));
-        const loadedData = obj.data as Record<string, unknown> | unknown[];
-        if (Array.isArray(loadedData)) {
+        const loadedData = obj.data as Record<string, unknown> | unknown[] | MarkdownObjectData;
+        if ((obj.object_type ?? 'json') === 'markdown' && isMarkdownObjectData(loadedData)) {
+          setDataIsListMode(false);
+          setDataRows([loadedData.metadata]);
+          setDataJson(JSON.stringify(loadedData.metadata, null, 2));
+          setMarkdownBlocks(loadedData.content);
+        } else if (Array.isArray(loadedData)) {
           setDataIsListMode(true);
           setDataRows(loadedData as Record<string, unknown>[]);
+          setDataJson(JSON.stringify(loadedData, null, 2));
+          setMarkdownBlocks([]);
         } else {
           setDataIsListMode(false);
           setDataRows([loadedData as Record<string, unknown>]);
+          setDataJson(JSON.stringify(loadedData, null, 2));
+          setMarkdownBlocks([]);
         }
-        setDataJson(JSON.stringify(loadedData, null, 2));
         slugManualRef.current = true;
+        shareSlugManualRef.current = true;
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load object.');
         navigate('/objects');
@@ -1211,12 +1238,31 @@ const ObjectEditor: React.FC = () => {
     if (!slugManualRef.current) {
       setSlug(generateObjectSlug(value));
     }
+    if (!shareSlugManualRef.current) {
+      setShareSlug(generateObjectSlug(value));
+    }
   };
 
   const handleSlugChange = (value: string) => {
     setSlug(value);
     slugManualRef.current = true;
   };
+
+  const handleShareSlugChange = (value: string) => {
+    setShareSlug(value);
+    shareSlugManualRef.current = true;
+  };
+
+  useEffect(() => {
+    if (objectType !== 'markdown' || !dataIsListMode) {
+      return;
+    }
+
+    const single = dataRows[0] ?? {};
+    setDataIsListMode(false);
+    setDataRows([single]);
+    setDataJson(JSON.stringify(single, null, 2));
+  }, [objectType, dataIsListMode, dataRows]);
 
   // Schema JSON import
   const handleSchemaJsonImport = () => {
@@ -1257,6 +1303,14 @@ const ObjectEditor: React.FC = () => {
         toast.error(language === 'en' ? 'Fix JSON errors first.' : 'Zuerst JSON-Fehler beheben.');
         return;
       }
+      if (objectType === 'markdown' && Array.isArray(parsed)) {
+        toast.error(
+          language === 'en'
+            ? 'Markdown object metadata must be a JSON object.'
+            : 'Markdown-Objekt-Metadaten müssen ein JSON-Objekt sein.',
+        );
+        return;
+      }
       if (Array.isArray(parsed)) {
         setDataIsListMode(true);
         setDataRows(parsed as Record<string, unknown>[]);
@@ -1276,6 +1330,10 @@ const ObjectEditor: React.FC = () => {
   };
 
   const handleDataShapeChange = (newListMode: boolean) => {
+    if (objectType === 'markdown' && newListMode) {
+      return;
+    }
+
     setDataIsListMode(newListMode);
     if (newListMode) {
       setDataJson(JSON.stringify(dataRows.length > 0 ? dataRows : [{}], null, 2));
@@ -1311,6 +1369,13 @@ const ObjectEditor: React.FC = () => {
             : 'Daten müssen ein JSON-Objekt oder Array sein.',
         );
       }
+      if (objectType === 'markdown' && Array.isArray(raw)) {
+        throw new Error(
+          language === 'en'
+            ? 'Markdown object metadata must be a JSON object.'
+            : 'Markdown-Objekt-Metadaten müssen ein JSON-Objekt sein.',
+        );
+      }
       parsedData = raw as Record<string, unknown> | unknown[];
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Invalid data JSON.');
@@ -1323,11 +1388,17 @@ const ObjectEditor: React.FC = () => {
       name: name.trim(),
       slug: slug.trim(),
       description: description.trim() || undefined,
+      agent_description: agentDescription.trim() || undefined,
+      object_type: objectType,
       schema,
-      data: parsedData,
+      data: objectType === 'markdown'
+        ? { metadata: parsedData as Record<string, unknown>, content: markdownBlocks }
+        : parsedData,
       status,
       requires_auth: requiresAuth,
       api_enabled: apiEnabled,
+      share_enabled: objectType === 'markdown' ? shareEnabled : false,
+      share_slug: objectType === 'markdown' && shareEnabled ? (shareSlug.trim() || slug.trim()) : null,
       tenant_id: tenantId || null,
     };
 
@@ -1398,8 +1469,8 @@ const ObjectEditor: React.FC = () => {
             </CardTitle>
             <CardDescription>
               {language === 'en'
-                ? 'Name, slug, and description of this data object.'
-                : 'Name, Slug und Beschreibung dieses Datenobjekts.'}
+                ? 'Name, type, slug, and description of this object.'
+                : 'Name, Typ, Slug und Beschreibung dieses Objekts.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1416,6 +1487,20 @@ const ObjectEditor: React.FC = () => {
                 />
               </div>
               <div className="space-y-1.5">
+                <Label>{language === 'en' ? 'Object Type' : 'Objekttyp'}</Label>
+                <Select value={objectType} onValueChange={(value) => setObjectType(value as ObjectType)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="json">JSON Object</SelectItem>
+                    <SelectItem value="markdown">Markdown Object</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
                 <Label htmlFor="obj-slug">
                   Slug <span className="text-destructive">*</span>
                 </Label>
@@ -1425,6 +1510,22 @@ const ObjectEditor: React.FC = () => {
                   onChange={(e) => handleSlugChange(e.target.value)}
                   placeholder="service-prices"
                   className="font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="obj-agent-description">
+                  {language === 'en' ? 'Agent Description' : 'Agenten-Beschreibung'}
+                </Label>
+                <Textarea
+                  id="obj-agent-description"
+                  value={agentDescription}
+                  onChange={(e) => setAgentDescription(e.target.value)}
+                  rows={2}
+                  placeholder={
+                    language === 'en'
+                      ? 'Context for agents and API consumers...'
+                      : 'Kontext für Agenten und API-Konsumenten...'
+                  }
                 />
               </div>
             </div>
@@ -1522,6 +1623,31 @@ const ObjectEditor: React.FC = () => {
                 </Label>
               </div>
             </div>
+            {objectType === 'markdown' && (
+              <div className="grid gap-4 md:grid-cols-[auto_1fr] md:items-center">
+                <div className="flex items-center gap-3 pt-1">
+                  <Switch
+                    id="share-enabled"
+                    checked={shareEnabled}
+                    onCheckedChange={setShareEnabled}
+                  />
+                  <Label htmlFor="share-enabled" className="cursor-pointer">
+                    {language === 'en' ? 'Enable share page' : 'Share-Seite aktivieren'}
+                  </Label>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="share-slug">Share Slug</Label>
+                  <Input
+                    id="share-slug"
+                    value={shareSlug}
+                    onChange={(e) => handleShareSlugChange(e.target.value)}
+                    disabled={!shareEnabled}
+                    placeholder="team-handbook"
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </div>
+            )}
             {apiEnabled && (
               <Alert>
                 <Info className="h-4 w-4" />
@@ -1530,6 +1656,17 @@ const ObjectEditor: React.FC = () => {
                 </AlertTitle>
                 <AlertDescription className="font-mono text-xs">
                   GET /api/objects/{slug || '<slug>'}
+                </AlertDescription>
+              </Alert>
+            )}
+            {objectType === 'markdown' && shareEnabled && (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle className="text-sm">
+                  {language === 'en' ? 'Share page' : 'Share-Seite'}
+                </AlertTitle>
+                <AlertDescription className="font-mono text-xs">
+                  /objects/share/&lt;tenant&gt;/{shareSlug || slug || '<share-slug>'}
                 </AlertDescription>
               </Alert>
             )}
@@ -1546,8 +1683,12 @@ const ObjectEditor: React.FC = () => {
                 </CardTitle>
                 <CardDescription>
                   {language === 'en'
-                    ? 'Define the structure of your data object. Fields are used for documentation and validation.'
-                    : 'Definiere die Struktur deines Datenobjekts. Felder dienen der Dokumentation und Validierung.'}
+                    ? objectType === 'markdown'
+                      ? 'Define metadata fields for this markdown document. Fields are used for documentation and agent-facing structure.'
+                      : 'Define the structure of your data object. Fields are used for documentation and validation.'
+                    : objectType === 'markdown'
+                      ? 'Definiere Metadaten-Felder für dieses Markdown-Dokument. Felder dienen der Dokumentation und der agentensichtbaren Struktur.'
+                      : 'Definiere die Struktur deines Datenobjekts. Felder dienen der Dokumentation und Validierung.'}
                 </CardDescription>
               </div>
               <div className="flex gap-2">
@@ -1680,8 +1821,12 @@ const ObjectEditor: React.FC = () => {
                 </CardTitle>
                 <CardDescription>
                   {language === 'en'
-                    ? 'Fill in the data for this object based on the schema defined above.'
-                    : 'Befülle die Daten dieses Objekts anhand des oben definierten Schemas.'}
+                    ? objectType === 'markdown'
+                      ? 'Fill in metadata for this markdown document based on the schema defined above.'
+                      : 'Fill in the data for this object based on the schema defined above.'
+                    : objectType === 'markdown'
+                      ? 'Befülle die Metadaten dieses Markdown-Dokuments anhand des oben definierten Schemas.'
+                      : 'Befülle die Daten dieses Objekts anhand des oben definierten Schemas.'}
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
@@ -1711,7 +1856,7 @@ const ObjectEditor: React.FC = () => {
                   </button>
                 </div>
                 {/* Single / List toggle (form mode only) */}
-                {dataMode === 'form' && (
+                {dataMode === 'form' && objectType !== 'markdown' && (
                   <div className="flex rounded-md border overflow-hidden text-xs">
                     <button
                       type="button"
@@ -1770,13 +1915,39 @@ const ObjectEditor: React.FC = () => {
                 />
                 <p className="text-xs text-muted-foreground">
                   {language === 'en'
-                    ? 'Paste or type any valid JSON object or array. This is what will be returned by the API.'
-                    : 'Füge ein gültiges JSON-Objekt oder Array ein. Dieses wird von der API zurückgegeben.'}
+                    ? objectType === 'markdown'
+                      ? 'Paste or type any valid JSON object for document metadata. The saved payload also includes the content blocks below.'
+                      : 'Paste or type any valid JSON object or array. This is what will be returned by the API.'
+                    : objectType === 'markdown'
+                      ? 'Füge ein gültiges JSON-Objekt für Dokument-Metadaten ein. Der gespeicherte Payload enthält zusätzlich die Content-Blöcke unten.'
+                      : 'Füge ein gültiges JSON-Objekt oder Array ein. Dieses wird von der API zurückgegeben.'}
                 </p>
               </>
             )}
           </CardContent>
         </Card>
+
+        {objectType === 'markdown' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                {language === 'en' ? '📝 Document Content' : '📝 Dokumentinhalt'}
+              </CardTitle>
+              <CardDescription>
+                {language === 'en'
+                  ? 'Build the shareable markdown object with page-builder content blocks.'
+                  : 'Baue das teilbare Markdown-Objekt mit Page-Builder-Content-Blöcken auf.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ObjectContentBlocksEditor
+                blocks={markdownBlocks}
+                onChange={setMarkdownBlocks}
+                addPrefix={slug || 'markdown-object'}
+              />
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── Schema Type Reference ── */}
         <Card>

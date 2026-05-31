@@ -677,7 +677,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/forms.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace name segment derived from tenants.name.' },
+      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace public URL segment. Use tenants.slug for new links; legacy name-derived links remain readable for compatibility.' },
       { name: 'shareSlug', in: 'path', required: true, type: 'string', description: 'Public share slug stored in forms.share_slug.' },
       { name: 'Authorization', in: 'header', required: false, type: 'Bearer token', description: 'Required when the form requires authentication.' },
     ],
@@ -712,7 +712,7 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/forms.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace name segment derived from tenants.name.' },
+      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Tenant/workspace public URL segment. Use tenants.slug for new links; legacy name-derived links remain readable for compatibility.' },
       { name: 'shareSlug', in: 'path', required: true, type: 'string', description: 'Public share slug.' },
       { name: 'answers', in: 'body', required: true, type: 'object', description: 'Field-value map keyed by schema field name.' },
       { name: 'source_slug', in: 'body', required: false, type: 'string', description: 'Origin page slug or surface identifier.' },

@@ -53,6 +53,8 @@ export const MIGRATION_ORDER = [
   '202605240006_webapps_multi_tenant.sql',
   '202605250001_tenant_storage_management.sql',
   'objects.sql',
+  '202605310001_markdown_objects.sql',
+  '202605310002_markdown_object_share_scope.sql',
   'Auth/Access_hook.sql',
 ];
 

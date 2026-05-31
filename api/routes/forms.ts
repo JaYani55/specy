@@ -58,6 +58,7 @@ interface FormRow {
 interface FormWithTenantRow extends FormRow {
   tenants?: {
     name: string;
+    slug?: string;
   } | null;
 }
 
@@ -785,41 +786,48 @@ const getFormByShareSlug = async (
 ): Promise<FormRow | null> => {
   const { data, error } = await supabase
     .from('forms')
-    .select('*, tenants:tenant_id (name)')
+    .select('*, tenants:tenant_id (name, slug)')
     .eq('share_slug', shareSlug)
-    .maybeSingle();
+    .eq('share_enabled', true)
+    .neq('status', 'archived')
+    .limit(20);
 
   if (error) throw error;
-  const form = (data as FormWithTenantRow | null) ?? null;
-  if (!form) return null;
-  if (!form.tenant_id) return null;
-
+  const forms = (data as FormWithTenantRow[] | null) ?? [];
   const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
-  let resolvedTenantName: string | null = form.tenants?.name ?? null;
 
-  // When called as anon, tenant joins can be hidden by RLS; resolve tenant via admin as fallback.
-  if (!resolvedTenantName && form.tenant_id) {
-    const admin = await createSupabaseAdminClient(env);
-    const { data: tenantData, error: tenantError } = await admin
-      .from('tenants')
-      .select('name')
-      .eq('id', form.tenant_id)
-      .maybeSingle();
+  for (const form of forms) {
+    if (!form.tenant_id) {
+      continue;
+    }
 
-    if (tenantError) throw tenantError;
-    resolvedTenantName = typeof tenantData?.name === 'string' ? tenantData.name : null;
+    let resolvedTenantName: string | null = form.tenants?.name ?? null;
+    let resolvedTenantSlug: string | null = form.tenants?.slug ?? null;
+
+    // When called as anon, tenant joins can be hidden by RLS; resolve tenant via admin as fallback.
+    if ((!resolvedTenantName || !resolvedTenantSlug) && form.tenant_id) {
+      const admin = await createSupabaseAdminClient(env);
+      const { data: tenantData, error: tenantError } = await admin
+        .from('tenants')
+        .select('name, slug')
+        .eq('id', form.tenant_id)
+        .maybeSingle();
+
+      if (tenantError) throw tenantError;
+      resolvedTenantName = typeof tenantData?.name === 'string' ? tenantData.name : resolvedTenantName;
+      resolvedTenantSlug = typeof tenantData?.slug === 'string' ? tenantData.slug : resolvedTenantSlug;
+    }
+
+    const matchesTenant = [resolvedTenantName, resolvedTenantSlug]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => normalizeTenantNameSegment(value) === requestedTenantSegment);
+
+    if (matchesTenant) {
+      return form;
+    }
   }
 
-  // Fail closed: never serve a share form unless the tenant name can be resolved.
-  if (!resolvedTenantName) {
-    return null;
-  }
-
-  if (normalizeTenantNameSegment(resolvedTenantName) !== requestedTenantSegment) {
-    return null;
-  }
-
-  return form;
+  return null;
 };
 
 const serializeForm = (form: FormRow, fields: FormFieldDefinition[]) => ({

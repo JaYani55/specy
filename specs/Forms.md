@@ -51,10 +51,17 @@ When `share_enabled` is true, a form can be opened directly from the ServiceCMS 
 
 Examples:
 
-- `/contact-form`
-- `/lead-capture`
+- `/forms/share/jay/contact-form`
+- `/forms/share/workspace-a/lead-capture`
 
 If `requires_auth` is true, the share page is only usable by authenticated users.
+
+The tenant segment in public share URLs must be the workspace slug from `public.tenants.slug`.
+
+- Correct: `/forms/share/jay/contact-form`
+- Incorrect: building the path from `public.tenants.name`
+
+Backend routes may still accept legacy name-derived tenant segments for compatibility, but all new frontend links and embedded references must use `tenant.slug`.
 
 ### 4. Agent / REST Access
 
@@ -428,6 +435,10 @@ The setup wizard’s explicit migration order was updated so fresh installs crea
 ### Reserved Share Slugs
 
 Because direct share pages live at the ServiceCMS root, not under `/forms/:slug`, reserved route checks are essential. A share slug must not collide with existing app routes.
+
+### Tenant URL Rule
+
+Public share routes are tenant-scoped. Use `public.tenants.slug` as the canonical tenant URL segment across forms, objects, embedded content blocks, and API examples. Do not derive public URLs from `public.tenants.name`.
 
 ### Current Scope
 

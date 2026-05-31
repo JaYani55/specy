@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, FilePlus2, Loader2, Lock, Pencil, Trash2, Unlock } from 'lucide-react';
+import { Box, ExternalLink, FilePlus2, Loader2, Lock, Pencil, Trash2, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { deleteObject, getObjects } from '@/services/objectService';
-import { getVisibleTenantNameMap } from '@/services/tenantService';
+import { getVisibleTenantInfoMap } from '@/services/tenantService';
 import type { ObjectRecord } from '@/types/objects';
+import { buildObjectSharePath } from '@/utils/sharePaths';
 
 const statusVariant: Record<ObjectRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
@@ -20,14 +21,14 @@ const Objects = () => {
   const { language } = useTheme();
   const [items, setItems] = useState<ObjectRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
+  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string }>>({});
 
   const loadObjects = useCallback(async () => {
     try {
       setIsLoading(true);
       const records = await getObjects();
       setItems(records);
-      setTenantNames(await getVisibleTenantNameMap(records.map((item) => item.tenant_id)));
+      setTenantInfo(await getVisibleTenantInfoMap(records.map((item) => item.tenant_id)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load objects.');
     } finally {
@@ -64,8 +65,8 @@ const Objects = () => {
           </h2>
           <p className="max-w-xl text-sm text-muted-foreground">
             {language === 'en'
-              ? 'Define structured data objects — like service lists, price tables, or any reusable JSONB payload — and expose them via the API.'
-              : 'Definiere strukturierte Datenobjekte – wie Dienstleistungslisten, Preistabellen oder andere JSONB-Payloads – und stelle sie über die API bereit.'}
+              ? 'Define structured JSON objects and shareable markdown documents, then expose them via API or public share pages.'
+              : 'Definiere strukturierte JSON-Objekte und teilbare Markdown-Dokumente und stelle sie über API oder Share-Seiten bereit.'}
           </p>
         </div>
         <Button onClick={() => navigate('/objects/new')}>
@@ -124,6 +125,16 @@ const Objects = () => {
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                     {language === 'en' ? 'Archive' : 'Archivieren'}
                   </Button>
+                  {obj.share_enabled && obj.share_slug && obj.tenant_id && tenantInfo[obj.tenant_id] && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate(buildObjectSharePath(tenantInfo[obj.tenant_id].slug, obj.share_slug))}
+                    >
+                      <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                      {language === 'en' ? 'Share' : 'Teilen'}
+                    </Button>
+                  )}
                 </div>
               )}
             >
@@ -131,12 +142,15 @@ const Objects = () => {
                 <Badge variant={statusVariant[obj.status]}>
                   {obj.status}
                 </Badge>
+                <Badge variant="secondary" className="text-xs uppercase">
+                  {obj.object_type}
+                </Badge>
                 <Badge variant="secondary" className="font-mono text-xs">
                   /{obj.slug}
                 </Badge>
-                {obj.tenant_id && tenantNames[obj.tenant_id] && (
+                {obj.tenant_id && tenantInfo[obj.tenant_id] && (
                   <Badge variant="outline" className="text-xs">
-                    {tenantNames[obj.tenant_id]}
+                    {tenantInfo[obj.tenant_id].name}
                   </Badge>
                 )}
                 {obj.requires_auth ? (
@@ -153,6 +167,11 @@ const Objects = () => {
                 {!obj.api_enabled && (
                   <Badge variant="secondary" className="text-xs">
                     {language === 'en' ? 'API disabled' : 'API deaktiviert'}
+                  </Badge>
+                )}
+                {obj.share_enabled && (
+                  <Badge variant="outline" className="text-xs">
+                    {language === 'en' ? 'Share enabled' : 'Share aktiv'}
                   </Badge>
                 )}
               </div>

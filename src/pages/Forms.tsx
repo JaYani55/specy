@@ -9,7 +9,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { deleteForm, getForms } from '@/services/formService';
 import { getVisibleTenantInfoMap } from '@/services/tenantService';
 import type { FormRecord } from '@/types/forms';
-import { generateFormSlug } from '@/utils/forms';
+import { buildFormSharePath } from '@/utils/sharePaths';
 
 const statusVariant: Record<FormRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
@@ -102,7 +102,7 @@ const Forms = () => {
           {forms.map((form) => {
             const currentTenantInfo = form.tenant_id ? tenantInfo[form.tenant_id] : undefined;
             const sharePath = form.share_enabled && form.share_slug && currentTenantInfo
-              ? `/forms/share/${generateFormSlug(currentTenantInfo.name)}/${form.share_slug}`
+              ? buildFormSharePath(currentTenantInfo.slug, form.share_slug)
               : null;
 
             return (

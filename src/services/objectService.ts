@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { API_URL } from '@/lib/apiUrl';
-import type { ObjectRecord } from '@/types/objects';
+import type { MarkdownObjectData, ObjectRecord, PublicObjectDefinition, ObjectType } from '@/types/objects';
 
 const getAuthToken = async (): Promise<string | null> => {
   const { data } = await supabase.auth.getSession();
@@ -54,11 +54,15 @@ export interface CreateObjectInput {
   name: string;
   slug: string;
   description?: string;
+  agent_description?: string;
+  object_type?: ObjectType;
   schema: Record<string, unknown>;
-  data: Record<string, unknown> | unknown[];
+  data: Record<string, unknown> | unknown[] | MarkdownObjectData;
   status?: 'published' | 'archived';
   requires_auth?: boolean;
   api_enabled?: boolean;
+  share_enabled?: boolean;
+  share_slug?: string | null;
   tenant_id?: string | null;
 }
 
@@ -105,4 +109,18 @@ export const deleteObject = async (id: string): Promise<void> => {
     const err = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
     throw new Error(err.error ?? 'Failed to archive object.');
   }
+};
+
+export const getPublicObjectByShareSlug = async (tenantName: string, shareSlug: string): Promise<PublicObjectDefinition> => {
+  const headers = await buildHeaders();
+  const response = await fetch(`${API_URL}/api/objects/share/${encodeURIComponent(tenantName)}/${encodeURIComponent(shareSlug)}`, {
+    headers,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+    throw new Error(err.error ?? 'Failed to load shared object.');
+  }
+
+  return response.json() as Promise<PublicObjectDefinition>;
 };

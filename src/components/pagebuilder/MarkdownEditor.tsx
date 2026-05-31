@@ -431,9 +431,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
+        bold: false,
         heading: {
           levels: [1, 2, 3],
         },
+        italic: false,
+        link: false,
       }),
       Typography,
       Bold,
