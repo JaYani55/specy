@@ -99,6 +99,14 @@ const parseFieldEntry = (
     upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
   };
 
+  if (value.order !== undefined) {
+    if (typeof value.order === 'number' && Number.isFinite(value.order)) {
+      field.order = Math.max(0, Math.trunc(value.order));
+    } else {
+      warnings.push(`${path}.order must be a finite number when provided.`);
+    }
+  }
+
   if (value.options !== undefined) {
     if (!Array.isArray(value.options) || value.options.some((entry) => typeof entry !== 'string' || !entry.trim())) {
       errors.push(`${path}.options must be an array of non-empty strings.`);
@@ -168,16 +176,47 @@ export const parseFormSchema = (raw: string): ParsedFormSchemaResult => {
     warnings.push(...result.warnings);
     if (result.field) {
       fields.push(result.field);
-      const { name: fieldName, ...fieldValue } = result.field;
-      normalizedSchema[fieldName] = fieldValue;
     }
+  }
+
+  const sortedFields = [...fields]
+    .map((field, index) => ({ field, index }))
+    .sort((left, right) => {
+      const leftOrder = left.field.order;
+      const rightOrder = right.field.order;
+      const leftHasOrder = typeof leftOrder === 'number';
+      const rightHasOrder = typeof rightOrder === 'number';
+
+      if (leftHasOrder && rightHasOrder && leftOrder !== rightOrder) {
+        return (leftOrder as number) - (rightOrder as number);
+      }
+
+      if (leftHasOrder && !rightHasOrder) {
+        return -1;
+      }
+
+      if (!leftHasOrder && rightHasOrder) {
+        return 1;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.field);
+
+  for (const [index, field] of sortedFields.entries()) {
+    const normalizedOrder = typeof field.order === 'number' ? Math.max(0, Math.trunc(field.order)) : index;
+    const { name: fieldName, ...fieldValue } = {
+      ...field,
+      order: normalizedOrder,
+    };
+    normalizedSchema[fieldName] = fieldValue;
   }
 
   return {
     valid: errors.length === 0,
     errors,
     warnings,
-    fields,
+    fields: sortedFields,
     normalizedSchema: errors.length === 0 ? normalizedSchema : null,
   };
 };
@@ -185,11 +224,12 @@ export const parseFormSchema = (raw: string): ParsedFormSchemaResult => {
 export const formatFormSchema = (schema: FormSchemaDefinition): string => JSON.stringify(schema, null, 2);
 
 export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDefinition => {
-  return fields.reduce<FormSchemaDefinition>((accumulator, field) => {
+  return fields.reduce<FormSchemaDefinition>((accumulator, field, index) => {
     const normalizedName = field.name.trim();
     if (!normalizedName) return accumulator;
 
     accumulator[normalizedName] = {
+      order: index,
       type: field.type,
       label: field.label,
       description: field.description || undefined,

@@ -10,6 +10,7 @@ import {
   type LegacyStaffTraitGroup,
   type StaffTraitDefinition,
 } from '@/services/staffRegistryService';
+import { getTenantOptions } from '@/services/tenantService';
 
 // Import consistent admin components
 import { AdminPageLayout, AdminLoading, AdminCard } from '@/components/admin/ui';
@@ -34,6 +35,7 @@ const VerwaltungAllMentors = () => {
   const [traitGroups, setTraitGroups] = useState<LegacyStaffTraitGroup[]>([]);
   const [selectedMentor, setSelectedMentor] = useState<Mentor | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasTenantAdminAccess, setHasTenantAdminAccess] = useState(false);
 
   // Check permissions and redirect if needed
   useEffect(() => {
@@ -41,6 +43,20 @@ const VerwaltungAllMentors = () => {
       navigate('/admin');
     }
   }, [permissions.canViewMentorProfiles, navigate]);
+
+  useEffect(() => {
+    const loadTenantAccess = async () => {
+      try {
+        const options = await getTenantOptions();
+        setHasTenantAdminAccess(options.some((option) => option.is_tenant_admin));
+      } catch (error) {
+        console.error('Error loading tenant admin access:', error);
+        setHasTenantAdminAccess(false);
+      }
+    };
+
+    void loadTenantAccess();
+  }, []);
 
   // Load mentors efficiently using batch operations
   useEffect(() => {
@@ -125,7 +141,7 @@ const VerwaltungAllMentors = () => {
 
   // Permission checks
   const canViewMentors = permissions.canViewMentorProfiles;
-  const canManageMentors = permissions.canManageMentors;
+  const canManageMentors = permissions.canManageMentors || hasTenantAdminAccess;
 
   if (!canViewMentors) {
     return null;

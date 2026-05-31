@@ -26,6 +26,7 @@ export type FormAnswerValue = string | number | boolean | string[] | FormUploade
 
 export interface FormFieldDefinition {
   editorId?: string;
+  order?: number;
   name: string;
   type: FormFieldType;
   label: string;

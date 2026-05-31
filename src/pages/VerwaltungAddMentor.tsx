@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { fetchAccounts, type AccountUser } from '@/services/accountService';
 import { createStaffRecord, fetchStaffRecord, updateStaffRecord } from '@/services/staffRegistryService';
+import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 
 interface StaffFormState {
   displayName: string;
@@ -42,6 +43,10 @@ const VerwaltungAddMentor = () => {
   const editingStaffId = searchParams.get('edit');
   const isEditing = Boolean(editingStaffId);
   const [accounts, setAccounts] = React.useState<AccountUser[]>([]);
+  const [tenantOptions, setTenantOptions] = React.useState<TenantOption[]>([]);
+  const [tenantId, setTenantId] = React.useState('');
+  const [tenantOptionsLoading, setTenantOptionsLoading] = React.useState(true);
+  const [hasTenantAdminAccess, setHasTenantAdminAccess] = React.useState(false);
   const [loadingAccounts, setLoadingAccounts] = React.useState(true);
   const [loadingStaff, setLoadingStaff] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
@@ -56,11 +61,42 @@ const VerwaltungAddMentor = () => {
     accountUserId: 'none',
   });
 
+  const canManageStaff = permissions.canManageMentors || hasTenantAdminAccess;
+  const manageableTenantOptions = React.useMemo(
+    () => (permissions.canManageMentors ? tenantOptions : tenantOptions.filter((option) => option.is_tenant_admin)),
+    [permissions.canManageMentors, tenantOptions],
+  );
+
   React.useEffect(() => {
-    if (!permissions.canManageMentors) {
+    const loadTenantOptions = async () => {
+      try {
+        setTenantOptionsLoading(true);
+        const options = await getTenantOptions();
+        setTenantOptions(options);
+        setHasTenantAdminAccess(options.some((option) => option.is_tenant_admin));
+
+        const selectableOptions = permissions.canManageMentors
+          ? options
+          : options.filter((option) => option.is_tenant_admin);
+
+        setTenantId((current) => pickInitialTenantId(selectableOptions, current));
+      } catch (error) {
+        console.error('Error loading tenant options:', error);
+        setTenantOptions([]);
+        setHasTenantAdminAccess(false);
+      } finally {
+        setTenantOptionsLoading(false);
+      }
+    };
+
+    void loadTenantOptions();
+  }, [permissions.canManageMentors]);
+
+  React.useEffect(() => {
+    if (!tenantOptionsLoading && !canManageStaff) {
       navigate('/admin');
     }
-  }, [permissions.canManageMentors, navigate]);
+  }, [tenantOptionsLoading, canManageStaff, navigate]);
 
   React.useEffect(() => {
     const loadAccounts = async () => {
@@ -105,6 +141,7 @@ const VerwaltungAddMentor = () => {
           status: staff.status,
           accountUserId: staff.accountUserId || 'none',
         });
+        setTenantId((current) => staff.tenantId || pickInitialTenantId(manageableTenantOptions, current));
       } catch (error) {
         console.error('Error loading staff record:', error);
         toast.error(language === 'en' ? 'Failed to load staff member' : 'Fehler beim Laden des Mitarbeiters');
@@ -115,7 +152,18 @@ const VerwaltungAddMentor = () => {
     };
 
     void loadStaff();
-  }, [editingStaffId, language, navigate]);
+  }, [editingStaffId, language, manageableTenantOptions, navigate]);
+
+  React.useEffect(() => {
+    if (editingStaffId) {
+      return;
+    }
+    if (tenantOptionsLoading) {
+      return;
+    }
+
+    setTenantId((current) => pickInitialTenantId(manageableTenantOptions, current));
+  }, [editingStaffId, manageableTenantOptions, tenantOptionsLoading]);
 
   const handleSaveStaff = async () => {
     if (!formState.displayName.trim()) {
@@ -123,10 +171,16 @@ const VerwaltungAddMentor = () => {
       return;
     }
 
+    if (manageableTenantOptions.length > 0 && !tenantId) {
+      toast.error(language === 'en' ? 'Please select a workspace' : 'Bitte waehlen Sie einen Workspace aus');
+      return;
+    }
+
     try {
       setSaving(true);
       const payload = {
         displayName: formState.displayName.trim(),
+        tenantId: tenantId || null,
         accountUserId: formState.accountUserId === 'none' ? null : formState.accountUserId,
         email: formState.email.trim() || null,
         phone: formState.phone.trim() || null,
@@ -156,7 +210,7 @@ const VerwaltungAddMentor = () => {
     }
   };
 
-  if (!permissions.canManageMentors) {
+  if (!tenantOptionsLoading && !canManageStaff) {
     return null;
   }
 
@@ -236,6 +290,26 @@ const VerwaltungAddMentor = () => {
                   {language === 'en' ? 'Loading available accounts...' : 'Verfügbare Konten werden geladen...'}
                 </div>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
+              <Select
+                value={tenantId}
+                onValueChange={setTenantId}
+                disabled={tenantOptionsLoading || manageableTenantOptions.length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'en' ? 'Select workspace...' : 'Workspace auswählen...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {manageableTenantOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}{option.is_default ? (language === 'en' ? ' (default)' : ' (Standard)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2 md:col-span-2">

@@ -3,6 +3,7 @@ import { normalizeProfileImageUrl } from '@/utils/staffUtils';
 
 export interface StaffRecord {
   id: string;
+  tenantId?: string | null;
   accountUserId?: string | null;
   displayName: string;
   email?: string | null;
@@ -16,6 +17,7 @@ export interface StaffRecord {
 
 export interface CreateStaffInput {
   displayName: string;
+  tenantId?: string | null;
   accountUserId?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -28,6 +30,7 @@ export interface CreateStaffInput {
 
 export interface UpdateStaffInput {
   displayName?: string;
+  tenantId?: string | null;
   accountUserId?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -64,6 +67,7 @@ export interface StaffTraitInput {
 
 interface StaffRow {
   id: string;
+  tenant_id: string | null;
   account_user_id: string | null;
   display_name: string;
   email: string | null;
@@ -110,6 +114,7 @@ const normalizeMetadata = (value: Record<string, unknown> | null | undefined): R
 
 const mapStaffRow = (row: StaffRow): StaffRecord => ({
   id: row.id,
+  tenantId: row.tenant_id,
   accountUserId: row.account_user_id,
   displayName: row.display_name,
   email: row.email,
@@ -154,6 +159,7 @@ const fetchLegacyStaffDirectory = async (): Promise<StaffRecord[]> => {
 
   return (profiles || []).map((profile) => ({
     id: profile.user_id,
+    tenantId: null,
     accountUserId: profile.user_id,
     displayName: profile.Username || 'Unnamed staff',
     avatarUrl: normalizeProfileImageUrl(profile.pfp_url, 160),
@@ -165,7 +171,7 @@ const fetchLegacyStaffDirectory = async (): Promise<StaffRecord[]> => {
 export const fetchStaffDirectory = async (): Promise<StaffRecord[]> => {
   const { data, error } = await supabase
     .from('staff')
-    .select('id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
+    .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .order('display_name', { ascending: true });
 
   if (error) {
@@ -187,7 +193,7 @@ export const fetchStaffDirectory = async (): Promise<StaffRecord[]> => {
 export const fetchStaffRecord = async (staffId: string): Promise<StaffRecord | null> => {
   const { data, error } = await supabase
     .from('staff')
-    .select('id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
+    .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .eq('id', staffId)
     .maybeSingle();
 
@@ -212,6 +218,7 @@ export const createStaffRecord = async (input: CreateStaffInput): Promise<StaffR
     .from('staff')
     .insert({
       display_name: input.displayName.trim(),
+      tenant_id: input.tenantId || null,
       account_user_id: input.accountUserId || null,
       email: input.email || null,
       phone: input.phone || null,
@@ -221,7 +228,7 @@ export const createStaffRecord = async (input: CreateStaffInput): Promise<StaffR
       notes: input.notes || null,
       profile: input.profile || {},
     })
-    .select('id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
+    .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .single();
 
   if (error) {
@@ -234,6 +241,7 @@ export const createStaffRecord = async (input: CreateStaffInput): Promise<StaffR
 export const updateStaffRecord = async (staffId: string, input: UpdateStaffInput): Promise<StaffRecord> => {
   const payload = {
     display_name: input.displayName?.trim(),
+    tenant_id: input.tenantId === undefined ? undefined : input.tenantId || null,
     account_user_id: input.accountUserId === undefined ? undefined : input.accountUserId || null,
     email: input.email === undefined ? undefined : input.email || null,
     phone: input.phone === undefined ? undefined : input.phone || null,
@@ -253,7 +261,7 @@ export const updateStaffRecord = async (staffId: string, input: UpdateStaffInput
     .from('staff')
     .update(sanitizedPayload)
     .eq('id', staffId)
-    .select('id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
+    .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .single();
 
   if (error) {

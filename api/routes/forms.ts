@@ -19,6 +19,7 @@ interface FormUploadedFileValue {
 }
 
 interface FormFieldDefinition {
+  order?: number;
   name: string;
   type: FormFieldType;
   label: string;
@@ -44,6 +45,7 @@ interface FormRow {
   share_slug: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  tenant_id?: string | null;
   owner_user_id?: string | null;
 }
 
@@ -396,6 +398,10 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
     };
 
+    if (value.order !== undefined && typeof value.order === 'number' && Number.isFinite(value.order)) {
+      field.order = Math.max(0, Math.trunc(value.order));
+    }
+
     if ((field.type === 'select' || field.type === 'radio' || field.type === 'single-select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
       errors.push(`${name}.options is required.`);
       continue;
@@ -408,7 +414,31 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
     fields.push(field);
   }
 
-  return { fields, errors };
+  const sortedFields = [...fields]
+    .map((field, index) => ({ field, index }))
+    .sort((left, right) => {
+      const leftOrder = left.field.order;
+      const rightOrder = right.field.order;
+      const leftHasOrder = typeof leftOrder === 'number';
+      const rightHasOrder = typeof rightOrder === 'number';
+
+      if (leftHasOrder && rightHasOrder && leftOrder !== rightOrder) {
+        return (leftOrder as number) - (rightOrder as number);
+      }
+
+      if (leftHasOrder && !rightHasOrder) {
+        return -1;
+      }
+
+      if (!leftHasOrder && rightHasOrder) {
+        return 1;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.field);
+
+  return { fields: sortedFields, errors };
 };
 
 const validateAnswers = (
@@ -718,6 +748,7 @@ const getFormByIdentifier = async (
 };
 
 const getFormByShareSlug = async (
+  env: Env,
   supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
   tenantNameSegment: string,
   shareSlug: string,
@@ -731,7 +762,33 @@ const getFormByShareSlug = async (
   if (error) throw error;
   const form = (data as FormWithTenantRow | null) ?? null;
   if (!form) return null;
-  if (!form.tenants?.name || normalizeTenantNameSegment(form.tenants.name) !== normalizeTenantNameSegment(tenantNameSegment)) return null;
+  if (!form.tenant_id) return null;
+
+  const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
+  let resolvedTenantName: string | null = form.tenants?.name ?? null;
+
+  // When called as anon, tenant joins can be hidden by RLS; resolve tenant via admin as fallback.
+  if (!resolvedTenantName && form.tenant_id) {
+    const admin = await createSupabaseAdminClient(env);
+    const { data: tenantData, error: tenantError } = await admin
+      .from('tenants')
+      .select('name')
+      .eq('id', form.tenant_id)
+      .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    resolvedTenantName = typeof tenantData?.name === 'string' ? tenantData.name : null;
+  }
+
+  // Fail closed: never serve a share form unless the tenant name can be resolved.
+  if (!resolvedTenantName) {
+    return null;
+  }
+
+  if (normalizeTenantNameSegment(resolvedTenantName) !== requestedTenantSegment) {
+    return null;
+  }
+
   return form;
 };
 
@@ -768,7 +825,7 @@ forms.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
 
-  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
@@ -782,7 +839,7 @@ forms.get('/share/:tenantName/:shareSlug', async (c) => {
 forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
   const formData = await c.req.formData().catch(() => null);
 
   if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
@@ -802,7 +859,7 @@ forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
 forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
