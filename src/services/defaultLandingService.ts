@@ -1,5 +1,3 @@
-import { getPluginHooks } from '@/plugins/loader';
-
 export interface DefaultLandingOption {
   value: string;
   label: {
@@ -21,8 +19,15 @@ export interface DefaultLandingResolveHookContext {
   userRoles: string[];
 }
 
+export interface DefaultLandingPathHookContext {
+  view: string;
+  resolvedPath: string;
+  userRoles: string[];
+}
+
 export const DEFAULT_LANDING_OPTIONS_HOOK = 'settings.defaultLanding.options';
 export const DEFAULT_LANDING_RESOLVE_HOOK = 'settings.defaultLanding.resolve';
+export const DEFAULT_LANDING_PATH_HOOK = 'settings.defaultLanding.path';
 
 const STORAGE_KEY_PREFIX = 'mentor_app_settings_';
 
@@ -43,6 +48,11 @@ const BASE_OPTIONS: DefaultLandingOption[] = [
 
 function sortHooks<TContext>(hooks: Array<{ order?: number; handler: (context: TContext) => TContext | Promise<TContext> }>) {
   return [...hooks].sort((left, right) => (left.order ?? 100) - (right.order ?? 100));
+}
+
+async function loadPluginHooks<TContext>(target: string, userRoles: string[]) {
+  const { getPluginHooks } = await import('@/plugins/loader');
+  return getPluginHooks(target, userRoles) as Array<{ order?: number; handler: (context: TContext) => TContext | Promise<TContext> }>;
 }
 
 function normalizeOptions(options: DefaultLandingOption[]): DefaultLandingOption[] {
@@ -95,7 +105,7 @@ export async function getDefaultLandingOptions(userRoles: string[]): Promise<Def
     userRoles,
   };
 
-  const hooks = sortHooks(getPluginHooks(DEFAULT_LANDING_OPTIONS_HOOK, userRoles));
+  const hooks = sortHooks(await loadPluginHooks<DefaultLandingOptionsHookContext>(DEFAULT_LANDING_OPTIONS_HOOK, userRoles));
 
   for (const hook of hooks) {
     context = await hook.handler(context) as DefaultLandingOptionsHookContext;
@@ -121,7 +131,7 @@ export async function resolveDefaultLandingView(
     userRoles,
   };
 
-  const hooks = sortHooks(getPluginHooks(DEFAULT_LANDING_RESOLVE_HOOK, userRoles));
+  const hooks = sortHooks(await loadPluginHooks<DefaultLandingResolveHookContext>(DEFAULT_LANDING_RESOLVE_HOOK, userRoles));
 
   for (const hook of hooks) {
     context = await hook.handler(context) as DefaultLandingResolveHookContext;
@@ -134,10 +144,18 @@ export async function resolveDefaultLandingView(
   return context.resolvedView;
 }
 
-export function getDefaultLandingPath(view: string): string {
-  if (view === 'pluradash') {
-    return '/plugins/pluradash';
+export async function getDefaultLandingPath(view: string, userRoles: string[]): Promise<string> {
+  let context: DefaultLandingPathHookContext = {
+    view,
+    resolvedPath: `/${view}`,
+    userRoles,
+  };
+
+  const hooks = sortHooks(await loadPluginHooks<DefaultLandingPathHookContext>(DEFAULT_LANDING_PATH_HOOK, userRoles));
+
+  for (const hook of hooks) {
+    context = await hook.handler(context) as DefaultLandingPathHookContext;
   }
 
-  return `/${view}`;
+  return context.resolvedPath;
 }

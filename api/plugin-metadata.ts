@@ -29,6 +29,14 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "description": "Resolves PluraDash as the preferred landing page for authenticated support users when no other valid preference exists."
       },
       {
+        "key": "pluradash-default-landing-path",
+        "target": "settings.defaultLanding.path",
+        "scope": "ui",
+        "kind": "transform",
+        "order": 100,
+        "description": "Maps the PluraDash landing-view key to the plugin route."
+      },
+      {
         "key": "pluradash-tenant-storage-policy",
         "target": "storage.tenant.policy",
         "scope": "api",
@@ -43,6 +51,14 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "kind": "transform",
         "order": 100,
         "description": "Restricts support users to the managed R2 media source while leaving super-admin source access unchanged."
+      },
+      {
+        "key": "pluradash-media-url-resolver",
+        "target": "media.url.resolve",
+        "scope": "ui",
+        "kind": "transform",
+        "order": 100,
+        "description": "Rewrites plugin-owned tenant media URLs onto the core worker delivery route."
       }
     ],
     "apiMetadata": null,
@@ -60,9 +76,20 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "kind": "hook",
         "targets": [
           "settings.defaultLanding.options",
-          "settings.defaultLanding.resolve"
+          "settings.defaultLanding.resolve",
+          "settings.defaultLanding.path"
         ],
         "description": "Extends the core landing page preference with a PluraDash destination."
+      },
+      {
+        "key": "pluradash-tenant-media-routing",
+        "kind": "hook",
+        "targets": [
+          "storage.tenant.policy",
+          "storage.tenant.sources",
+          "media.url.resolve"
+        ],
+        "description": "Owns the PluraDash-specific tenant media routing rules without hardcoding bucket names into core."
       }
     ]
   }

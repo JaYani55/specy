@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Separator } from '@/components/ui/separator';
 import { ImageUploader } from './ImageUploader';
 import { MarkdownEditor } from './MarkdownEditor';
+import { useResolvedMediaUrl } from '@/utils/mediaUrl';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -18,6 +19,7 @@ interface HeroFormProps {
 }
 
 export const HeroForm: React.FC<HeroFormProps> = ({ form }) => {
+  const resolvedHeroImage = useResolvedMediaUrl(form.watch('hero.image'));
   const { fields: statsFields, append: appendStat, remove: removeStat } = useFieldArray({
     control: form.control,
     name: 'hero.stats',
@@ -69,7 +71,7 @@ export const HeroForm: React.FC<HeroFormProps> = ({ form }) => {
           {form.watch('hero.image') && (
             <div className="mt-2 rounded-lg border overflow-hidden">
               <img
-                src={form.watch('hero.image')}
+                src={resolvedHeroImage}
                 alt="Hero preview"
                 className="w-full h-48 object-cover"
               />

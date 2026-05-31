@@ -537,6 +537,8 @@ Important semantics:
 - `scope` is currently constrained to `media` and `files`
 - `object_key` is globally unique and is the storage-key reference into the underlying bucket
 - `source_mount_id` allows the object ledger to remain independent of one hardcoded storage provider label
+- when Cloudflare R2 is used without `R2_PUBLIC_URL`, ServiceCMS may issue signed Worker URLs only for objects tracked with `scope = 'media'`
+- signed media delivery is object-specific and does not make the underlying tenant bucket or non-media scopes publicly readable
 
 ### Usage-Sync Function And Triggers
 
@@ -562,6 +564,15 @@ Policy behavior:
 - users may insert and delete their own objects inside their tenant
 - tenant admins may update storage objects for members of their tenant
 - `super-admin` retains global visibility and control
+
+### Media Delivery Boundary
+
+Managed tenant storage is not equivalent to a public CDN bucket.
+
+- `scope = 'media'` objects may be exposed through signed Worker URLs so CMS pages and previews can render R2-backed images without a browser bearer token.
+- those signed URLs are generated per object key and validated by the Worker before reading the R2 object.
+- `scope = 'files'` and any other non-media tenant content remain private and are not made public by the media delivery path.
+- configuring `R2_PUBLIC_URL` bypasses the Worker signer and should only be used when the underlying asset domain is intentionally public.
 
 ### Architectural Boundary
 

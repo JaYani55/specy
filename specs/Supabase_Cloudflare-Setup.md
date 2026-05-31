@@ -2,6 +2,13 @@
 
 Complete reference for deploying service-cms on Cloudflare Workers with Supabase as the database and auth backend. The interactive wizard (`npm run setup` / `setup.bat`) automates every step described here.
 
+## Media storage boundaries
+
+- The core storage configuration established during install defines the default/admin media bucket surface only.
+- Plugin-owned multi-tenant media behavior, such as PluraDash routing tenant users to managed R2 storage while keeping the core Supabase bucket for platform admins, must be implemented through plugin hooks rather than hardcoded in core.
+- The core exposes the generic hook targets `storage.tenant.policy`, `storage.tenant.sources`, and `media.url.resolve` so plugins can own tenant-storage entitlement, source selection, and frontend media URL normalization.
+- If a persisted media URL mixes a public Supabase bucket path with a plugin-owned tenant object key, the plugin hook layer is responsible for normalizing it onto the correct delivery route.
+
 ---
 
 ## Table of Contents
@@ -98,7 +105,7 @@ Specy uses three different storage mechanisms depending on the sensitivity and a
 | `SUPABASE_URL` | `wrangler.jsonc` `vars` + `.env` | Worker runtime + Vite bundle | Non-sensitive; committed template uses placeholder |
 | `STORAGE_PROVIDER` | `wrangler.jsonc` `vars` | Worker runtime (`api/routes/media.ts`) | Configuration value — `supabase` or `r2` |
 | `STORAGE_BUCKET` | `wrangler.jsonc` `vars` | Worker runtime | Bucket/folder name |
-| `R2_PUBLIC_URL` | `wrangler.jsonc` `vars` | Worker runtime | Only populated when `STORAGE_PROVIDER=r2` |
+| `R2_PUBLIC_URL` | `wrangler.jsonc` `vars` | Worker runtime | Optional public asset base URL for R2. If empty, media files are served through signed Worker URLs instead of direct bucket URLs. |
 
 ### Cloudflare Secrets Store vs Worker secrets
 
@@ -155,10 +162,12 @@ Only one secret uses the Secrets Store — `SUPABASE_SECRET_KEY`, bound as `SS_S
 | `SS_SUPABASE_SECRET_KEY` | Secrets Store binding | Supabase secret key (former service role key) |
 | `STORAGE_PROVIDER` | `wrangler.jsonc` vars | `supabase` \| `r2` |
 | `STORAGE_BUCKET` | `wrangler.jsonc` vars | Storage bucket or folder name |
-| `R2_PUBLIC_URL` | `wrangler.jsonc` vars | R2 public URL (R2 only) |
+| `R2_PUBLIC_URL` | `wrangler.jsonc` vars | Optional R2 public asset URL. Leave empty to use Worker-signed media delivery for managed media objects. |
 | `CF_API_TOKEN` | Worker secret | Cloudflare API token for Secrets Store management UI |
 | `CF_ACCOUNT_ID` | `wrangler.jsonc` vars | Cloudflare Account ID |
 | `SECRETS_STORE_ID` | `wrangler.jsonc` vars | Secrets Store UUID |
+
+When `STORAGE_PROVIDER=r2` and `R2_PUBLIC_URL` is empty, the Worker now generates signed `/api/media/file?...` URLs for managed media objects. These signed URLs are limited to objects tracked with `scope = 'media'`; they do not make arbitrary tenant-bucket files public.
 
 ### Vite / browser bundle (`.env` — build-time)
 
@@ -389,6 +398,8 @@ npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
 npx wrangler secret put SECRETS_ENCRYPTION_KEY
 ```
 
+`SECRETS_ENCRYPTION_KEY` is also used to sign Worker-delivered media URLs when Cloudflare R2 is active without an `R2_PUBLIC_URL`. If it is missing, R2 media falls back to authenticated Worker delivery only.
+
 If this is the first time the Worker has ever been deployed and Wrangler rejects the secret write because the Worker does not exist yet, complete the first `wrangler deploy`, then run the failed `wrangler secret put ...` commands again and redeploy once more. The setup wizard now retries this automatically after the first deploy.
 
 ### 10.4 Secrets Store secret
@@ -414,6 +425,13 @@ echo "VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_..." >> .env
 Get a PAT from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens), then apply each file from `migrations/` in the order listed in [section 7](#7-database-migrations) via `psql`, the Supabase SQL editor, or the Management API.
 
 **Supabase Storage RLS policies (Supabase provider only):** After `Auth/Access_hook.sql`, copy `migrations/storage.default.sql`, replace every occurrence of `REPLACE_WITH_STORAGE_BUCKET` with your bucket name, and apply the result. Skip this step if using Cloudflare R2.
+
+**Cloudflare R2 delivery behavior:** R2 bucket bindings are not public by default. ServiceCMS supports two delivery modes for R2-backed media:
+
+- configure `R2_PUBLIC_URL` to use a custom/public asset domain for objects that may be publicly fetched
+- leave `R2_PUBLIC_URL` empty and let the Worker emit signed `/api/media/file` URLs for managed media objects
+
+The signed Worker fallback is intentionally scoped to ledgered media content only. Files tracked under other scopes, such as non-media tenant storage, are not exposed through these public signed URLs.
 
 ### 10.7 Register Auth hook
 

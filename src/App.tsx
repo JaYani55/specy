@@ -85,8 +85,9 @@ const RootRoute = () => {
       if (user) {
         const storedDefaultView = getStoredSetting(user.id, 'default_view', '');
         const resolvedDefaultView = await resolveDefaultLandingView(storedDefaultView, user.roles);
+        const resolvedPath = await getDefaultLandingPath(resolvedDefaultView, user.roles);
 
-        navigate(getDefaultLandingPath(resolvedDefaultView), { replace: true });
+        navigate(resolvedPath, { replace: true });
       }
       setIsLoading(false);
     };

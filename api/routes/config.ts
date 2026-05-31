@@ -330,6 +330,12 @@ function isValidMediaMount(mount: MediaSourceMount): string | null {
   if (mount.type === 's3' && !mount.endpoint?.trim()) {
     return `Mount "${mount.id}" is missing an endpoint`;
   }
+  if (mount.type === 'r2' && mount.publicUrl?.includes('/storage/v1/object/public/')) {
+    return `Mount "${mount.id}" has an invalid public URL for R2. Use a Cloudflare asset domain or leave it empty.`;
+  }
+  if (mount.type === 'r2' && mount.publicUrl?.includes('/storage/v1/render/image/public/')) {
+    return `Mount "${mount.id}" has an invalid public URL for R2. Use a Cloudflare asset domain or leave it empty.`;
+  }
 
   return null;
 }
@@ -460,7 +466,7 @@ config.put('/media-sources', async (c) => {
   }
 
   for (const s of body.sources) {
-    if (!s.id || !isValidS3SourceId(s.id)) {
+    if (!s.id || !isValidMountId(s.id)) {
       return c.json({ error: `Invalid source id "${String(s.id)}" — must be lowercase alphanumeric with hyphens` }, 400);
     }
     if (!s.label?.trim()) return c.json({ error: `Source "${s.id}" is missing a label` }, 400);

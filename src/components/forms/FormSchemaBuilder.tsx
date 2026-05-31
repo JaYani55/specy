@@ -474,7 +474,6 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                     <ImageUploader
                       value={field.src || ''}
                       onChange={(url) => updateField(index, { src: url })}
-                      bucket="booking_media"
                       folder="product-images"
                     />
                   </div>

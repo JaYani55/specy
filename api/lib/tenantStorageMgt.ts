@@ -1,7 +1,7 @@
 import type { PluginHookContribution } from '../../src/types/plugin';
 import type { VerifiedAuthSession } from './auth';
 import { getRegisteredApiPluginHooks } from '../plugin-hooks';
-import { buildWorkerMediaFileUrl } from './mediaStorage';
+import { buildSignedWorkerMediaFileUrl } from './mediaStorage';
 import {
   TENANT_STORAGE_POLICY_HOOK,
   TENANT_STORAGE_SOURCES_HOOK,
@@ -30,6 +30,7 @@ export interface TenantStorageObjectRow {
   id: string;
   tenant_id: string;
   user_id: string;
+  source_mount_id: string;
   scope: TenantStorageScope;
   folder_path: string;
   object_key: string;
@@ -317,7 +318,7 @@ export async function registerTenantStorageObject(
       size_bytes: input.sizeBytes,
       created_by: auth.userId,
     })
-    .select('id, tenant_id, user_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
+    .select('id, tenant_id, user_id, source_mount_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
     .single();
 
   if (error) {
@@ -350,7 +351,7 @@ export async function listTenantStorageItems(
   const client = await createSupabaseClient(env, auth.token);
   const { data, error } = await client
     .from('tenant_storage_objects')
-    .select('id, tenant_id, user_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
+    .select('id, tenant_id, user_id, source_mount_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
     .eq('tenant_id', summary.tenantId)
     .eq('user_id', summary.userId)
     .eq('scope', input.scope)
@@ -375,7 +376,7 @@ export async function listTenantStorageItems(
         id: row.id,
         name: row.filename,
         path: row.object_key,
-        url: buildWorkerMediaFileUrl(input.requestUrl, row.object_key),
+        url: await buildSignedWorkerMediaFileUrl(env, input.requestUrl, row.object_key),
         isFolder: false,
         size: row.size_bytes,
         createdAt: row.created_at,
@@ -422,7 +423,31 @@ export async function getTenantStorageObjectByKey(
   const client = await createSupabaseClient(env, auth.token);
   let query = client
     .from('tenant_storage_objects')
-    .select('id, tenant_id, user_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
+    .select('id, tenant_id, user_id, source_mount_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
+    .eq('object_key', objectKey)
+    .limit(1);
+
+  if (scope) {
+    query = query.eq('scope', scope);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? [])[0] as TenantStorageObjectRow | undefined) ?? null;
+}
+
+export async function getManagedTenantStorageObjectByKey(
+  env: Env,
+  objectKey: string,
+  scope?: TenantStorageScope,
+): Promise<TenantStorageObjectRow | null> {
+  const admin = await createSupabaseAdminClient(env);
+  let query = admin
+    .from('tenant_storage_objects')
+    .select('id, tenant_id, user_id, source_mount_id, scope, folder_path, object_key, filename, content_type, size_bytes, created_at')
     .eq('object_key', objectKey)
     .limit(1);
 
@@ -444,6 +469,26 @@ export async function isManagedTenantStorageObject(env: Env, objectKey: string):
     .from('tenant_storage_objects')
     .select('id')
     .eq('object_key', objectKey)
+    .limit(1);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return Boolean(data?.length);
+}
+
+export async function isManagedTenantStorageObjectInScope(
+  env: Env,
+  objectKey: string,
+  scope: TenantStorageScope,
+): Promise<boolean> {
+  const admin = await createSupabaseAdminClient(env);
+  const { data, error } = await admin
+    .from('tenant_storage_objects')
+    .select('id')
+    .eq('object_key', objectKey)
+    .eq('scope', scope)
     .limit(1);
 
   if (error) {

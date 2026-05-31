@@ -16,8 +16,16 @@
 
 import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
-import { getOptionalAuthSession, requireAuthSession } from '../lib/auth';
-import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig, type ResolvedMediaSourceMount } from '../lib/mediaStorage';
+import { getOptionalAuthSession, requireAuthSession, type VerifiedAuthSession } from '../lib/auth';
+import {
+  buildMediaMountUrl,
+  buildSignedWorkerMediaFileUrl,
+  ensureSupabaseStorageBucket,
+  resolveAllMediaSourceMounts,
+  resolvePrimaryMediaConfig,
+  verifySignedWorkerMediaFileUrl,
+  type ResolvedMediaSourceMount,
+} from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import {
   assertTenantStorageAccess,
@@ -26,8 +34,10 @@ import {
   deleteTenantStorageObject,
   ensureTenantStorageSummary,
   filterTenantStorageSources,
+  getManagedTenantStorageObjectByKey,
   getTenantStorageObjectByKey,
   isManagedTenantStorageObject,
+  isManagedTenantStorageObjectInScope,
   listTenantStorageItems,
   normalizeTenantStorageFolderPath,
   registerTenantStorageObject,
@@ -64,6 +74,28 @@ function getBearerToken(headerValue: string | undefined): string | undefined {
   return match?.[1];
 }
 
+function isVerifiedAuthSession(
+  auth: Awaited<ReturnType<typeof getOptionalAuthSession>> | Awaited<ReturnType<typeof requireAuthSession>> | null | undefined,
+): auth is VerifiedAuthSession {
+  return Boolean(auth) && !(auth instanceof Response);
+}
+
+function isS3MediaMount(
+  mount: ResolvedMediaSourceMount,
+): mount is ResolvedMediaSourceMount & {
+  type: 's3';
+  provider: 's3';
+  bucket: string;
+  endpoint: string;
+  accessKeyId: string;
+} {
+  return mount.type === 's3'
+    && mount.provider === 's3'
+    && typeof mount.bucket === 'string'
+    && typeof mount.endpoint === 'string'
+    && typeof mount.accessKeyId === 'string';
+}
+
 async function resolveMountSecret(env: Env, sourceId: string): Promise<string | null> {
   const secretName = buildS3SecretName(sourceId);
   return getManagedSecretValue(env, secretName);
@@ -73,16 +105,48 @@ async function resolveMediaMount(
   env: Env,
   requestUrl: string,
   sourceId: string | null | undefined,
+  auth?: Awaited<ReturnType<typeof getOptionalAuthSession>> | Awaited<ReturnType<typeof requireAuthSession>> | null,
+  objectKey?: string | null,
 ): Promise<ResolvedMediaSourceMount | null> {
   const mounts = await resolveAllMediaSourceMounts(env, requestUrl);
-  if (!sourceId || sourceId === 'primary') {
-    return mounts.find((mount) => mount.isDefault) ?? mounts[0] ?? null;
+  let resolvedSourceId = sourceId && sourceId !== 'primary' ? sourceId : null;
+
+  if (!resolvedSourceId && objectKey) {
+    const trackedObject = await getManagedTenantStorageObjectByKey(env, objectKey, 'media');
+    resolvedSourceId = trackedObject?.source_mount_id ?? null;
   }
 
-  return mounts.find((mount) => mount.id === sourceId) ?? null;
+  const sourceInfos = mounts
+    .filter((mount) => mount.type !== 'unconfigured')
+    .map((mount) => ({
+      id: mount.id,
+      label: mount.label,
+      type: mount.type as 'supabase' | 'r2' | 's3',
+      configured: mount.configured,
+      isDefault: mount.isDefault,
+    }));
+
+  const allowedSources = isVerifiedAuthSession(auth)
+    ? await filterTenantStorageSources(auth, sourceInfos)
+    : sourceInfos;
+  const allowedSourceIds = new Set(allowedSources.map((source) => source.id));
+
+  if (!resolvedSourceId) {
+    return mounts.find((mount) => allowedSourceIds.has(mount.id) && mount.isDefault)
+      ?? mounts.find((mount) => allowedSourceIds.has(mount.id))
+      ?? null;
+  }
+
+  if (allowedSourceIds.size > 0 && !allowedSourceIds.has(resolvedSourceId)) {
+    throw new Error(`Source "${resolvedSourceId}" is not available for this account.`);
+  }
+
+  return mounts.find((mount) => mount.id === resolvedSourceId) ?? null;
 }
 
-function toExtraMediaSource(mount: MediaSourceMount): ExtraMediaSource {
+function toExtraMediaSource(
+  mount: ResolvedMediaSourceMount & { type: 's3'; provider: 's3'; bucket: string; endpoint: string; accessKeyId: string },
+): ExtraMediaSource {
   return {
     id: mount.id,
     label: mount.label,
@@ -90,7 +154,7 @@ function toExtraMediaSource(mount: MediaSourceMount): ExtraMediaSource {
     endpoint: mount.endpoint ?? '',
     bucket: mount.bucket,
     region: mount.region ?? '',
-    publicUrl: mount.publicUrl ?? '',
+    publicUrl: mount.assetBaseUrl ?? '',
     accessKeyId: mount.accessKeyId ?? '',
   };
 }
@@ -244,7 +308,9 @@ media.get('/sources', async (c) => {
       isDefault: mount.isDefault,
     }));
 
-  const sources = await filterTenantStorageSources(auth, allSources);
+  const sources = auth
+    ? await filterTenantStorageSources(auth, allSources)
+    : allSources;
 
   return c.json({ sources });
 });
@@ -254,8 +320,10 @@ media.get('/list', async (c) => {
   const path = c.req.query('path') ?? '';
   const sourceParam = c.req.query('source');
   const token = getBearerToken(c.req.header('Authorization'));
+  const auth = token ? await getOptionalAuthSession(c) : null;
+  if (auth instanceof Response) return auth;
 
-  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam);
+  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam, auth);
 
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
@@ -263,6 +331,10 @@ media.get('/list', async (c) => {
 
   try {
     if (cfg.provider === 's3') {
+      if (!isS3MediaMount(cfg)) {
+        return c.json({ error: `Source "${cfg.id}" is not a valid S3 mount` }, 500);
+      }
+
       const secretAccessKey = await resolveMountSecret(c.env, cfg.id);
       if (!secretAccessKey) {
         return c.json({ error: `Source "${cfg.id}" is missing its secret access key` }, 503);
@@ -273,10 +345,10 @@ media.get('/list', async (c) => {
     }
 
     if (cfg.provider === 'r2') {
-      const auth = await requireAuthSession(c);
-      if (auth instanceof Response) return auth;
+      const requiredAuth = auth ?? await requireAuthSession(c);
+      if (requiredAuth instanceof Response) return requiredAuth;
 
-      const { items, summary } = await listTenantStorageItems(c.env, auth, {
+      const { items, summary } = await listTenantStorageItems(c.env, requiredAuth, {
         scope: 'media',
         folderPath: path,
         requestUrl: c.req.url,
@@ -346,7 +418,7 @@ media.post('/upload', async (c) => {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = folder ? `${folder.replace(/\/$/, '')}/${safeName}` : safeName;
 
-  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam);
+  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam, auth);
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
   }
@@ -354,6 +426,10 @@ media.post('/upload', async (c) => {
 
   try {
     if (cfg.provider === 's3') {
+      if (!isS3MediaMount(cfg)) {
+        return c.json({ error: `Source "${cfg.id}" is not a valid S3 mount` }, 500);
+      }
+
       const secretAccessKey = await resolveMountSecret(c.env, cfg.id);
       if (!secretAccessKey) {
         return c.json({ error: `Source "${cfg.id}" is missing its secret access key` }, 503);
@@ -397,7 +473,7 @@ media.post('/upload', async (c) => {
         throw error;
       }
 
-      const url = buildMediaMountUrl(cfg, c.req.url, scoped.objectKey);
+      const url = await buildSignedWorkerMediaFileUrl(c.env, c.req.url, scoped.objectKey);
       return c.json({ url, path: scoped.objectKey });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
@@ -426,7 +502,7 @@ media.delete('/file', async (c) => {
   if (auth instanceof Response) return auth;
 
   const sourceParam = c.req.query('source');
-  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam);
+  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam, auth, path);
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
   }
@@ -434,6 +510,10 @@ media.delete('/file', async (c) => {
 
   try {
     if (cfg.provider === 's3') {
+      if (!isS3MediaMount(cfg)) {
+        return c.json({ error: `Source "${cfg.id}" is not a valid S3 mount` }, 500);
+      }
+
       const secretAccessKey = await resolveMountSecret(c.env, cfg.id);
       if (!secretAccessKey) {
         return c.json({ error: `Source "${cfg.id}" is missing its secret access key` }, 503);
@@ -461,7 +541,10 @@ media.get('/file', async (c) => {
   if (!path) return c.json({ error: 'path query param required' }, 400);
 
   const sourceParam = c.req.query('source');
-  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam);
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam, auth, path);
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
   }
@@ -483,12 +566,20 @@ media.get('/file', async (c) => {
     return c.redirect(url, 302);
   }
 
-  const auth = await getOptionalAuthSession(c);
-  if (auth instanceof Response) return auth;
+  const hasValidSignature = await verifySignedWorkerMediaFileUrl(c.env, path, c.req.query('sig'));
 
   if (!auth) {
-    const isManagedObject = await isManagedTenantStorageObject(c.env, path);
-    if (isManagedObject) {
+    if (!hasValidSignature) {
+      return c.json({ error: 'Authentication required.' }, 401);
+    }
+
+    const isManagedMediaObject = await isManagedTenantStorageObjectInScope(c.env, path, 'media');
+    if (!isManagedMediaObject) {
+      const isManagedObject = await isManagedTenantStorageObject(c.env, path);
+      if (isManagedObject) {
+        return c.json({ error: 'File not found' }, 404);
+      }
+
       return c.json({ error: 'Authentication required.' }, 401);
     }
   } else {

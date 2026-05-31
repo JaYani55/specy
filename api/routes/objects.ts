@@ -199,11 +199,7 @@ objects.get('/:idOrSlug', async (c) => {
   const auth = await getOptionalAuthSession(c);
   if (auth instanceof Response) return auth;
 
-  const hasConsoleAccess = auth
-    ? auth.roles.some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin')
-    : false;
-
-  if (hasConsoleAccess) {
+  if (auth && auth.roles.some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin')) {
     const supabase = await createSupabaseClient(c.env, auth.token);
 
     const query = supabase

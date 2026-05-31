@@ -60,6 +60,18 @@ This keeps the extension boundary centralized and explicit for EUPL-safe interop
 
 > **Current rollout status:** the central registries and discovery metadata are live. Core hook targets are being adopted incrementally. Only rely on hook targets that are explicitly documented by the CMS.
 
+Media-related hook targets currently available to plugins:
+
+- `storage.tenant.policy` — backend entitlement and quota rules for tenant-managed storage
+- `storage.tenant.sources` — backend filtering of media source visibility and source selection
+- `media.url.resolve` — frontend normalization of persisted media URLs before rendering in authenticated UI surfaces
+
+Settings-related hook targets currently available to plugins:
+
+- `settings.defaultLanding.options` — extend the selectable landing views shown in settings
+- `settings.defaultLanding.resolve` — resolve the preferred landing view key for the current user
+- `settings.defaultLanding.path` — map a resolved landing view key to the route path owned by the plugin
+
 ### Multi-Tenancy And Distribution Model
 
 Plugin tenancy is not fully implemented yet, but new plugin work should follow the target model below.

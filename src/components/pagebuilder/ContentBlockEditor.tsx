@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ImageUploader } from './ImageUploader';
 import { MarkdownEditor } from './MarkdownEditor';
 import { getPublishedForms } from '@/services/formService';
+import { useResolvedMediaUrl } from '@/utils/mediaUrl';
 import { Trash2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
@@ -27,6 +28,7 @@ export const ContentBlockEditor: React.FC<ContentBlockEditorProps> = ({
   form,
 }) => {
   const [availableForms, setAvailableForms] = useState<FormRecord[]>([]);
+  const resolvedImageUrl = useResolvedMediaUrl(form.watch(`${path}.src`));
 
   useEffect(() => {
     if (block.type !== 'form') return;
@@ -119,7 +121,6 @@ export const ContentBlockEditor: React.FC<ContentBlockEditorProps> = ({
               <ImageUploader
                 value={form.watch(`${path}.src`)}
                 onChange={(url) => form.setValue(`${path}.src`, url, { shouldDirty: true, shouldTouch: true })}
-                bucket="booking_media"
                 folder="product-images"
               />
             </div>
@@ -128,7 +129,7 @@ export const ContentBlockEditor: React.FC<ContentBlockEditorProps> = ({
             {form.watch(`${path}.src`) && (
               <div className="rounded-lg border overflow-hidden bg-muted/30">
                 <img
-                  src={form.watch(`${path}.src`)}
+                  src={resolvedImageUrl}
                   alt={form.watch(`${path}.alt`) || 'Vorschau'}
                   className="w-full max-h-48 object-contain"
                 />

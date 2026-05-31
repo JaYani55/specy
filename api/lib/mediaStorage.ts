@@ -25,12 +25,85 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+function isInvalidR2PublicUrl(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(value);
+    return parsed.pathname.includes('/storage/v1/object/public/')
+      || parsed.pathname.includes('/storage/v1/render/image/public/');
+  } catch {
+    return false;
+  }
+}
+
+function toBase64Url(value: Uint8Array | ArrayBuffer): string {
+  return Buffer.from(value instanceof Uint8Array ? value : new Uint8Array(value))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  return new Uint8Array(Buffer.from(padded, 'base64'));
+}
+
+async function importMediaSigningKey(secret: string) {
+  return crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify'],
+  );
+}
+
+function buildMediaSignaturePayload(path: string): string {
+  return `media:${path}`;
+}
+
 export function buildWorkerMediaFileUrl(requestUrl: string, path: string): string {
   const url = new URL('/api/media/file', requestUrl);
   if (path) {
     url.searchParams.set('path', path);
   }
   return url.toString();
+}
+
+export async function buildSignedWorkerMediaFileUrl(env: Env, requestUrl: string, path: string): Promise<string> {
+  const url = new URL(buildWorkerMediaFileUrl(requestUrl, path));
+  if (!env.SECRETS_ENCRYPTION_KEY) {
+    return url.toString();
+  }
+
+  const key = await importMediaSigningKey(env.SECRETS_ENCRYPTION_KEY);
+  const payload = new TextEncoder().encode(buildMediaSignaturePayload(path));
+  const signature = await crypto.subtle.sign('HMAC', key, payload);
+  url.searchParams.set('sig', toBase64Url(signature));
+  return url.toString();
+}
+
+export async function verifySignedWorkerMediaFileUrl(
+  env: Env,
+  path: string,
+  signature: string | null | undefined,
+): Promise<boolean> {
+  if (!env.SECRETS_ENCRYPTION_KEY || !signature) {
+    return false;
+  }
+
+  try {
+    const key = await importMediaSigningKey(env.SECRETS_ENCRYPTION_KEY);
+    const payload = new TextEncoder().encode(buildMediaSignaturePayload(path));
+    return await crypto.subtle.verify('HMAC', key, fromBase64Url(signature), payload);
+  } catch {
+    return false;
+  }
 }
 
 export function buildMediaMountUrl(config: ResolvedMediaSourceMount, requestUrl: string, path: string): string {
@@ -79,7 +152,8 @@ function buildUnmountedMediaSourceMount(): ResolvedMediaSourceMount {
 
 export function resolveMediaSourceMountConfig(mount: MediaSourceMount, env: Env, requestUrl?: string): ResolvedMediaSourceMount {
   if (mount.type === 'r2') {
-    const publicUrl = mount.publicUrl?.trim() || '';
+    const rawPublicUrl = mount.publicUrl?.trim() || '';
+    const publicUrl = isInvalidR2PublicUrl(rawPublicUrl) ? '' : rawPublicUrl;
     const bindingConfigured = Boolean(env.MEDIA_BUCKET);
     return {
       id: mount.id,

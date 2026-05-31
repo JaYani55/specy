@@ -12,7 +12,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
+import { resolveMediaUrl, useResolvedMediaUrl } from '@/utils/mediaUrl';
 import { normalizeProfileImageUrl } from '@/utils/staffUtils';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,12 +51,76 @@ interface MediaItem {
   createdAt?: string;
 }
 
+const isWorkerMediaFileUrl = (src: string): boolean => {
+  try {
+    const url = new URL(src, window.location.origin);
+    return url.pathname === '/api/media/file';
+  } catch {
+    return false;
+  }
+};
+
+interface AuthenticatedImageProps {
+  src: string;
+  alt: string;
+  className?: string;
+  getAuthHeaders: () => Promise<HeadersInit>;
+}
+
+const AuthenticatedImage: React.FC<AuthenticatedImageProps> = ({ src, alt, className, getAuthHeaders }) => {
+  const [resolvedSrc, setResolvedSrc] = useState(src);
+
+  useEffect(() => {
+    if (!src || !isWorkerMediaFileUrl(src)) {
+      setResolvedSrc(src);
+      return;
+    }
+
+    let revokedUrl: string | null = null;
+    let disposed = false;
+
+    const load = async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(src, { headers });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        revokedUrl = objectUrl;
+
+        if (!disposed) {
+          setResolvedSrc(objectUrl);
+        }
+      } catch {
+        if (!disposed) {
+          setResolvedSrc(src);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      disposed = true;
+      if (revokedUrl) {
+        URL.revokeObjectURL(revokedUrl);
+      }
+    };
+  }, [src, getAuthHeaders]);
+
+  return <img src={resolvedSrc} alt={alt} className={className} />;
+};
+
 export const ImageUploader: React.FC<ImageUploaderProps> = ({
   value,
   onChange,
   previewVariant = 'banner',
   folder,
 }) => {
+  const { roles } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loadingMedia, setLoadingMedia] = useState(false);
@@ -70,6 +136,9 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   // Multi-source support
   const [availableSources, setAvailableSources] = useState<MediaSourceInfo[]>([]);
   const [activeSourceId, setActiveSourceId] = useState<string>('');
+  const resolvedValue = useResolvedMediaUrl(value);
+  const resolvedAvatarValue = useResolvedMediaUrl(normalizeProfileImageUrl(value, 160) || value);
+  const resolvedSelectedImage = useResolvedMediaUrl(selectedImage);
 
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : 'Unbekannter Fehler.';
@@ -268,10 +337,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const result = await res.json() as { url: string; path: string };
+      const normalizedUrl = await resolveMediaUrl(result.url, roles);
 
       // Auto-confirm: uploading = selecting. Write to form and close dialog.
-      setSelectedImage(result.url);
-      onChange(result.url);
+      setSelectedImage(normalizedUrl);
+      onChange(normalizedUrl);
       setIsOpen(false);
       toast.success('Bild erfolgreich hochgeladen!');
     } catch (error: unknown) {
@@ -290,9 +360,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     disabled: uploading,
   });
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (selectedImage) {
-      onChange(selectedImage);
+      const normalizedUrl = await resolveMediaUrl(selectedImage, roles);
+      onChange(normalizedUrl);
       setIsOpen(false);
     }
   };
@@ -301,7 +372,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     setIsOpen(open);
     if (open) {
       // Sync internal selection with the current committed value
-      setSelectedImage(value || null);
+      void (async () => {
+        const normalizedValue = await resolveMediaUrl(value, roles);
+        setSelectedImage(normalizedValue || null);
+      })();
       const initialPath = folder?.replace(/^\/+|\/+$/g, '') || '';
       setCurrentPath(initialPath);
       setPathHistory([]);
@@ -320,10 +394,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       {value && previewVariant === 'avatar' && (
         <div className="flex items-center gap-3">
           <div className="relative group shrink-0">
-            <img
-              src={normalizeProfileImageUrl(value, 160) || value}
+            <AuthenticatedImage
+              src={resolvedAvatarValue}
               alt="Vorschau"
               className="w-16 h-16 rounded-full object-cover border-2 border-border"
+              getAuthHeaders={getAuthHeaders}
             />
             <button
               type="button"
@@ -339,10 +414,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       )}
       {value && previewVariant === 'banner' && (
         <div className="relative group w-full rounded-lg overflow-hidden border bg-muted/30">
-          <img
-            src={value}
+          <AuthenticatedImage
+            src={resolvedValue}
             alt="Vorschau"
             className="w-full h-40 object-cover"
+            getAuthHeaders={getAuthHeaders}
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
           <Button
@@ -496,10 +572,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                        <img
+                        <AuthenticatedImage
                           src={item.url}
                           alt={item.name}
                           className="w-full h-32 object-cover"
+                          getAuthHeaders={getAuthHeaders}
                         />
                         {selectedImage === item.url && (
                           <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1">
@@ -561,10 +638,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
             {selectedImage && (
               <div className="relative rounded-lg border p-4">
                 <div className="flex items-start space-x-4">
-                  <img
-                    src={selectedImage}
+                  <AuthenticatedImage
+                    src={resolvedSelectedImage}
                     alt="Preview"
                     className="w-32 h-32 object-cover rounded"
+                    getAuthHeaders={getAuthHeaders}
                   />
                   <div className="flex-1">
                     <p className="font-medium mb-1">Ausgewähltes Bild</p>
@@ -588,7 +666,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>
             Abbrechen
           </Button>
-          <Button type="button" onClick={handleConfirm} disabled={!selectedImage}>
+          <Button type="button" onClick={() => { void handleConfirm(); }} disabled={!selectedImage}>
             Auswählen
           </Button>
         </div>

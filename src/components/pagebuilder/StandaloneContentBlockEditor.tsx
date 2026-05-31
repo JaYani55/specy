@@ -16,6 +16,7 @@ import {
 import { ImageUploader } from './ImageUploader';
 import { MarkdownEditor } from './MarkdownEditor';
 import { getPublishedForms } from '@/services/formService';
+import { useResolvedMediaUrl } from '@/utils/mediaUrl';
 import { Trash2, Plus, X } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { useSortable } from '@dnd-kit/sortable';
@@ -53,6 +54,7 @@ export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditor
   onChange,
   onRemove,
 }) => {
+  const resolvedImageUrl = useResolvedMediaUrl(block.type === 'image' ? block.src : '');
   const {
     attributes,
     listeners,
@@ -165,7 +167,7 @@ export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditor
           {block.src && (
             <div className="rounded-lg border overflow-hidden bg-muted/30">
               <img
-                src={block.src}
+                src={resolvedImageUrl}
                 alt={block.alt || 'Vorschau'}
                 className="w-full max-h-48 object-contain"
               />

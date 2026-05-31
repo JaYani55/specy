@@ -446,7 +446,6 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
         value={(value as string) || ''}
         onChange={(url) => onChange(url)}
         previewVariant={isAvatar ? 'avatar' : 'banner'}
-        bucket="booking_media"
         folder="product-images"
       />
     );
