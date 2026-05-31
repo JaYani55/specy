@@ -151,6 +151,8 @@ Supported field types in the first implementation:
 
 - `text`
 - `textarea`
+- `help-text` *(display-only markdown guidance, not submitted as an answer)*
+- `image` *(display-only image selected from the media picker, not submitted as an answer)*
 - `email`
 - `number`
 - `checkbox`
@@ -169,6 +171,10 @@ Field properties:
 | `meta_description` | no | Agent/developer context |
 | `required` | no | Validation flag |
 | `options` | conditional | Required for `select` and `radio` |
+| `content` | conditional | Markdown body for `help-text` blocks |
+| `src` | conditional | Public image URL for `image` blocks |
+| `alt` | conditional | Accessible text for `image` blocks |
+| `caption` | conditional | Optional caption for `image` blocks |
 
 ---
 
@@ -225,6 +231,15 @@ Stored block shape:
 ```
 
 This is intentionally a reference-based block rather than an embedded snapshot.
+
+### Display-Only Blocks
+
+The forms builder now supports two non-fillable block types alongside normal inputs:
+
+- `help-text`: rendered as markdown in the public form and edited with the page-builder tiptap markdown editor
+- `image`: rendered as a media-backed image and edited with the page-builder media picker
+
+These blocks are stored in the same JSON schema but are skipped by answer generation and submission validation.
 
 ### Share Page Mode
 

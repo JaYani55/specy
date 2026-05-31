@@ -3,6 +3,8 @@ export type FormStatus = 'published' | 'archived';
 export type FormFieldType =
   | 'text'
   | 'textarea'
+  | 'help-text'
+  | 'image'
   | 'email'
   | 'number'
   | 'file-upload'
@@ -34,6 +36,12 @@ export interface FormFieldDefinition {
   placeholder?: string;
   meta_description?: string;
   required?: boolean;
+  content?: string;
+  src?: string;
+  alt?: string;
+  caption?: string;
+  width?: number;
+  height?: number;
   options?: string[];
   upload_mount?: string;
   upload_bucket?: string;

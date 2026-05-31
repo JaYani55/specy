@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp, ListChecks, Paperclip, Plus, Rows3, SquareCheckBig, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, Info, ListChecks, Paperclip, Plus, Rows3, SquareCheckBig, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +11,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { FormFieldDefinition, FormFieldType } from '@/types/forms';
 import { generateFormSlug } from '@/utils/forms';
+import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
+import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
 
 const createEditorFieldId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -46,6 +48,12 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     icon: Rows3,
   },
   {
+    label: { en: 'Help Text', de: 'Hilfetext' },
+    description: { en: 'Display-only markdown guidance for users.', de: 'Nicht ausfüllbare Markdown-Hilfe für Nutzer.' },
+    type: 'help-text',
+    icon: Info,
+  },
+  {
     label: { en: 'Email', de: 'E-Mail' },
     description: { en: 'Validated email input.', de: 'Validiertes E-Mail-Feld.' },
     type: 'email',
@@ -62,6 +70,12 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     description: { en: 'Upload one file into object storage.', de: 'Eine Datei in den Objektspeicher hochladen.' },
     type: 'file-upload',
     icon: Paperclip,
+  },
+  {
+    label: { en: 'Image', de: 'Bild' },
+    description: { en: 'Display-only image selected from media.', de: 'Nicht ausfüllbares Bild aus der Medienauswahl.' },
+    type: 'image',
+    icon: ImageIcon,
   },
   {
     label: { en: 'Checkbox', de: 'Checkbox' },
@@ -92,6 +106,8 @@ const BUILDER_PRESETS: BuilderPreset[] = [
 const typeLabels: Record<FormFieldType, string> = {
   text: 'Text',
   textarea: 'Textarea',
+  'help-text': 'Help Text',
+  image: 'Image',
   email: 'Email',
   number: 'Number',
   'file-upload': 'File Upload',
@@ -106,11 +122,9 @@ const typeLabels: Record<FormFieldType, string> = {
 const DEFAULT_UPLOAD_MOUNT = '__default__';
 
 const createField = (type: FormFieldType, index: number): FormFieldDefinition => {
-  const baseName = type === 'single-select' || type === 'multi-select'
-    ? `${type.replace('-', '_')}_${index + 1}`
-    : `${type}_${index + 1}`;
+  const baseName = `${type.replace(/-/g, '_')}_${index + 1}`;
 
-  return {
+  const baseField: FormFieldDefinition = {
     editorId: createEditorFieldId(),
     name: generateFormSlug(baseName).replace(/-/g, '_'),
     type,
@@ -126,6 +140,18 @@ const createField = (type: FormFieldType, index: number): FormFieldDefinition =>
     upload_bucket: type === 'file-upload' ? '' : undefined,
     upload_folder: type === 'file-upload' ? 'forms/{form_slug}/{field_name}/{submission_id}' : undefined,
   };
+
+  if (type === 'help-text') {
+    baseField.content = '## Hinweise\n\nFüge hier hilfreiche Informationen für Nutzer ein.';
+  }
+
+  if (type === 'image') {
+    baseField.src = '';
+    baseField.alt = '';
+    baseField.caption = '';
+  }
+
+  return baseField;
 };
 
 const supportsOptions = (type: FormFieldType) => (
@@ -133,6 +159,8 @@ const supportsOptions = (type: FormFieldType) => (
 );
 
 const supportsUploadConfig = (type: FormFieldType) => type === 'file-upload';
+
+const isDisplayOnlyFieldType = (type: FormFieldType) => type === 'help-text' || type === 'image';
 
 interface OptionTagInputProps {
   options: string[];
@@ -234,6 +262,27 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
     const next = [...fields];
     next[index] = { ...next[index], ...patch };
 
+    if (isDisplayOnlyFieldType(next[index].type)) {
+      next[index].required = false;
+      next[index].placeholder = undefined;
+      next[index].options = undefined;
+      next[index].upload_mount = undefined;
+      next[index].upload_bucket = undefined;
+      next[index].upload_folder = undefined;
+    }
+
+    if (next[index].type !== 'help-text') {
+      next[index].content = undefined;
+    }
+
+    if (next[index].type !== 'image') {
+      next[index].src = undefined;
+      next[index].alt = undefined;
+      next[index].caption = undefined;
+      next[index].width = undefined;
+      next[index].height = undefined;
+    }
+
     if (!supportsOptions(next[index].type)) {
       next[index].options = undefined;
     } else if (!next[index].options || next[index].options.length === 0) {
@@ -305,6 +354,7 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                     <Badge variant="outline">{typeLabels[field.type]}</Badge>
                     <Badge variant="outline">{field.name || 'unnamed_field'}</Badge>
                     {field.required && <Badge>{language === 'en' ? 'Required' : 'Pflichtfeld'}</Badge>}
+                    {isDisplayOnlyFieldType(field.type) && <Badge variant="secondary">{language === 'en' ? 'Display only' : 'Nur Anzeige'}</Badge>}
                   </div>
                 </div>
 
@@ -357,14 +407,22 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label>{language === 'en' ? 'Placeholder' : 'Platzhalter'}</Label>
-                  <Input
-                    value={field.placeholder || ''}
-                    onChange={(event) => updateField(index, { placeholder: event.target.value })}
-                    placeholder={language === 'en' ? 'e.g. john@example.com' : 'z.B. max@example.com'}
-                  />
-                </div>
+                {!isDisplayOnlyFieldType(field.type) ? (
+                  <div className="space-y-2">
+                    <Label>{language === 'en' ? 'Placeholder' : 'Platzhalter'}</Label>
+                    <Input
+                      value={field.placeholder || ''}
+                      onChange={(event) => updateField(index, { placeholder: event.target.value })}
+                      placeholder={language === 'en' ? 'e.g. john@example.com' : 'z.B. max@example.com'}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {field.type === 'help-text'
+                      ? (language === 'en' ? 'This block is rendered as markdown guidance for users.' : 'Dieser Block wird als Markdown-Hinweis für Nutzer gerendert.')
+                      : (language === 'en' ? 'This block renders a media-selected image and does not collect input.' : 'Dieser Block rendert ein Medienbild und sammelt keine Eingaben.')}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -393,6 +451,53 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                     language={language}
                     onChange={(options) => updateField(index, { options })}
                   />
+                </div>
+              )}
+
+              {field.type === 'help-text' && (
+                <div className="space-y-2">
+                  <Label>{language === 'en' ? 'Markdown Content' : 'Markdown-Inhalt'}</Label>
+                  <MarkdownEditor
+                    content={field.content || ''}
+                    onChange={(content) => updateField(index, { content })}
+                    placeholder={language === 'en'
+                      ? 'Add guidance, examples, and formatting here...'
+                      : 'Hier Hinweise, Beispiele und Formatierung hinzufügen...'}
+                  />
+                </div>
+              )}
+
+              {field.type === 'image' && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>{language === 'en' ? 'Image' : 'Bild'}</Label>
+                    <ImageUploader
+                      value={field.src || ''}
+                      onChange={(url) => updateField(index, { src: url })}
+                      bucket="booking_media"
+                      folder="product-images"
+                    />
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{language === 'en' ? 'Alt Text' : 'Alt-Text'}</Label>
+                      <Input
+                        value={field.alt || ''}
+                        onChange={(event) => updateField(index, { alt: event.target.value })}
+                        placeholder={language === 'en' ? 'Accessible description' : 'Barrierefreie Beschreibung'}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{language === 'en' ? 'Caption' : 'Bildunterschrift'}</Label>
+                      <Input
+                        value={field.caption || ''}
+                        onChange={(event) => updateField(index, { caption: event.target.value })}
+                        placeholder={language === 'en' ? 'Optional caption' : 'Optionale Bildunterschrift'}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -453,10 +558,16 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
                 <div>
                   <Label>{language === 'en' ? 'Required Field' : 'Pflichtfeld'}</Label>
                   <p className="text-xs text-muted-foreground">
-                    {language === 'en' ? 'Require a value before submission.' : 'Vor dem Absenden ist ein Wert erforderlich.'}
+                    {isDisplayOnlyFieldType(field.type)
+                      ? (language === 'en' ? 'Display-only blocks never require submission.' : 'Nur-Anzeige-Blöcke benötigen keine Eingabe.')
+                      : (language === 'en' ? 'Require a value before submission.' : 'Vor dem Absenden ist ein Wert erforderlich.')}
                   </p>
                 </div>
-                <Switch checked={Boolean(field.required)} onCheckedChange={(checked) => updateField(index, { required: checked })} />
+                <Switch
+                  checked={Boolean(field.required)}
+                  onCheckedChange={(checked) => updateField(index, { required: checked })}
+                  disabled={isDisplayOnlyFieldType(field.type)}
+                />
               </div>
             </CardContent>
           </Card>

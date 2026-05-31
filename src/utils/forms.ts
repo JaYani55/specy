@@ -21,6 +21,8 @@ export const RESERVED_FORM_SHARE_SLUGS = new Set([
 const VALID_FORM_FIELD_TYPES = new Set<FormFieldType>([
   'text',
   'textarea',
+  'help-text',
+  'image',
   'email',
   'number',
   'file-upload',
@@ -31,6 +33,10 @@ const VALID_FORM_FIELD_TYPES = new Set<FormFieldType>([
   'radio',
   'date',
 ]);
+
+const DISPLAY_ONLY_FORM_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);
+
+export const isDisplayOnlyFormFieldType = (type: FormFieldType): boolean => DISPLAY_ONLY_FORM_FIELD_TYPES.has(type);
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -94,10 +100,20 @@ const parseFieldEntry = (
     placeholder: typeof value.placeholder === 'string' ? value.placeholder : undefined,
     meta_description: typeof value.meta_description === 'string' ? value.meta_description : undefined,
     required: typeof value.required === 'boolean' ? value.required : false,
+    content: typeof value.content === 'string' ? value.content : undefined,
+    src: typeof value.src === 'string' ? value.src : undefined,
+    alt: typeof value.alt === 'string' ? value.alt : undefined,
+    caption: typeof value.caption === 'string' ? value.caption : undefined,
+    width: typeof value.width === 'number' && Number.isFinite(value.width) ? value.width : undefined,
+    height: typeof value.height === 'number' && Number.isFinite(value.height) ? value.height : undefined,
     upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
     upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
     upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
   };
+
+  if (DISPLAY_ONLY_FORM_FIELD_TYPES.has(field.type)) {
+    field.required = false;
+  }
 
   if (value.order !== undefined) {
     if (typeof value.order === 'number' && Number.isFinite(value.order)) {
@@ -236,6 +252,12 @@ export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDef
       placeholder: field.placeholder || undefined,
       meta_description: field.meta_description || undefined,
       required: Boolean(field.required),
+      content: field.content || undefined,
+      src: field.src || undefined,
+      alt: field.alt || undefined,
+      caption: field.caption || undefined,
+      width: field.width,
+      height: field.height,
       options: field.options && field.options.length > 0 ? field.options : undefined,
       upload_mount: field.upload_mount || undefined,
       upload_bucket: field.upload_bucket || undefined,
@@ -248,6 +270,10 @@ export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDef
 
 export const buildInitialAnswers = (fields: FormFieldDefinition[]): Record<string, FormAnswerValue> => {
   return fields.reduce<Record<string, FormAnswerValue>>((accumulator, field) => {
+    if (DISPLAY_ONLY_FORM_FIELD_TYPES.has(field.type)) {
+      return accumulator;
+    }
+
     if (field.type === 'checkbox') {
       accumulator[field.name] = false;
     } else if (field.type === 'multi-select') {

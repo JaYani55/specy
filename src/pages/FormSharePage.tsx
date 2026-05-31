@@ -14,7 +14,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getPublicFormByShareSlug, submitFormAnswers, uploadFormFile } from '@/services/formService';
 import type { FormAnswerValue, FormUploadedFileValue, PublicFormDefinition } from '@/types/forms';
-import { buildInitialAnswers } from '@/utils/forms';
+import { buildInitialAnswers, isDisplayOnlyFormFieldType } from '@/utils/forms';
+import { MarkdownContent } from '@/components/forms/MarkdownContent';
 
 const FormSharePage = () => {
   const { tenantName, formShareSlug } = useParams<{ tenantName: string; formShareSlug: string }>();
@@ -58,7 +59,7 @@ const FormSharePage = () => {
   }, [tenantName, formShareSlug]);
 
   const requiredFieldNames = useMemo(
-    () => new Set(formDefinition?.fields.filter((field) => field.required).map((field) => field.name) ?? []),
+    () => new Set(formDefinition?.fields.filter((field) => field.required && !isDisplayOnlyFormFieldType(field.type)).map((field) => field.name) ?? []),
     [formDefinition],
   );
 
@@ -179,8 +180,44 @@ const FormSharePage = () => {
               <>
                 {formDefinition.fields.map((field) => (
                   <div key={field.name} className="space-y-2">
-                    <Label htmlFor={field.name}>{field.label}{field.required ? ' *' : ''}</Label>
-                    {field.description && <p className="text-sm text-muted-foreground">{field.description}</p>}
+                    {!isDisplayOnlyFormFieldType(field.type) && (
+                      <Label htmlFor={field.name}>{field.label}{field.required ? ' *' : ''}</Label>
+                    )}
+                    {field.description && !isDisplayOnlyFormFieldType(field.type) && <p className="text-sm text-muted-foreground">{field.description}</p>}
+
+                    {field.type === 'help-text' && (
+                      <div className="rounded-xl border bg-muted/20 p-4">
+                        <div className="mb-2 text-sm font-semibold">{field.label}</div>
+                        {field.content ? (
+                          <MarkdownContent content={field.content} />
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            {language === 'en' ? 'No help text provided yet.' : 'Noch kein Hilfetext vorhanden.'}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {field.type === 'image' && (
+                      <div className="overflow-hidden rounded-xl border bg-muted/20">
+                        {field.src ? (
+                          <img
+                            src={field.src}
+                            alt={field.alt || field.label || 'Form image'}
+                            className="h-auto w-full max-h-96 object-cover"
+                          />
+                        ) : (
+                          <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
+                            {language === 'en' ? 'No image selected yet.' : 'Noch kein Bild ausgewählt.'}
+                          </div>
+                        )}
+                        {(field.caption || field.alt || field.label) && (
+                          <div className="border-t px-4 py-3 text-sm text-muted-foreground">
+                            {field.caption || field.alt || field.label}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {(field.type === 'text' || field.type === 'email' || field.type === 'date' || field.type === 'number') && (
                       <Input

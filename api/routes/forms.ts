@@ -7,7 +7,7 @@ import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../li
 
 const forms = new Hono<{ Bindings: Env }>();
 
-type FormFieldType = 'text' | 'textarea' | 'email' | 'number' | 'file-upload' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date';
+type FormFieldType = 'text' | 'textarea' | 'help-text' | 'image' | 'email' | 'number' | 'file-upload' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date';
 
 interface FormUploadedFileValue {
   name: string;
@@ -27,6 +27,12 @@ interface FormFieldDefinition {
   placeholder?: string;
   meta_description?: string;
   required?: boolean;
+  content?: string;
+  src?: string;
+  alt?: string;
+  caption?: string;
+  width?: number;
+  height?: number;
   options?: string[];
   upload_mount?: string;
   upload_bucket?: string;
@@ -81,6 +87,8 @@ interface MailDeliveryJobRow {
 const VALID_FIELD_TYPES = new Set<FormFieldType>([
   'text',
   'textarea',
+  'help-text',
+  'image',
   'email',
   'number',
   'file-upload',
@@ -91,6 +99,8 @@ const VALID_FIELD_TYPES = new Set<FormFieldType>([
   'radio',
   'date',
 ]);
+
+const DISPLAY_ONLY_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -392,11 +402,21 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       placeholder: typeof value.placeholder === 'string' ? value.placeholder : undefined,
       meta_description: typeof value.meta_description === 'string' ? value.meta_description : undefined,
       required: typeof value.required === 'boolean' ? value.required : false,
+      content: typeof value.content === 'string' ? value.content : undefined,
+      src: typeof value.src === 'string' ? value.src : undefined,
+      alt: typeof value.alt === 'string' ? value.alt : undefined,
+      caption: typeof value.caption === 'string' ? value.caption : undefined,
+      width: typeof value.width === 'number' && Number.isFinite(value.width) ? value.width : undefined,
+      height: typeof value.height === 'number' && Number.isFinite(value.height) ? value.height : undefined,
       options: Array.isArray(value.options) ? value.options.filter((entry): entry is string => typeof entry === 'string') : undefined,
       upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
       upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
       upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
     };
+
+    if (DISPLAY_ONLY_FIELD_TYPES.has(field.type)) {
+      field.required = false;
+    }
 
     if (value.order !== undefined && typeof value.order === 'number' && Number.isFinite(value.order)) {
       field.order = Math.max(0, Math.trunc(value.order));
@@ -455,12 +475,22 @@ const validateAnswers = (
   const fieldMap = new Map(fields.map((field) => [field.name, field]));
 
   for (const key of Object.keys(answers)) {
-    if (!fieldMap.has(key)) {
+    const field = fieldMap.get(key);
+    if (!field) {
       errors.push(`Unexpected field: ${key}.`);
+      continue;
+    }
+
+    if (DISPLAY_ONLY_FIELD_TYPES.has(field.type)) {
+      errors.push(`${key} is a display-only field and cannot be submitted.`);
     }
   }
 
   for (const field of fields) {
+    if (DISPLAY_ONLY_FIELD_TYPES.has(field.type)) {
+      continue;
+    }
+
     const value = answers[field.name];
     const isEmptyString = typeof value === 'string' && value.trim() === '';
     const isMissing = value === undefined || value === null || isEmptyString;
