@@ -523,6 +523,7 @@ const FormEditor = () => {
                 <FormSchemaBuilder
                   fields={builderFields}
                   language={language}
+                  tenantId={tenantId || null}
                   onChange={handleBuilderChange}
                 />
               </div>

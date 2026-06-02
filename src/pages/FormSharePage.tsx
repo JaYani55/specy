@@ -13,9 +13,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getPublicFormByShareSlug, submitFormAnswers, uploadFormFile } from '@/services/formService';
-import type { FormAnswerValue, FormUploadedFileValue, PublicFormDefinition } from '@/types/forms';
+import type { FormAnswerValue, FormFieldDefinition, FormUploadedFileValue, PublicFormDefinition } from '@/types/forms';
 import { buildInitialAnswers, isDisplayOnlyFormFieldType } from '@/utils/forms';
+import { useResolvedMediaUrl } from '@/utils/mediaUrl';
 import { MarkdownContent } from '@/components/forms/MarkdownContent';
+
+const FormShareImageField = ({ field, language }: { field: FormFieldDefinition; language: string }) => {
+  const resolvedImageUrl = useResolvedMediaUrl(field.src);
+
+  return (
+    <div className="overflow-hidden rounded-xl border bg-muted/20">
+      {field.src ? (
+        <img
+          src={resolvedImageUrl || field.src}
+          alt={field.alt || field.label || 'Form image'}
+          title={field.alt || undefined}
+          className="h-auto w-full max-h-96 object-cover"
+        />
+      ) : (
+        <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
+          {language === 'en' ? 'No image selected yet.' : 'Noch kein Bild ausgewählt.'}
+        </div>
+      )}
+      {field.caption && (
+        <div className="border-t px-4 py-3 text-sm text-muted-foreground">
+          {field.caption}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const FormSharePage = () => {
   const { tenantName, formShareSlug } = useParams<{ tenantName: string; formShareSlug: string }>();
@@ -199,24 +226,7 @@ const FormSharePage = () => {
                     )}
 
                     {field.type === 'image' && (
-                      <div className="overflow-hidden rounded-xl border bg-muted/20">
-                        {field.src ? (
-                          <img
-                            src={field.src}
-                            alt={field.alt || field.label || 'Form image'}
-                            className="h-auto w-full max-h-96 object-cover"
-                          />
-                        ) : (
-                          <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
-                            {language === 'en' ? 'No image selected yet.' : 'Noch kein Bild ausgewählt.'}
-                          </div>
-                        )}
-                        {(field.caption || field.alt || field.label) && (
-                          <div className="border-t px-4 py-3 text-sm text-muted-foreground">
-                            {field.caption || field.alt || field.label}
-                          </div>
-                        )}
-                      </div>
+                      <FormShareImageField field={field} language={language} />
                     )}
 
                     {(field.type === 'text' || field.type === 'email' || field.type === 'date' || field.type === 'number') && (
@@ -269,7 +279,7 @@ const FormSharePage = () => {
                             <div className="min-w-0">
                               <p className="truncate font-medium">{(answers[field.name] as FormUploadedFileValue).name}</p>
                               <a
-                                href={(answers[field.name] as FormUploadedFileValue).url}
+                                href={(answers[field.name] as FormUploadedFileValue).download_url || (answers[field.name] as FormUploadedFileValue).url}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-xs text-primary underline-offset-2 hover:underline"
@@ -279,7 +289,7 @@ const FormSharePage = () => {
                             </div>
                             <div className="flex items-center gap-2">
                               <Button type="button" variant="outline" size="sm" asChild>
-                                <a href={(answers[field.name] as FormUploadedFileValue).url} target="_blank" rel="noreferrer">
+                                <a href={(answers[field.name] as FormUploadedFileValue).download_url || (answers[field.name] as FormUploadedFileValue).url} target="_blank" rel="noreferrer">
                                   <Upload className="mr-2 h-3.5 w-3.5" />
                                   {language === 'en' ? 'Open' : 'Öffnen'}
                                 </a>

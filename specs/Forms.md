@@ -162,6 +162,7 @@ Supported field types in the first implementation:
 - `image` *(display-only image selected from the media picker, not submitted as an answer)*
 - `email`
 - `number`
+- `file-upload`
 - `checkbox`
 - `select`
 - `radio`
@@ -182,6 +183,8 @@ Field properties:
 | `src` | conditional | Public image URL for `image` blocks |
 | `alt` | conditional | Accessible text for `image` blocks |
 | `caption` | conditional | Optional caption for `image` blocks |
+| `upload_provider` | conditional | Optional plugin-owned upload adapter, e.g. `pluradash` |
+| `upload_folder` | conditional | Folder template used by the active upload provider |
 
 ---
 
@@ -247,6 +250,26 @@ The forms builder now supports two non-fillable block types alongside normal inp
 - `image`: rendered as a media-backed image and edited with the page-builder media picker
 
 These blocks are stored in the same JSON schema but are skipped by answer generation and submission validation.
+
+### File Upload Storage Hooks
+
+The forms builder exposes plugin hook targets for file uploads so storage providers stay separate from core CMS logic.
+
+Current hook surfaces:
+
+- `forms.fileUpload.builder` for tenant-aware builder warnings and default provider selection
+- `forms.fileUpload.upload` for backend storage handling
+- `forms.fileUpload.notification` for enriching notification e-mails with provider-specific download links
+
+This keeps the upload implementation EUPL-safe by routing provider behavior through declared interfaces instead of hardcoding plugin logic into core forms routes.
+
+When no enabled provider is available for the selected tenant and current JWT role, the file-upload block shows `No File Storage configured`.
+
+When PluraDash is enabled for the selected tenant, the builder stores uploads under the tenant file archive path:
+
+- `file-archive/forms/{form_slug}/{field_name}/{submission_id}`
+
+Notification e-mails include a PluraDash dashboard deep link for each uploaded file so support users can open the archive and trigger the authenticated download flow.
 
 ### Share Page Mode
 

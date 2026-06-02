@@ -19,6 +19,7 @@ export interface FormUploadedFileValue {
   name: string;
   path: string;
   url: string;
+  download_url?: string;
   bucket: string;
   content_type: string | null;
   size: number | null;
@@ -43,6 +44,7 @@ export interface FormFieldDefinition {
   width?: number;
   height?: number;
   options?: string[];
+  upload_provider?: string;
   upload_mount?: string;
   upload_bucket?: string;
   upload_folder?: string;

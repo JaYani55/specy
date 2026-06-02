@@ -67,16 +67,24 @@ function buildMediaSignaturePayload(path: string): string {
   return `media:${path}`;
 }
 
-export function buildWorkerMediaFileUrl(requestUrl: string, path: string): string {
+export function buildWorkerMediaFileUrl(requestUrl: string, path: string, sourceId?: string | null): string {
   const url = new URL('/api/media/file', requestUrl);
   if (path) {
     url.searchParams.set('path', path);
   }
+  if (sourceId) {
+    url.searchParams.set('source', sourceId);
+  }
   return url.toString();
 }
 
-export async function buildSignedWorkerMediaFileUrl(env: Env, requestUrl: string, path: string): Promise<string> {
-  const url = new URL(buildWorkerMediaFileUrl(requestUrl, path));
+export async function buildSignedWorkerMediaFileUrl(
+  env: Env,
+  requestUrl: string,
+  path: string,
+  sourceId?: string | null,
+): Promise<string> {
+  const url = new URL(buildWorkerMediaFileUrl(requestUrl, path, sourceId));
   if (!env.SECRETS_ENCRYPTION_KEY) {
     return url.toString();
   }
@@ -108,11 +116,11 @@ export async function verifySignedWorkerMediaFileUrl(
 
 export function buildMediaMountUrl(config: ResolvedMediaSourceMount, requestUrl: string, path: string): string {
   if (config.type === 'r2') {
-    if (config.r2PublicUrl) {
+    if (config.r2PublicUrl && !isInvalidR2PublicUrl(config.r2PublicUrl)) {
       return `${trimTrailingSlash(config.r2PublicUrl)}/${path}`;
     }
 
-    return buildWorkerMediaFileUrl(requestUrl, path);
+    return buildWorkerMediaFileUrl(requestUrl, path, config.id);
   }
 
   if (config.type === 's3' && config.assetBaseUrl) {
@@ -167,7 +175,7 @@ export function resolveMediaSourceMountConfig(mount: MediaSourceMount, env: Env,
       bindingName: 'MEDIA_BUCKET',
       publicUrlConfigured: Boolean(publicUrl),
       assetBaseUrl: bindingConfigured && requestUrl
-        ? (publicUrl ? trimTrailingSlash(publicUrl) : buildWorkerMediaFileUrl(requestUrl, ''))
+        ? (publicUrl ? trimTrailingSlash(publicUrl) : buildWorkerMediaFileUrl(requestUrl, '', mount.id))
         : null,
       r2PublicUrl: publicUrl || null,
       endpoint: null,

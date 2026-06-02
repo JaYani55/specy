@@ -6,13 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { getMediaSources, type MediaSourceInfo } from '@/services/connectionsService';
+import { resolveFormFileUploadBuilderContext, type FormFileUploadBuilderContext } from '@/services/formFileUploadHooks';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { FormFieldDefinition, FormFieldType } from '@/types/forms';
 import { generateFormSlug } from '@/utils/forms';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
+import { useAuth } from '@/contexts/AuthContext';
 
 const createEditorFieldId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -24,6 +27,7 @@ const createEditorFieldId = (): string => {
 interface FormSchemaBuilderProps {
   fields: FormFieldDefinition[];
   language: 'en' | 'de';
+  tenantId?: string | null;
   onChange: (fields: FormFieldDefinition[]) => void;
 }
 
@@ -136,6 +140,7 @@ const createField = (type: FormFieldType, index: number): FormFieldDefinition =>
     options: type === 'single-select' || type === 'multi-select' || type === 'select' || type === 'radio'
       ? ['Option 1', 'Option 2']
       : undefined,
+    upload_provider: type === 'file-upload' ? undefined : undefined,
     upload_mount: type === 'file-upload' ? undefined : undefined,
     upload_bucket: type === 'file-upload' ? '' : undefined,
     upload_folder: type === 'file-upload' ? 'forms/{form_slug}/{field_name}/{submission_id}' : undefined,
@@ -237,8 +242,14 @@ const OptionTagInput = ({ options, language, onChange }: OptionTagInputProps) =>
   );
 };
 
-export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuilderProps) => {
+export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: FormSchemaBuilderProps) => {
+  const { roles } = useAuth();
   const [mediaSources, setMediaSources] = useState<MediaSourceInfo[]>([]);
+  const [uploadContext, setUploadContext] = useState<FormFileUploadBuilderContext | null>(null);
+
+  const storageMountWarning = mediaSources.length === 0
+    ? (language === 'en' ? 'No File Storage configured' : 'Kein Dateispeicher konfiguriert')
+    : null;
 
   useEffect(() => {
     let active = true;
@@ -257,6 +268,38 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    void resolveFormFileUploadBuilderContext({
+      tenantId: tenantId ?? null,
+      userRoles: roles,
+      language,
+    })
+      .then((context) => {
+        if (!active) return;
+        setUploadContext(context);
+      })
+      .catch(() => {
+        if (!active) return;
+        setUploadContext({
+          tenantId: tenantId ?? null,
+          userRoles: roles,
+          language,
+          enabledPluginSlugs: [],
+          available: false,
+          providerLabel: null,
+          warning: null,
+          uploadProvider: null,
+          uploadFolderTemplate: 'forms/{form_slug}/{field_name}/{submission_id}',
+        });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [language, roles, tenantId]);
 
   const updateField = (index: number, patch: Partial<FormFieldDefinition>) => {
     const next = [...fields];
@@ -290,13 +333,15 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
     }
 
     if (!supportsUploadConfig(next[index].type)) {
+      next[index].upload_provider = undefined;
       next[index].upload_mount = undefined;
       next[index].upload_bucket = undefined;
       next[index].upload_folder = undefined;
     } else {
+      next[index].upload_provider = next[index].upload_provider || uploadContext?.uploadProvider || undefined;
       next[index].upload_mount = next[index].upload_mount || undefined;
       next[index].upload_bucket = next[index].upload_bucket || '';
-      next[index].upload_folder = next[index].upload_folder || 'forms/{form_slug}/{field_name}/{submission_id}';
+      next[index].upload_folder = next[index].upload_folder || uploadContext?.uploadFolderTemplate || 'forms/{form_slug}/{field_name}/{submission_id}';
     }
 
     onChange(next);
@@ -316,7 +361,12 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
   };
 
   const addField = (type: FormFieldType) => {
-    onChange([...fields, createField(type, fields.length)]);
+    const nextField = createField(type, fields.length);
+    if (type === 'file-upload') {
+      nextField.upload_provider = uploadContext?.uploadProvider || undefined;
+      nextField.upload_folder = uploadContext?.uploadFolderTemplate || nextField.upload_folder;
+    }
+    onChange([...fields, nextField]);
   };
 
   return (
@@ -501,54 +551,69 @@ export const FormSchemaBuilder = ({ fields, language, onChange }: FormSchemaBuil
               )}
 
               {supportsUploadConfig(field.type) && (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>{language === 'en' ? 'Upload Storage Mount' : 'Upload-Speicher-Mount'}</Label>
-                    <Select
-                      value={field.upload_mount || DEFAULT_UPLOAD_MOUNT}
-                      onValueChange={(value) => updateField(index, {
-                        upload_mount: value === DEFAULT_UPLOAD_MOUNT ? undefined : value,
-                        upload_bucket: value === DEFAULT_UPLOAD_MOUNT ? field.upload_bucket || '' : '',
-                      })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={language === 'en' ? 'Use default storage mount' : 'Standard-Speicher-Mount verwenden'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={DEFAULT_UPLOAD_MOUNT}>
-                          {language === 'en' ? 'Default mount from Connections' : 'Standard-Mount aus Connections'}
-                        </SelectItem>
-                        {mediaSources.map((source) => (
-                          <SelectItem key={source.id} value={source.id}>
-                            {source.label}{source.isDefault ? ` (${language === 'en' ? 'Default' : 'Standard'})` : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {language === 'en'
-                        ? 'Select a mounted drive or keep the default active storage mount from Connections.'
-                        : 'Wähle ein gemountetes Laufwerk oder nutze den aktiven Standard-Mount aus Connections.'}
-                    </p>
-                    {field.upload_bucket && !field.upload_mount ? (
-                      <p className="text-xs text-amber-600">
-                        {language === 'en'
-                          ? `Legacy bucket override is still saved: ${field.upload_bucket}`
-                          : `Legacy-Bucket-Override ist noch gespeichert: ${field.upload_bucket}`}
-                      </p>
-                    ) : null}
-                  </div>
+                <div className="space-y-4">
+                  {storageMountWarning || uploadContext?.warning ? (
+                    <Alert variant={storageMountWarning ? 'destructive' : 'default'}>
+                      <Info className="h-4 w-4" />
+                      <AlertTitle>{language === 'en' ? 'File storage' : 'Dateispeicher'}</AlertTitle>
+                      <AlertDescription>{storageMountWarning || uploadContext?.warning}</AlertDescription>
+                    </Alert>
+                  ) : null}
 
-                  <div className="space-y-2">
-                    <Label>{language === 'en' ? 'Upload Folder Template' : 'Upload-Ordner-Template'}</Label>
-                    <Input
-                      value={field.upload_folder || ''}
-                      onChange={(event) => updateField(index, { upload_folder: event.target.value })}
-                      placeholder="forms/{form_slug}/{field_name}/{submission_id}"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {language === 'en' ? 'Supported tokens: {form_slug}, {field_name}, {submission_id}.' : 'Unterstützte Tokens: {form_slug}, {field_name}, {submission_id}.'}
-                    </p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{language === 'en' ? 'Upload Storage Mount' : 'Upload-Speicher-Mount'}</Label>
+                      <Select
+                        value={field.upload_mount || DEFAULT_UPLOAD_MOUNT}
+                        onValueChange={(value) => updateField(index, {
+                          upload_mount: value === DEFAULT_UPLOAD_MOUNT ? undefined : value,
+                          upload_bucket: value === DEFAULT_UPLOAD_MOUNT ? field.upload_bucket || '' : '',
+                        })}
+                        disabled={Boolean(field.upload_provider)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={language === 'en' ? 'Use default storage mount' : 'Standard-Speicher-Mount verwenden'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={DEFAULT_UPLOAD_MOUNT}>
+                            {language === 'en' ? 'Default mount from Connections' : 'Standard-Mount aus Connections'}
+                          </SelectItem>
+                          {mediaSources.map((source) => (
+                            <SelectItem key={source.id} value={source.id}>
+                              {source.label}{source.isDefault ? ` (${language === 'en' ? 'Default' : 'Standard'})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {field.upload_provider
+                          ? (language === 'en'
+                            ? `Managed by plugin provider: ${uploadContext?.providerLabel || field.upload_provider}`
+                            : `Wird vom Plugin-Provider verwaltet: ${uploadContext?.providerLabel || field.upload_provider}`)
+                          : (language === 'en'
+                            ? 'Select a mounted drive or keep the default active storage mount from Connections.'
+                            : 'Wähle ein gemountetes Laufwerk oder nutze den aktiven Standard-Mount aus Connections.')}
+                      </p>
+                      {field.upload_bucket && !field.upload_mount ? (
+                        <p className="text-xs text-amber-600">
+                          {language === 'en'
+                            ? `Legacy bucket override is still saved: ${field.upload_bucket}`
+                            : `Legacy-Bucket-Override ist noch gespeichert: ${field.upload_bucket}`}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{language === 'en' ? 'Upload Folder Template' : 'Upload-Ordner-Template'}</Label>
+                      <Input
+                        value={field.upload_folder || ''}
+                        onChange={(event) => updateField(index, { upload_folder: event.target.value })}
+                        placeholder="forms/{form_slug}/{field_name}/{submission_id}"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'en' ? 'Supported tokens: {form_slug}, {field_name}, {submission_id}.' : 'Unterstützte Tokens: {form_slug}, {field_name}, {submission_id}.'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

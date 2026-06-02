@@ -59,6 +59,30 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "kind": "transform",
         "order": 100,
         "description": "Rewrites plugin-owned tenant media URLs onto the core worker delivery route."
+      },
+      {
+        "key": "pluradash-form-file-builder",
+        "target": "forms.fileUpload.builder",
+        "scope": "ui",
+        "kind": "transform",
+        "order": 100,
+        "description": "Marks PluraDash as the file-upload provider inside the forms builder when the plugin is enabled for the selected workspace."
+      },
+      {
+        "key": "pluradash-form-upload-provider",
+        "target": "forms.fileUpload.upload",
+        "scope": "api",
+        "kind": "transform",
+        "order": 100,
+        "description": "Stores uploaded form files inside the tenant-scoped PluraDash archive structure."
+      },
+      {
+        "key": "pluradash-form-notification-links",
+        "target": "forms.fileUpload.notification",
+        "scope": "api",
+        "kind": "transform",
+        "order": 100,
+        "description": "Adds PluraDash download links for uploaded form files to notification e-mails."
       }
     ],
     "apiMetadata": null,
@@ -87,9 +111,12 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "targets": [
           "storage.tenant.policy",
           "storage.tenant.sources",
-          "media.url.resolve"
+          "media.url.resolve",
+          "forms.fileUpload.builder",
+          "forms.fileUpload.upload",
+          "forms.fileUpload.notification"
         ],
-        "description": "Owns the PluraDash-specific tenant media routing rules without hardcoding bucket names into core."
+        "description": "Owns the PluraDash-specific tenant media and form-file routing rules without hardcoding bucket names into core."
       }
     ]
   }

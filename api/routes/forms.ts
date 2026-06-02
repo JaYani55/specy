@@ -1,5 +1,6 @@
 import { AwsClient } from 'aws4fetch';
 import { Hono } from 'hono';
+import { runFormFileNotificationHooks, runFormFileUploadHooks, type FormFileNotificationLink } from '../lib/formFileUploadHooks';
 import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig } from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import { verifyAuthSession } from '../lib/auth';
@@ -13,6 +14,7 @@ interface FormUploadedFileValue {
   name: string;
   path: string;
   url: string;
+  download_url?: string;
   bucket: string;
   content_type: string | null;
   size: number | null;
@@ -34,6 +36,7 @@ interface FormFieldDefinition {
   width?: number;
   height?: number;
   options?: string[];
+  upload_provider?: string;
   upload_mount?: string;
   upload_bucket?: string;
   upload_folder?: string;
@@ -129,6 +132,7 @@ const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => 
   && typeof value.name === 'string'
   && typeof value.path === 'string'
   && typeof value.url === 'string'
+  && (value.download_url === undefined || typeof value.download_url === 'string')
   && typeof value.bucket === 'string'
   && (value.content_type === null || typeof value.content_type === 'string')
   && (value.size === null || typeof value.size === 'number')
@@ -137,7 +141,10 @@ const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => 
 const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | null): string => {
   if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (isUploadedFileValue(value)) return value.url ? `${value.name} (${value.url})` : value.name;
+  if (isUploadedFileValue(value)) {
+    const preferredUrl = value.download_url || value.url;
+    return preferredUrl ? `${value.name} (${preferredUrl})` : value.name;
+  }
   if (value === null || value === '') return '-';
   return String(value);
 };
@@ -160,6 +167,7 @@ const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
   answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
+  fileLinks: FormFileNotificationLink[];
   answerId: string;
   submittedVia: 'share' | 'api' | 'page';
   sourceSlug: string | null;
@@ -167,6 +175,19 @@ const buildNotificationContent = (input: {
 }): { subject: string; text: string; html: string } => {
   const answerSummaryText = buildAnswerSummaryText(input.fields, input.answers);
   const answerSummaryHtml = buildAnswerSummaryHtml(input.fields, input.answers);
+  const fileLinksText = input.fileLinks.length > 0
+    ? ['', 'PluraDash downloads:', ...input.fileLinks.map((link) => `- ${link.fieldLabel}: ${link.fileName} (${link.url})`)]
+    : [];
+  const fileLinksHtml = input.fileLinks.length > 0
+    ? [
+      '<div style="margin:16px 0;">',
+      '<p style="font-weight:600;margin:0 0 8px 0;">PluraDash downloads</p>',
+      '<ul style="margin:0;padding-left:20px;">',
+      ...input.fileLinks.map((link) => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.fieldLabel)}: ${escapeHtml(link.fileName)}</a></li>`),
+      '</ul>',
+      '</div>',
+    ]
+    : [];
   const sourceLine = input.sourceSlug ? `Source: ${input.sourceSlug}` : 'Source: -';
   const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
   const subject = `Neue Formularantwort: ${input.form.name}`;
@@ -182,6 +203,7 @@ const buildNotificationContent = (input: {
     '',
     'Antworten:',
     answerSummaryText,
+    ...fileLinksText,
   ].join('\n');
   const html = [
     '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">',
@@ -197,6 +219,7 @@ const buildNotificationContent = (input: {
     '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Antworten</th></tr></thead>',
     `<tbody>${answerSummaryHtml}</tbody>`,
     '</table>',
+    ...fileLinksHtml,
     '</div>',
   ].join('');
 
@@ -269,6 +292,7 @@ const resolveStaffRecipients = async (
 
 const enqueueFormAnswerNotifications = async (input: {
   env: Env;
+  requestUrl: string;
   form: FormRow;
   fields: FormFieldDefinition[];
   answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
@@ -304,11 +328,21 @@ const enqueueFormAnswerNotifications = async (input: {
   const recipients = [...recipientMap.values()];
   if (recipients.length === 0) return;
 
+  const notificationContext = await runFormFileNotificationHooks({
+    requestUrl: input.requestUrl,
+    form: input.form,
+    answerId: input.answerId,
+    answers: input.answers,
+    fields: input.fields,
+    fileLinks: [],
+  });
+
   const jobsToInsert = recipients.map((recipient) => {
     const content = buildNotificationContent({
       form: input.form,
       fields: input.fields,
       answers: input.answers,
+      fileLinks: notificationContext.fileLinks,
       answerId: input.answerId,
       submittedVia: input.submittedVia,
       sourceSlug: input.sourceSlug,
@@ -410,6 +444,7 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       width: typeof value.width === 'number' && Number.isFinite(value.width) ? value.width : undefined,
       height: typeof value.height === 'number' && Number.isFinite(value.height) ? value.height : undefined,
       options: Array.isArray(value.options) ? value.options.filter((entry): entry is string => typeof entry === 'string') : undefined,
+      upload_provider: typeof value.upload_provider === 'string' ? value.upload_provider : undefined,
       upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
       upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
       upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
@@ -602,6 +637,73 @@ const resolveUploadFolder = (field: FormFieldDefinition, form: FormRow, submissi
     .join('/');
 };
 
+const resolveFormStorageOwnerUserId = async (
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  form: FormRow,
+): Promise<string | null> => {
+  if (form.owner_user_id) {
+    return form.owner_user_id;
+  }
+
+  if (!form.tenant_id) {
+    return null;
+  }
+
+  const { data, error } = await admin
+    .from('tenants')
+    .select('default_for_user_id, created_by')
+    .eq('id', form.tenant_id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (typeof data?.default_for_user_id === 'string' && data.default_for_user_id)
+    || (typeof data?.created_by === 'string' && data.created_by)
+    || null;
+};
+
+const registerFormUploadInTenantArchive = async (input: {
+  env: Env;
+  form: FormRow;
+  mountId: string;
+  folderPath: string;
+  objectKey: string;
+  filename: string;
+  contentType: string | null;
+  sizeBytes: number;
+}): Promise<void> => {
+  if (!input.form.tenant_id) {
+    return;
+  }
+
+  const admin = await createSupabaseAdminClient(input.env);
+  const ownerUserId = await resolveFormStorageOwnerUserId(admin, input.form);
+  if (!ownerUserId) {
+    return;
+  }
+
+  const { error } = await admin
+    .from('tenant_storage_objects')
+    .insert({
+      tenant_id: input.form.tenant_id,
+      user_id: ownerUserId,
+      scope: 'files',
+      source_mount_id: input.mountId,
+      folder_path: input.folderPath,
+      object_key: input.objectKey,
+      filename: input.filename,
+      content_type: input.contentType,
+      size_bytes: input.sizeBytes,
+      created_by: ownerUserId,
+    });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+};
+
 const uploadFormFile = async (input: {
   env: Env;
   requestUrl: string;
@@ -610,6 +712,30 @@ const uploadFormFile = async (input: {
   file: File;
   submissionId: string;
 }): Promise<FormUploadedFileValue> => {
+  if (input.field.upload_provider) {
+    const hookResult = await runFormFileUploadHooks({
+      env: input.env,
+      requestUrl: input.requestUrl,
+      form: input.form,
+      field: input.field,
+      file: input.file,
+      submissionId: input.submissionId,
+      handled: false,
+      fileValue: null,
+      error: null,
+    });
+
+    if (hookResult.handled && hookResult.fileValue) {
+      return hookResult.fileValue;
+    }
+
+    if (hookResult.handled && hookResult.error) {
+      throw new Error(hookResult.error);
+    }
+
+    throw new Error(`Upload provider ${input.field.upload_provider} is not available.`);
+  }
+
   const availableMounts = await resolveAllMediaSourceMounts(input.env, input.requestUrl);
   const defaultMount = availableMounts.find((mount) => mount.isDefault) ?? await resolvePrimaryMediaConfig(input.env, input.requestUrl);
   const selectedMountId = input.field.upload_mount?.trim();
@@ -686,6 +812,23 @@ const uploadFormFile = async (input: {
   if (storageConfig.provider === 'r2') {
     const buf = await input.file.arrayBuffer();
     await input.env.MEDIA_BUCKET!.put(key, buf, { httpMetadata: { contentType: input.file.type || 'application/octet-stream' } });
+
+    try {
+      await registerFormUploadInTenantArchive({
+        env: input.env,
+        form: input.form,
+        mountId: storageConfig.id,
+        folderPath: folder,
+        objectKey: key,
+        filename: input.file.name,
+        contentType: input.file.type || null,
+        sizeBytes: buf.byteLength,
+      });
+    } catch (error) {
+      await input.env.MEDIA_BUCKET!.delete(key);
+      throw error;
+    }
+
     return {
       name: input.file.name,
       path: key,
@@ -940,6 +1083,7 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   try {
     await enqueueFormAnswerNotifications({
       env: c.env,
+      requestUrl: c.req.url,
       form,
       fields,
       answers: normalizedAnswers,
@@ -1037,6 +1181,7 @@ forms.post('/:identifier/answers', async (c) => {
   try {
     await enqueueFormAnswerNotifications({
       env: c.env,
+      requestUrl: c.req.url,
       form,
       fields,
       answers: normalizedAnswers,
