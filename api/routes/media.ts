@@ -112,7 +112,7 @@ async function resolveMediaMount(
   let resolvedSourceId = sourceId && sourceId !== 'primary' ? sourceId : null;
 
   if (!resolvedSourceId && objectKey) {
-    const trackedObject = await getManagedTenantStorageObjectByKey(env, objectKey, 'media');
+    const trackedObject = await getManagedTenantStorageObjectByKey(env, objectKey);
     resolvedSourceId = trackedObject?.source_mount_id ?? null;
   }
 
@@ -473,7 +473,7 @@ media.post('/upload', async (c) => {
         throw error;
       }
 
-      const url = await buildSignedWorkerMediaFileUrl(c.env, c.req.url, scoped.objectKey);
+      const url = await buildSignedWorkerMediaFileUrl(c.env, c.req.url, scoped.objectKey, cfg.id);
       return c.json({ url, path: scoped.objectKey });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────

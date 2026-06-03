@@ -66,6 +66,11 @@ Media-related hook targets currently available to plugins:
 - `storage.tenant.sources` — backend filtering of media source visibility and source selection
 - `media.url.resolve` — frontend normalization of persisted media URLs before rendering in authenticated UI surfaces
 
+Media routing rule for plugin-owned tenant objects:
+
+- If a plugin persists tenant-managed object keys such as `tenant/<tenant>/user/<user>/...`, frontend URL normalization must route those URLs onto the worker delivery surface instead of relying on raw Supabase public bucket URLs.
+- Worker delivery must resolve the mount from the tracked `source_mount_id` in `public.tenant_storage_objects`; do not guess the provider from bucket names, URL prefixes, or whichever mount is currently marked as default.
+
 Settings-related hook targets currently available to plugins:
 
 - `settings.defaultLanding.options` — extend the selectable landing views shown in settings

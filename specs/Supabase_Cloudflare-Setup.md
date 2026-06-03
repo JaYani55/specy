@@ -8,6 +8,8 @@ Complete reference for deploying service-cms on Cloudflare Workers with Supabase
 - Plugin-owned multi-tenant media behavior, such as PluraDash routing tenant users to managed R2 storage while keeping the core Supabase bucket for platform admins, must be implemented through plugin hooks rather than hardcoded in core.
 - The core exposes the generic hook targets `storage.tenant.policy`, `storage.tenant.sources`, and `media.url.resolve` so plugins can own tenant-storage entitlement, source selection, and frontend media URL normalization.
 - If a persisted media URL mixes a public Supabase bucket path with a plugin-owned tenant object key, the plugin hook layer is responsible for normalizing it onto the correct delivery route.
+- Tenant object delivery must resolve the actual mount from `public.tenant_storage_objects.source_mount_id`, not by inferring from legacy bucket names such as `booking_media` or from the current default mount.
+- Signed worker URLs for tenant-managed objects should include the tracked source mount when known, and the backend must fall back to the object ledger across all managed scopes (`media`, `files`, and future scopes) before choosing a storage provider.
 
 ---
 

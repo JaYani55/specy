@@ -376,7 +376,7 @@ export async function listTenantStorageItems(
         id: row.id,
         name: row.filename,
         path: row.object_key,
-        url: await buildSignedWorkerMediaFileUrl(env, input.requestUrl, row.object_key),
+        url: await buildSignedWorkerMediaFileUrl(env, input.requestUrl, row.object_key, row.source_mount_id),
         isFolder: false,
         size: row.size_bytes,
         createdAt: row.created_at,
