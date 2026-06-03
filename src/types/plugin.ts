@@ -192,6 +192,8 @@ export interface PluginSidebarItem {
    * "admin" — appears in the conditional admin section (requires staff access)
    */
   group: 'main' | 'admin';
+  /** Optional parent item key for dropdown-style navigation in core nav surfaces. */
+  parentKey?: string;
   /**
    * Optional extra role requirement beyond the group's own gating.
     * "super-admin" — only super-admin sees this item.

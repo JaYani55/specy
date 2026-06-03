@@ -573,14 +573,16 @@ media.get('/file', async (c) => {
     if (!isManagedMediaObject) {
       const isManagedObject = await isManagedTenantStorageObject(c.env, path);
       if (isManagedObject) {
+        if (!hasValidSignature) {
+          return c.json({ error: 'Authentication required.' }, 401);
+        }
+      } else {
+        if (!hasValidSignature) {
+          return c.json({ error: 'Authentication required.' }, 401);
+        }
+
         return c.json({ error: 'File not found' }, 404);
       }
-
-      if (!hasValidSignature) {
-        return c.json({ error: 'Authentication required.' }, 401);
-      }
-
-      return c.json({ error: 'File not found' }, 404);
     }
   } else {
     const trackedObject = await getTenantStorageObjectByKey(c.env, auth, path, 'media');

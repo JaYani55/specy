@@ -45,6 +45,45 @@ The refactor uses two overlapping concepts:
 - storage entitlement is resolved separately from package presence through backend hook targets
 - plugins may contribute storage policy rules without taking ownership of the core storage schema
 
+### Current File Architecture
+
+The current file architecture is intentionally split between core tenancy tracking and provider-specific delivery:
+
+- file metadata is tracked in `tenant_storage_allocations` and `tenant_storage_objects`
+- managed R2-backed tenant storage uses `tenant_storage_objects` as the source of truth for archive visibility, usage counters, and scoped deletes
+- PluraDash currently provides the proprietary tenant file archive UI, archive downloads, and managed support storage workflow on top of the core tables
+- form file uploads may target different storage mounts, but only the managed R2 / PluraDash paths are currently modeled as tenant-scoped archive objects in core
+- self-hosted operators may still register their own storage mounts, including Supabase, R2, or S3-compatible mounts, through the Connections/runtime configuration surfaces
+
+Current practical behavior:
+
+- support-oriented managed storage is implemented through PluraDash plugin hooks and Cloudflare R2
+- file archive listing, usage summaries, and file type stats are derived from tracked tenant objects rather than raw bucket enumeration
+- core storage tables remain open to hook-based policy contributions so proprietary and self-hosted storage models can coexist without changing the schema contract
+
+### Planned File Architecture
+
+The storage model is planned to tighten into a harder tenant boundary with a clearer product split between core and proprietary managed storage:
+
+1. Hard multi-tenancy
+
+- tenants are organizations that may contain one or more users
+- tenant boundaries are expected to become hard isolation boundaries across storage, content, and admin surfaces
+- `super-admin` is planned to lose cross-tenant content visibility and should no longer be able to browse other tenants' files by default
+
+2. Managed storage product split
+
+- the `support` role is planned to receive managed R2 storage only
+- that managed storage is planned to be exposed only through PluraDash as a proprietary Pluracon plugin
+- users without the `support` role are planned to receive no managed file storage out of the gate
+- non-support tenants may still register and operate their own storage mounts if they have an `admin` user able to configure runtime connections
+
+3. Core deployment posture
+
+- core functionality is meant to stay viable for single-tenant self-hosting
+- self-hosted tenants should be able to operate without PluraDash by wiring their own storage mounts
+- managed multi-tenant file operations should remain hook-driven so the open-source core does not hardcode proprietary storage behavior
+
 ### Ownership Model
 
 The target ownership model is hybrid in storage but user-centric in enforcement:

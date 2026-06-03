@@ -667,6 +667,17 @@ Required rules:
 - If your plugin id contains `-`, use a Postgres-safe schema name derived from it, typically with underscores instead of dashes, e.g. `my-plugin` → `my_plugin`
 - Cross-schema references to core objects may exist where necessary, but the plugin must not create or mutate core-owned objects in `public`
 
+### API exposure requirement
+
+**If plugin code accesses a dedicated schema through Supabase's REST API or `supabase-js` with `.schema('your_plugin_schema')`, that schema must also be exposed in the Supabase API settings.** Creating the schema in Postgres is not sufficient on its own.
+
+Required rules:
+
+- Add the plugin schema to Supabase `API > Exposed schemas` in every environment that will use the plugin
+- Do this before testing any route that calls `.schema('your_plugin_schema')`, otherwise PostgREST returns errors such as `Invalid schema: your_plugin_schema`
+- Service-role clients do not bypass the exposed-schema requirement for PostgREST-backed queries
+- If the schema cannot be exposed, plugin routes must use an alternative access path, such as `public` RPC functions or core-owned tables, instead of direct `.schema(...)` queries
+
 ### Migration file conventions
 
 Follow the same patterns used in the CMS's own migrations:

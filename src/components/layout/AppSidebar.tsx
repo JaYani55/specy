@@ -1,11 +1,13 @@
-import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList } from "lucide-react"
+import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { usePermissions } from "@/hooks/usePermissions"
 import { useEnabledWebapps } from "@/hooks/useEnabledWebapps"
-import { getPluginSidebarItems } from "@/plugins/loader"
+import { getPluginSidebarTree } from "@/plugins/loader"
 import Logo from "@/components/shared/Logo"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   Sidebar,
   SidebarContent,
@@ -15,6 +17,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarHeader,
   SidebarFooter,
   SidebarRail,
@@ -33,6 +38,7 @@ export function AppSidebar() {
   const { canAccessVerwaltung, canManagePlugins } = usePermissions()
   const { webapps } = useEnabledWebapps()
   const location = useLocation()
+  const [openPluginKey, setOpenPluginKey] = useState<string | null>(null)
 
   const items = [
     {
@@ -91,21 +97,106 @@ export function AppSidebar() {
   }
 
   // Dynamic sidebar items from installed plugins (admin group)
-  const pluginAdminItems = canAccessVerwaltung
-    ? getPluginSidebarItems('admin', user?.roles ?? []).filter((item) => {
-        if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
-        if (item.requiredRole === 'admin') return canManagePlugins;
-        return true;
-      })
-    : [];
+  const pluginAdminItems = useMemo(
+    () => canAccessVerwaltung
+      ? getPluginSidebarTree('admin', user?.roles ?? []).filter((item) => {
+          if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
+          if (item.requiredRole === 'admin') return canManagePlugins;
+          return true;
+        })
+      : [],
+    [canAccessVerwaltung, canManagePlugins, user?.roles]
+  )
 
   // Dynamic sidebar items from installed plugins (main group — visible to all authenticated users)
-  const pluginMainItems = getPluginSidebarItems('main', user?.roles ?? []).filter((item) => {
-    if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
-    if (item.requiredRole === 'admin') return canManagePlugins;
-    return true;
-  });
-  const webappItems = webapps;
+  const pluginMainItems = useMemo(
+    () => getPluginSidebarTree('main', user?.roles ?? []).filter((item) => {
+      if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
+      if (item.requiredRole === 'admin') return canManagePlugins;
+      return true;
+    }),
+    [canManagePlugins, user?.roles]
+  )
+  const webappItems = webapps
+
+  useEffect(() => {
+    const activePluginItem = [...pluginMainItems, ...pluginAdminItems].find((item) =>
+      item.children.some((child) => location.pathname === child.path || location.pathname.startsWith(`${child.path}/`))
+    )
+
+    setOpenPluginKey(activePluginItem?.key ?? null)
+  }, [location.pathname, pluginAdminItems, pluginMainItems])
+
+  const renderPluginItem = (item: (typeof pluginMainItems)[number]) => {
+    const isActive =
+      location.pathname === item.path ||
+      location.pathname.startsWith(`${item.path}/`) ||
+      item.children.some((child) => location.pathname === child.path || location.pathname.startsWith(`${child.path}/`))
+
+    if (!item.children.length) {
+      return (
+        <SidebarMenuButton
+          asChild
+          isActive={isActive}
+          tooltip={item.label}
+        >
+          <Link to={item.path}>
+            <item.icon />
+            <span>{item.label}</span>
+          </Link>
+        </SidebarMenuButton>
+      )
+    }
+
+    const isOpen = openPluginKey === item.key
+
+    return (
+      <Collapsible
+        open={isOpen}
+        onOpenChange={(open) => setOpenPluginKey(open ? item.key : null)}
+        className="w-full"
+      >
+        <CollapsibleTrigger asChild>
+          <SidebarMenuButton
+            isActive={isActive}
+            tooltip={item.label}
+          >
+            <item.icon />
+            <span>{item.label}</span>
+            <ChevronDown className={`ml-auto transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarMenuSub>
+            <SidebarMenuSubItem>
+              <SidebarMenuSubButton
+                asChild
+                isActive={location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)}
+              >
+                <Link to={item.path}>
+                  <item.icon />
+                  <span>{item.label}</span>
+                </Link>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+            {item.children.map((child) => (
+              <SidebarMenuSubItem key={child.key}>
+                <SidebarMenuSubButton
+                  asChild
+                  isActive={location.pathname === child.path || location.pathname.startsWith(`${child.path}/`)}
+                >
+                  <Link to={child.path}>
+                    <child.icon />
+                    <span>{child.label}</span>
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    )
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -152,31 +243,13 @@ export function AppSidebar() {
               {/* Plugin main-group sidebar items */}
               {pluginMainItems.map((item) => (
                 <SidebarMenuItem key={item.key}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)}
-                    tooltip={item.label}
-                  >
-                    <Link to={item.path}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </Link>
-                  </SidebarMenuButton>
+                  {renderPluginItem(item)}
                 </SidebarMenuItem>
               ))}
               {/* Plugin admin-group sidebar items */}
               {pluginAdminItems.map((item) => (
                 <SidebarMenuItem key={item.key}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)}
-                    tooltip={item.label}
-                  >
-                    <Link to={item.path}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </Link>
-                  </SidebarMenuButton>
+                  {renderPluginItem(item)}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

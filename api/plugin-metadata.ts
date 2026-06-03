@@ -42,7 +42,7 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "scope": "api",
         "kind": "transform",
         "order": 100,
-        "description": "Enables tenant-scoped managed storage for PluraDash support users and grants unlimited access to super-admins."
+        "description": "Enables tenant-scoped managed storage for PluraDash support users."
       },
       {
         "key": "pluradash-tenant-storage-sources",
@@ -50,7 +50,7 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "scope": "api",
         "kind": "transform",
         "order": 100,
-        "description": "Restricts support users to the managed R2 media source while leaving super-admin source access unchanged."
+        "description": "Restricts support users to the managed R2 media source for PluraDash-managed storage."
       },
       {
         "key": "pluradash-media-url-resolver",

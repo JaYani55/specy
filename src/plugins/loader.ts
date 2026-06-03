@@ -14,6 +14,10 @@ import type {
   PluginSidebarItem,
 } from '@/types/plugin';
 
+export interface PluginSidebarTreeItem extends PluginSidebarItem {
+  children: PluginSidebarTreeItem[];
+}
+
 export function isPluginAccessible(plugin: PluginDefinition, userRoles?: string[]): boolean {
   const requiredRoles = plugin.access?.anyRole;
 
@@ -49,6 +53,38 @@ export function getPluginSidebarItems(group?: 'main' | 'admin', userRoles?: stri
 
   if (group) return items.filter((item) => item.group === group);
   return items;
+}
+
+export function getPluginSidebarTree(group?: 'main' | 'admin', userRoles?: string[]): PluginSidebarTreeItem[] {
+  const items = getPluginSidebarItems(group, userRoles);
+  const itemMap = new Map<string, PluginSidebarTreeItem>();
+  const roots: PluginSidebarTreeItem[] = [];
+
+  for (const item of items) {
+    itemMap.set(item.key, {
+      ...item,
+      children: [],
+    });
+  }
+
+  for (const item of items) {
+    const node = itemMap.get(item.key);
+    if (!node) {
+      continue;
+    }
+
+    if (item.parentKey) {
+      const parent = itemMap.get(item.parentKey);
+      if (parent) {
+        parent.children.push(node);
+        continue;
+      }
+    }
+
+    roots.push(node);
+  }
+
+  return roots;
 }
 
 /**

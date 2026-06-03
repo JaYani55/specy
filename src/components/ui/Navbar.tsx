@@ -3,9 +3,9 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { usePermissions } from '@/hooks/usePermissions';
 import { useEnabledWebapps } from '@/hooks/useEnabledWebapps';
-import { getPluginSidebarItems } from '@/plugins/loader';
-import { Moon, Sun, Menu, Calendar, Users, List, X, Settings, LogOut, HelpCircle, SlidersHorizontal, FileText, Globe, ClipboardList } from "lucide-react";
-import { useState } from "react";
+import { getPluginSidebarTree } from '@/plugins/loader';
+import { Moon, Sun, Menu, Calendar, Users, List, X, Settings, LogOut, HelpCircle, SlidersHorizontal, FileText, Globe, ClipboardList, ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Logo from "../shared/Logo";
 
@@ -15,6 +15,7 @@ const Navbar = () => {
   const { canAccessVerwaltung } = usePermissions(); // Use centralized permission
   const { webapps } = useEnabledWebapps();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [openPluginMenuKey, setOpenPluginMenuKey] = useState<string | null>(null);
   const location = useLocation();
   const userRoles = user?.roles ?? [];
 
@@ -45,7 +46,7 @@ const Navbar = () => {
     );
   }
 
-  const pluginMainItems = getPluginSidebarItems('main', userRoles).filter((item) => {
+  const pluginMainTree = getPluginSidebarTree('main', userRoles).filter((item) => {
     if (item.requiredRole === 'super-admin') return userRoles.includes('super-admin');
     if (item.requiredRole === 'admin') return userRoles.includes('admin') || userRoles.includes('super-admin');
     return true;
@@ -54,6 +55,16 @@ const Navbar = () => {
   const webappItems = webapps;
 
   const toggleMobileMenu = () => setMobileMenuOpen(!mobileMenuOpen);
+
+  useEffect(() => {
+    setOpenPluginMenuKey(null);
+  }, [location.pathname]);
+
+  const openPluginMenu = pluginMainTree.find((item) => item.key === openPluginMenuKey && item.children.length);
+
+  const togglePluginMenu = (itemKey: string) => {
+    setOpenPluginMenuKey((current) => current === itemKey ? null : itemKey);
+  };
 
   return (
     <nav className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50 shadow-sm">
@@ -78,18 +89,40 @@ const Navbar = () => {
                 </div>
               </Link>
             ))}
-            {pluginMainItems.map((item) => (
-              <Link
-                key={item.key}
-                to={item.path}
-                className={`nav-button${location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) ? " nav-button-active" : ""}`}
-              >
-                <div className="flex items-center space-x-1">
-                  <item.icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                </div>
-              </Link>
-            ))}
+            {pluginMainTree.map((item) => {
+              if (!item.children.length) {
+                return (
+                  <Link
+                    key={item.key}
+                    to={item.path}
+                    className={`nav-button${location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) ? " nav-button-active" : ""}`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </div>
+                  </Link>
+                );
+              }
+
+              const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) || item.children.some((child) => location.pathname === child.path || location.pathname.startsWith(`${child.path}/`));
+
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`nav-button${isActive ? ' nav-button-active' : ''}`}
+                  aria-expanded={openPluginMenuKey === item.key}
+                  onClick={() => togglePluginMenu(item.key)}
+                >
+                  <div className="flex items-center space-x-1">
+                    <item.icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform${openPluginMenuKey === item.key ? ' rotate-180' : ''}`} />
+                  </div>
+                </button>
+              );
+            })}
             {webappItems.map((item) => (
               <a
                 key={item.id}
@@ -163,6 +196,34 @@ const Navbar = () => {
           </div>
         </div>
 
+        {openPluginMenu ? (
+          <div className="hidden md:block border-t py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to={openPluginMenu.path}
+                className={`nav-button${location.pathname === openPluginMenu.path || location.pathname.startsWith(`${openPluginMenu.path}/`) ? " nav-button-active" : ""}`}
+              >
+                <div className="flex items-center space-x-1">
+                  <openPluginMenu.icon className="h-4 w-4" />
+                  <span>{openPluginMenu.label}</span>
+                </div>
+              </Link>
+              {openPluginMenu.children.map((child) => (
+                <Link
+                  key={child.key}
+                  to={child.path}
+                  className={`nav-button${location.pathname === child.path || location.pathname.startsWith(`${child.path}/`) ? " nav-button-active" : ""}`}
+                >
+                  <div className="flex items-center space-x-1">
+                    <child.icon className="h-4 w-4" />
+                    <span>{child.label}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {mobileMenuOpen && (
           <div className="md:hidden py-4 space-y-2 pb-4 animate-in fade-in slide-in-from-top border-t">
             {menuItems.map((item) => (
@@ -180,21 +241,77 @@ const Navbar = () => {
                 <span>{item.label}</span>
               </Link>
             ))}
-            {pluginMainItems.map((item) => (
-              <Link
-                key={item.key}
-                to={item.path}
-                className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
-                  location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
-                    ? "bg-primary text-primary-foreground"
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                <item.icon className="h-5 w-5 mr-2" />
-                <span>{item.label}</span>
-              </Link>
-            ))}
+            {pluginMainTree.map((item) => {
+              const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) || item.children.some((child) => location.pathname === child.path || location.pathname.startsWith(`${child.path}/`));
+
+              if (!item.children.length) {
+                return (
+                  <Link
+                    key={item.key}
+                    to={item.path}
+                    className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                    }`}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <item.icon className="h-5 w-5 mr-2" />
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              }
+
+              return (
+                <div key={item.key} className="rounded-md border border-gray-200/80 overflow-hidden">
+                  <button
+                    type="button"
+                    className={`flex w-full items-center px-3 py-3 text-base font-medium ${
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                    }`}
+                    aria-expanded={openPluginMenuKey === item.key}
+                    onClick={() => togglePluginMenu(item.key)}
+                  >
+                    <item.icon className="h-5 w-5 mr-2" />
+                    <span className="flex-1 text-left">{item.label}</span>
+                    <ChevronDown className={`h-5 w-5 transition-transform${openPluginMenuKey === item.key ? ' rotate-180' : ''}`} />
+                  </button>
+                  {openPluginMenuKey === item.key ? (
+                    <div className="border-t bg-gray-50/70">
+                      <Link
+                        to={item.path}
+                        className={`flex items-center px-4 py-3 text-sm font-medium ${
+                          location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
+                            ? "bg-primary/10 text-primary"
+                            : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                        }`}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <item.icon className="h-4 w-4 mr-2" />
+                        <span>{item.label}</span>
+                      </Link>
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.key}
+                          to={child.path}
+                          className={`flex items-center px-4 py-3 text-sm font-medium ${
+                            location.pathname === child.path || location.pathname.startsWith(`${child.path}/`)
+                              ? "bg-primary/10 text-primary"
+                              : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                          }`}
+                          onClick={() => setMobileMenuOpen(false)}
+                        >
+                          <child.icon className="h-4 w-4 mr-2" />
+                          <span>{child.label}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
             {webappItems.map((item) => (
               <a
                 key={item.id}
