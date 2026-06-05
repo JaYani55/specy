@@ -116,4 +116,10 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: any, env: Env, ctx: any) {
+    const { handleFormReminders } = await import('./routes/forms');
+    ctx.waitUntil(handleFormReminders(env));
+  },
+};

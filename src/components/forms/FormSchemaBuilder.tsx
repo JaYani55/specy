@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp, Image as ImageIcon, Info, ListChecks, Paperclip, Plus, Rows3, SquareCheckBig, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, Info, ListChecks, Paperclip, Plus, Rows3, SquareCheckBig, Trash2, X, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -100,10 +100,28 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     icon: ListChecks,
   },
   {
+    label: { en: 'Consent Poll', de: 'Einwilligungs-Abstimmung' },
+    description: { en: 'Standard 4-option sentiment poll.', de: 'Standard 4-Optionen Stimmungsbild.' },
+    type: 'consent-poll',
+    icon: ListChecks,
+  },
+  {
+    label: { en: 'Consent Vote', de: 'Einwilligungs-Votum' },
+    description: { en: 'Official 4-position consensus voting.', de: 'Offizielle 4-Positionen Konsens-Abstimmung.' },
+    type: 'consent-vote',
+    icon: SquareCheckBig,
+  },
+  {
     label: { en: 'Date', de: 'Datum' },
     description: { en: 'Date picker or ISO date input.', de: 'Datumsfeld oder ISO-Datum.' },
     type: 'date',
     icon: Rows3,
+  },
+  {
+    label: { en: 'Participant Name', de: 'Teilnehmer-Name' },
+    description: { en: 'Standard field for poll participant names.', de: 'Standardfeld für Namen von Umfrage-Teilnehmern.' },
+    type: 'text',
+    icon: Users,
   },
 ];
 
@@ -121,6 +139,8 @@ const typeLabels: Record<FormFieldType, string> = {
   date: 'Date',
   'single-select': 'Single Select',
   'multi-select': 'Multi Select',
+  'consent-poll': 'Consent Poll',
+  'consent-vote': 'Consent Vote',
 };
 
 const DEFAULT_UPLOAD_MOUNT = '__default__';
@@ -494,13 +514,25 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
               </div>
 
               {supportsOptions(field.type) && (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <Label>{language === 'en' ? 'Options' : 'Optionen'}</Label>
                   <OptionTagInput
                     options={field.options || []}
                     language={language}
                     onChange={(options) => updateField(index, { options })}
                   />
+                  {(field.type === 'single-select' || field.type === 'multi-select' || field.type === 'select') && (
+                    <div className="flex items-center space-x-2 pt-1">
+                      <Switch
+                        id={`allow-custom-${field.editorId || index}`}
+                        checked={field.allow_custom || false}
+                        onCheckedChange={(checked) => updateField(index, { allow_custom: checked })}
+                      />
+                      <Label htmlFor={`allow-custom-${field.editorId || index}`} className="text-sm font-normal cursor-pointer">
+                        {language === 'en' ? 'Allow custom answer ("Other")' : 'Eigene Antwort erlauben ("Sonstiges")'}
+                      </Label>
+                    </div>
+                  )}
                 </div>
               )}
 

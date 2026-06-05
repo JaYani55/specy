@@ -114,6 +114,7 @@ const withNotificationSettings = async (form: FormRecord): Promise<FormRecord> =
 interface SaveFormInput {
   name: string;
   description?: string;
+  type?: FormRecord['type'];
   schema: FormSchemaDefinition;
   llm_instructions?: string;
   status: FormRecord['status'];
@@ -121,6 +122,10 @@ interface SaveFormInput {
   share_slug?: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  allow_anonymous: boolean;
+  voting_mode?: FormRecord['voting_mode'];
+  deadline_at?: string | null;
+  reminder_interval?: string | null;
   tenant_id?: string | null;
   notification_settings?: {
     notify_owner: boolean;
@@ -143,6 +148,7 @@ const normalizeInput = (input: SaveFormInput, ownerUserId?: string | null) => {
     name: input.name,
     slug,
     description: input.description || null,
+    type: input.type || 'form',
     schema: input.schema,
     llm_instructions: input.llm_instructions || null,
     status: input.status,
@@ -150,8 +156,12 @@ const normalizeInput = (input: SaveFormInput, ownerUserId?: string | null) => {
     share_slug: shareSlug,
     requires_auth: input.requires_auth,
     api_enabled: input.api_enabled,
+    allow_anonymous: input.allow_anonymous,
+    voting_mode: input.voting_mode || 'live',
+    deadline_at: input.deadline_at || null,
+    reminder_interval: input.reminder_interval || null,
     tenant_id: input.tenant_id || null,
-    owner_user_id: ownerUserId ?? undefined,
+    owner_user_id: ownerUserId || null,
     published_at: input.status === 'published' ? new Date().toISOString() : null,
   };
 };
@@ -321,6 +331,7 @@ export const submitFormAnswers = async (
   identifier: string | { tenantName: string; identifier: string },
   payload: {
     answers: Record<string, unknown>;
+    submitter_name?: string;
     source_slug?: string;
     submitted_via?: 'share' | 'api' | 'page';
   },

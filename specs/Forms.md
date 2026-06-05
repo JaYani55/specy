@@ -97,6 +97,11 @@ The `forms` table stores authored forms.
 | `created_at` | `timestamptz` | Creation timestamp |
 | `updated_at` | `timestamptz` | Auto-updated via trigger |
 | `published_at` | `timestamptz` | First/last published timestamp |
+| `type` | `varchar(50)` | `form` \| `poll` |
+| `deadline_at` | `timestamptz` | Optional submission cutoff |
+| `voting_mode` | `varchar(50)` | `anonymous` \| `name_only` \| `auth` |
+| `reminder_interval` | `varchar(50)` | `off` \| `hourly` \| `daily` \| `weekly` |
+| `reminders_enabled` | `boolean` | Enables automated staff reminders |
 
 ### `public.forms_answers`
 
@@ -107,6 +112,7 @@ The `forms_answers` table stores all submitted answers.
 | `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
 | `form_id` | `uuid` FK | References `public.forms(id)` |
 | `submitted_by` | `uuid` | Optional `auth.users.id` when authenticated |
+| `submitter_name` | `text` | Display name for non-auth polls |
 | `answers` | `jsonb` | Submitted values |
 | `source_slug` | `text` | Where the form was filled, e.g. a page slug or share slug |
 | `submitted_via` | `varchar(50)` | `share` \| `api` \| `page` |
@@ -167,6 +173,8 @@ Supported field types in the first implementation:
 - `select`
 - `radio`
 - `date`
+- `consent-poll` *(special consensus poll configuration block)*
+- `consent-vote` *(rendering component for the public vote interface)*
 
 Field properties:
 
@@ -292,6 +300,47 @@ The Worker API exposes:
 - `POST /api/forms/share/:shareSlug/answers`
 
 Where `:identifier` can be either the form UUID or the internal slug.
+
+---
+
+## Poll Feature
+
+The Poll feature is a specialized extension of the Forms system designed for quick consensus-finding and team coordination.
+
+### Specialized Voting Modes
+
+Polls can operate in three identity modes:
+
+1. **Anonymous**: No identifying information is collected.
+2. **Name Only**: Submitter provides a display name but no authentication is required.
+3. **Authenticated**: Requires a Supabase session (standard for internal staff polls).
+
+### Consensus Modeling (`consent-poll`)
+
+Polls use a "Consensus" model instead of simple radio buttons. Options are configured in a specialized `consent-poll` field:
+
+- Each option can be flagged with `is_ideal`, `is_acceptable`, or `is_forced`.
+- Respondents use the `consent-vote` interface to express their position on each option.
+
+### Deadlines and Automation
+
+Polls support hard deadlines (`deadline_at`). Once the deadline passes:
+- The share page closes for new submissions.
+- Final results are calculated and visualized.
+
+### Staff Reminders
+
+When `reminders_enabled` is true, the Cloudflare Worker runs a `scheduled` job to identify staff members who haven't responded yet:
+- Checks `reminder_interval` (Hourly, Daily, Weekly).
+- Cross-references `public.user_profile` with `public.forms_answers`.
+- Batches and sends email notifications via the mail delivery system.
+
+### Results Visualization
+
+All forms (and polls specifically) include a `/results` dashboard:
+- **Pie Charts**: Distribution of simple radio/select responses.
+- **Participation List**: Table of responses by name/user.
+- **Consensus Matrix**: Aggregated positioning for consent-based polls.
 
 ---
 

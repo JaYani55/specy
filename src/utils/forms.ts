@@ -32,6 +32,8 @@ const VALID_FORM_FIELD_TYPES = new Set<FormFieldType>([
   'select',
   'radio',
   'date',
+  'consent-poll',
+  'consent-vote',
 ]);
 
 const DISPLAY_ONLY_FORM_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);

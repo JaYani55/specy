@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ClipboardList, ExternalLink, FilePlus2, Loader2, MessageSquare, Pencil, Trash2 } from 'lucide-react';
+import { ClipboardList, ExternalLink, FilePlus2, Loader2, MessageSquare, Pencil, Trash2, BarChart4 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
@@ -73,6 +73,10 @@ const Forms = () => {
           <FilePlus2 className="mr-2 h-4 w-4" />
           {language === 'en' ? 'Create form' : 'Formular erstellen'}
         </Button>
+        <Button variant="outline" onClick={() => navigate('/forms/new?type=poll')}>
+          <FilePlus2 className="mr-2 h-4 w-4" />
+          {language === 'en' ? 'Create poll' : 'Umfrage erstellen'}
+        </Button>
       </div>
     </AdminCard>
   );
@@ -85,10 +89,16 @@ const Forms = () => {
         : 'Erstelle wiederverwendbare Formulare, veröffentliche direkte Share-Links und prüfe eingegangene Antworten.'}
       icon={ClipboardList}
       actions={(
-        <Button onClick={() => navigate('/forms/new')}>
-          <FilePlus2 className="mr-2 h-4 w-4" />
-          {language === 'en' ? 'New Form' : 'Neues Formular'}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/forms/new?type=poll')}>
+            <FilePlus2 className="mr-2 h-4 w-4" />
+            {language === 'en' ? 'New Poll' : 'Neue Umfrage'}
+          </Button>
+          <Button onClick={() => navigate('/forms/new')}>
+            <FilePlus2 className="mr-2 h-4 w-4" />
+            {language === 'en' ? 'New Form' : 'Neues Formular'}
+          </Button>
+        </div>
       )}
     >
       {isLoading ? (
@@ -104,13 +114,15 @@ const Forms = () => {
             const sharePath = form.share_enabled && form.share_slug && currentTenantInfo
               ? buildFormSharePath(currentTenantInfo.slug, form.share_slug)
               : null;
+            
+            const resultsPath = sharePath ? `${sharePath}/results` : null;
 
             return (
               <AdminCard
                 key={form.id}
                 title={form.name}
-                icon={ClipboardList}
-                iconColor="from-emerald-500 to-teal-600"
+                icon={form.type === 'poll' ? BarChart4 : ClipboardList}
+                iconColor={form.type === 'poll' ? "from-blue-500 to-cyan-600" : "from-emerald-500 to-teal-600"}
                 actions={(
                   <Badge variant={statusVariant[form.status]}>{form.status}</Badge>
                 )}
@@ -127,6 +139,11 @@ const Forms = () => {
                     )}
                     <Badge variant="outline">API {form.api_enabled ? 'on' : 'off'}</Badge>
                     <Badge variant="outline">{form.requires_auth ? (language === 'en' ? 'Auth required' : 'Mit Anmeldung') : (language === 'en' ? 'Public' : 'Öffentlich')}</Badge>
+                    {form.type === 'poll' && (
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-700 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300">
+                        {language === 'en' ? 'Poll' : 'Umfrage'}
+                      </Badge>
+                    )}
                     {sharePath && (
                       <Badge variant="outline">{sharePath}</Badge>
                     )}
@@ -145,11 +162,19 @@ const Forms = () => {
                         {language === 'en' ? 'Answers' : 'Antworten'}
                       </Link>
                     </Button>
+                    {resultsPath && form.type === 'poll' && (
+                      <Button asChild variant="outline" size="sm">
+                        <a href={resultsPath} target="_blank" rel="noopener noreferrer">
+                          <BarChart4 className="mr-2 h-4 w-4" />
+                          {language === 'en' ? 'Results' : 'Ergebnisse'}
+                        </a>
+                      </Button>
+                    )}
                     {sharePath && (
                       <Button asChild variant="outline" size="sm">
                         <a href={sharePath} target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="mr-2 h-4 w-4" />
-                          {language === 'en' ? 'Open share page' : 'Share-Seite öffnen'}
+                          {language === 'en' ? 'Open' : 'Öffnen'}
                         </a>
                       </Button>
                     )}

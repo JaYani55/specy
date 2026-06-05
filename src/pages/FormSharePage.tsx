@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, Loader2, Lock, Paperclip, Upload, X } from 'lucide-react';
+import { AlertCircle, Loader2, Lock, Paperclip, Upload, X, Clock, PieChart as PieChartIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import NotFound from '@/pages/NotFound';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getPublicFormByShareSlug, submitFormAnswers, uploadFormFile } from '@/services/formService';
 import type { FormAnswerValue, FormFieldDefinition, FormUploadedFileValue, PublicFormDefinition } from '@/types/forms';
@@ -159,6 +161,13 @@ const FormSharePage = () => {
     const missingRequiredField = formDefinition.fields.find((field) => {
       if (!requiredFieldNames.has(field.name)) return false;
       if (field.type === 'checkbox') return answers[field.name] !== true;
+      if (field.type === 'consent-vote' || field.type === 'consent-poll') {
+        const val = (answers[field.name] as any);
+        if (!val || !val.position) return true;
+        if (field.type === 'consent-vote' && (val.position === 'disagree' || val.position === 'block') && !val.reason?.trim()) return true;
+        if (field.type === 'consent-poll' && val.position === 'veto' && !val.reason?.trim()) return true;
+        return false;
+      }
       return answers[field.name] === null || answers[field.name] === '';
     });
 
@@ -184,27 +193,70 @@ const FormSharePage = () => {
     }
   };
 
+  const isExpired = formDefinition.form.deadline_at && new Date(formDefinition.form.deadline_at) < new Date();
+  const isPoll = formDefinition.form.type === 'poll';
+  const showResultsLink = isPoll && (formDefinition.form.voting_mode === 'live' || isExpired);
+
   return (
     <div className="min-h-screen bg-muted/20 px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <Card>
           <CardHeader>
-            <CardTitle>{formDefinition.form.name}</CardTitle>
-            {formDefinition.form.description && <CardDescription>{formDefinition.form.description}</CardDescription>}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle>{formDefinition.form.name}</CardTitle>
+                {formDefinition.form.description && <CardDescription>{formDefinition.form.description}</CardDescription>}
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                {isExpired && (
+                  <Badge variant="destructive">
+                    {language === 'en' ? 'Poll Closed' : 'Umfrage beendet'}
+                  </Badge>
+                )}
+                {showResultsLink && (
+                  <Button asChild variant="link" size="sm" className="h-auto p-0">
+                    <Link to={`/forms/share/${tenantName}/${formShareSlug}/results`} className="flex items-center gap-1">
+                      <PieChartIcon className="h-4 w-4" />
+                      {language === 'en' ? 'View Results' : 'Ergebnisse ansehen'}
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-6">
             {submitted ? (
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>{language === 'en' ? 'Submission received' : 'Antwort erhalten'}</AlertTitle>
+              <div className="space-y-6">
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>{language === 'en' ? 'Submission received' : 'Antwort erhalten'}</AlertTitle>
+                  <AlertDescription>
+                    {language === 'en'
+                      ? 'Thank you. Your answer has been stored successfully.'
+                      : 'Danke. Deine Antwort wurde erfolgreich gespeichert.'}
+                  </AlertDescription>
+                </Alert>
+                {showResultsLink && (
+                  <div className="flex justify-center">
+                    <Button asChild variant="outline">
+                      <Link to={`/forms/share/${tenantName}/${formShareSlug}/results`}>
+                        <PieChartIcon className="mr-2 h-4 w-4" />
+                        {language === 'en' ? 'Go to Results' : 'Zu den Ergebnissen'}
+                      </Link>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : isExpired ? (
+              <Alert variant="destructive">
+                <Clock className="h-4 w-4" />
+                <AlertTitle>{language === 'en' ? 'Closed' : 'Beendet'}</AlertTitle>
                 <AlertDescription>
-                  {language === 'en'
-                    ? 'Thank you. Your answer has been stored successfully.'
-                    : 'Danke. Deine Antwort wurde erfolgreich gespeichert.'}
+                  {language === 'en' ? 'This poll is no longer accepting responses.' : 'Diese Umfrage nimmt keine weiteren Antworten mehr an.'}
                 </AlertDescription>
               </Alert>
             ) : (
-              <>
+              <div className="space-y-6">
                 {formDefinition.fields.map((field) => (
                   <div key={field.name} className="space-y-2">
                     {!isDisplayOnlyFormFieldType(field.type) && (
@@ -227,6 +279,130 @@ const FormSharePage = () => {
 
                     {field.type === 'image' && (
                       <FormShareImageField field={field} language={language} />
+                    )}
+
+                    {field.type === 'consent-poll' && (
+                      <div className="space-y-4 rounded-xl border p-4 shadow-sm">
+                        {field.content && (
+                          <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg bg-muted/30 p-4">
+                            <MarkdownContent content={field.content} />
+                          </div>
+                        )}
+                        
+                        <div className="space-y-3">
+                          <Label className="text-base font-semibold">
+                            {language === 'en' ? 'Your Sentiment' : 'Dein Stimmungsbild'}
+                          </Label>
+                          <RadioGroup
+                            value={(answers[field.name] as any)?.position || ''}
+                            onValueChange={(val) => setAnswers(curr => ({
+                              ...curr,
+                              [field.name]: { ...(curr[field.name] as any || {}), position: val }
+                            }))}
+                            className="grid grid-cols-2 gap-4 md:grid-cols-4"
+                          >
+                            {[
+                              { id: 'positive', label: language === 'en' ? 'Positive' : 'Positiv', color: 'text-green-600' },
+                              { id: 'neutral', label: language === 'en' ? 'Neutral/Wait' : 'Neutral/Warten', color: 'text-yellow-600' },
+                              { id: 'critical', label: language === 'en' ? 'Critical' : 'Kritisch', color: 'text-orange-600' },
+                              { id: 'veto', label: language === 'en' ? 'Veto' : 'Veto', color: 'text-red-500 font-black' }
+                            ].map((pos) => (
+                              <div key={pos.id} className="relative">
+                                <RadioGroupItem
+                                  value={pos.id}
+                                  id={`${field.name}-${pos.id}`}
+                                  className="peer sr-only"
+                                />
+                                <Label
+                                  htmlFor={`${field.name}-${pos.id}`}
+                                  className={`flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer`}
+                                >
+                                  <span className={`text-sm font-bold ${pos.color}`}>{pos.label}</span>
+                                </Label>
+                              </div>
+                            ))}
+                          </RadioGroup>
+                        </div>
+
+                        {((answers[field.name] as any)?.position === 'veto') && (
+                          <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                            <Label htmlFor={`${field.name}-reason`} className="text-destructive font-medium">
+                              {language === 'en' ? 'Reason (Required for Veto)' : 'Begründung (Erforderlich bei Veto)'}
+                            </Label>
+                            <Textarea
+                              id={`${field.name}-reason`}
+                              placeholder={language === 'en' ? 'Please explain your veto...' : 'Bitte erkläre dein Veto...'}
+                              value={(answers[field.name] as any)?.reason || ''}
+                              onChange={(e) => setAnswers(curr => ({
+                                ...curr,
+                                [field.name]: { ...(curr[field.name] as any || {}), reason: e.target.value }
+                              }))}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {field.type === 'consent-vote' && (
+                      <div className="space-y-4 rounded-xl border p-4 shadow-sm">
+                        {field.content && (
+                          <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg bg-muted/30 p-4">
+                            <MarkdownContent content={field.content} />
+                          </div>
+                        )}
+                        
+                        <div className="space-y-3">
+                          <Label className="text-base font-semibold">
+                            {language === 'en' ? 'Your Position' : 'Deine Position'}
+                          </Label>
+                          <RadioGroup
+                            value={(answers[field.name] as any)?.position || ''}
+                            onValueChange={(val) => setAnswers(curr => ({
+                              ...curr,
+                              [field.name]: { ...(curr[field.name] as any || {}), position: val }
+                            }))}
+                            className="grid grid-cols-2 gap-4 md:grid-cols-4"
+                          >
+                            {[
+                              { id: 'agree', label: language === 'en' ? 'Agree' : 'Zustimmen', color: 'text-green-600' },
+                              { id: 'abstain', label: language === 'en' ? 'Abstain' : 'Enthalten', color: 'text-yellow-600' },
+                              { id: 'disagree', label: language === 'en' ? 'Disagree' : 'Ablehnen', color: 'text-orange-600' },
+                              { id: 'block', label: language === 'en' ? 'Block' : 'Blockieren', color: 'text-red-600' }
+                            ].map((pos) => (
+                              <div key={pos.id} className="relative">
+                                <RadioGroupItem
+                                  value={pos.id}
+                                  id={`${field.name}-${pos.id}`}
+                                  className="peer sr-only"
+                                />
+                                <Label
+                                  htmlFor={`${field.name}-${pos.id}`}
+                                  className={`flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer`}
+                                >
+                                  <span className={`text-sm font-bold ${pos.color}`}>{pos.label}</span>
+                                </Label>
+                              </div>
+                            ))}
+                          </RadioGroup>
+                        </div>
+
+                        {((answers[field.name] as any)?.position === 'disagree' || (answers[field.name] as any)?.position === 'block') && (
+                          <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                            <Label htmlFor={`${field.name}-reason`} className="text-destructive font-medium">
+                              {language === 'en' ? 'Reason (Required for Disagree/Block)' : 'Begründung (Erforderlich bei Ablehnung/Blockade)'}
+                            </Label>
+                            <Textarea
+                              id={`${field.name}-reason`}
+                              placeholder={language === 'en' ? 'Please explain your concerns...' : 'Bitte erkläre deine Bedenken...'}
+                              value={(answers[field.name] as any)?.reason || ''}
+                              onChange={(e) => setAnswers(curr => ({
+                                ...curr,
+                                [field.name]: { ...(curr[field.name] as any || {}), reason: e.target.value }
+                              }))}
+                            />
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {(field.type === 'text' || field.type === 'email' || field.type === 'date' || field.type === 'number') && (
@@ -320,39 +496,65 @@ const FormSharePage = () => {
                     )}
 
                     {(field.type === 'select' || field.type === 'radio') && field.options && (
-                      <Select
-                        value={String(answers[field.name] ?? '')}
-                        onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={field.placeholder || field.label} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {field.options.map((option) => (
-                            <SelectItem key={option} value={option}>{option}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="space-y-3">
+                        <Select
+                          value={field.options.includes(String(answers[field.name] ?? '')) ? String(answers[field.name] ?? '') : (answers[field.name] ? '__other__' : '')}
+                          onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={field.placeholder || field.label} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {field.options.map((option) => (
+                              <SelectItem key={option} value={option}>{option}</SelectItem>
+                            ))}
+                            {field.allow_custom && (
+                              <SelectItem value="__other__">{language === 'en' ? 'Other...' : 'Sonstiges...'}</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {field.allow_custom && (answers[field.name] !== null && !field.options.includes(String(answers[field.name])) || answers[field.name] === '') && (
+                          <Input
+                            placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
+                            value={String(answers[field.name] ?? '')}
+                            onChange={(e) => setAnswers(curr => ({ ...curr, [field.name]: e.target.value }))}
+                            className="animate-in fade-in slide-in-from-top-1"
+                          />
+                        )}
+                      </div>
                     )}
 
                     {field.type === 'single-select' && field.options && (
-                      <Select
-                        value={String(answers[field.name] ?? '')}
-                        onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={field.placeholder || field.label} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {field.options.map((option) => (
-                            <SelectItem key={option} value={option}>{option}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="space-y-3">
+                        <Select
+                          value={field.options.includes(String(answers[field.name] ?? '')) ? String(answers[field.name] ?? '') : (answers[field.name] ? '__other__' : '')}
+                          onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={field.placeholder || field.label} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {field.options.map((option) => (
+                              <SelectItem key={option} value={option}>{option}</SelectItem>
+                            ))}
+                            {field.allow_custom && (
+                              <SelectItem value="__other__">{language === 'en' ? 'Other...' : 'Sonstiges...'}</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {field.allow_custom && (answers[field.name] !== null && !field.options.includes(String(answers[field.name])) || (answers[field.name] === '' && field.options.every(o => o !== ''))) && (
+                          <Input
+                            placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
+                            value={String(answers[field.name] ?? '')}
+                            onChange={(e) => setAnswers(curr => ({ ...curr, [field.name]: e.target.value }))}
+                            className="animate-in fade-in slide-in-from-top-1"
+                          />
+                        )}
+                      </div>
                     )}
 
                     {field.type === 'multi-select' && field.options && (
-                      <div className="space-y-2 rounded-md border p-3">
+                      <div className="space-y-3 rounded-md border p-3">
                         {field.options.map((option) => {
                           const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
                           const checked = currentValues.includes(option);
@@ -368,10 +570,48 @@ const FormSharePage = () => {
                                   setAnswers((current) => ({ ...current, [field.name]: updatedValues }));
                                 }}
                               />
-                              <Label htmlFor={`${field.name}-${option}`} className="mb-0">{option}</Label>
+                              <Label htmlFor={`${field.name}-${option}`} className="mb-0 cursor-pointer">{option}</Label>
                             </div>
                           );
                         })}
+                        {field.allow_custom && (
+                          <div className="space-y-3 pt-2 border-t mt-2">
+                            <div className="flex items-center gap-3">
+                              <Checkbox
+                                id={`${field.name}-other-toggle`}
+                                checked={Array.isArray(answers[field.name]) && (answers[field.name] as string[]).some(v => !field.options?.includes(v))}
+                                onCheckedChange={(checked) => {
+                                  if (!checked) {
+                                    // Remove any value that isn't in options
+                                    const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
+                                    setAnswers(curr => ({ ...curr, [field.name]: currentValues.filter(v => field.options?.includes(v)) }));
+                                  } else {
+                                    // Just visual - input handles the actual value
+                                  }
+                                }}
+                              />
+                              <Label htmlFor={`${field.name}-other-toggle`} className="mb-0 cursor-pointer">
+                                {language === 'en' ? 'Other...' : 'Sonstiges...'}
+                              </Label>
+                            </div>
+                            {(Array.isArray(answers[field.name]) && (answers[field.name] as string[]).some(v => !field.options?.includes(v)) || (document.getElementById(`${field.name}-other-toggle`) as HTMLInputElement)?.checked) && (
+                              <Input
+                                placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
+                                value={(answers[field.name] as string[] || []).find(v => !field.options?.includes(v)) || ''}
+                                onChange={(e) => {
+                                  const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
+                                  const baseValues = currentValues.filter(v => field.options?.includes(v));
+                                  if (e.target.value.trim()) {
+                                    setAnswers(curr => ({ ...curr, [field.name]: [...baseValues, e.target.value] }));
+                                  } else {
+                                    setAnswers(curr => ({ ...curr, [field.name]: baseValues }));
+                                  }
+                                }}
+                                className="animate-in fade-in slide-in-from-top-1"
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -381,7 +621,7 @@ const FormSharePage = () => {
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   {language === 'en' ? 'Submit' : 'Absenden'}
                 </Button>
-              </>
+              </div>
             )}
           </CardContent>
         </Card>

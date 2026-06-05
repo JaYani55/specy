@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Bell, CheckCircle2, ClipboardList, Loader2, Save, Users, Wand2 } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { AlertCircle, ArrowLeft, Bell, CheckCircle2, ClipboardList, Loader2, Save, Users, Wand2, Clock, BarChart4, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { FormSchemaBuilder } from '@/components/forms/FormSchemaBuilder';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
@@ -63,19 +63,25 @@ const withEditorIds = (fields: FormFieldDefinition[]): FormFieldDefinition[] => 
 
 const FormEditor = () => {
   const { formId } = useParams<{ formId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { language } = useTheme();
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(formId));
   const [isSaving, setIsSaving] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [type, setType] = useState<FormRecord['type']>(searchParams.get('type') === 'poll' ? 'poll' : 'form');
   const [schemaText, setSchemaText] = useState(JSON.stringify(DEFAULT_SCHEMA, null, 2));
   const [llmInstructions, setLlmInstructions] = useState('');
   const [status, setStatus] = useState<FormRecord['status']>('published');
-  const [shareEnabled, setShareEnabled] = useState(false);
+  const [shareEnabled, setShareEnabled] = useState(searchParams.get('type') === 'poll');
   const [shareSlug, setShareSlug] = useState('');
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [apiEnabled, setApiEnabled] = useState(true);
+  const [allowAnonymous, setAllowAnonymous] = useState(false);
+  const [votingMode, setVotingMode] = useState<FormRecord['voting_mode']>('live');
+  const [deadlineAt, setDeadlineAt] = useState<string>('');
+  const [reminderInterval, setReminderInterval] = useState<string | null>(null);
   const [tenantId, setTenantId] = useState('');
   const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
@@ -88,6 +94,23 @@ const FormEditor = () => {
   const [staffOptionsLoading, setStaffOptionsLoading] = useState(false);
   const [builderFields, setBuilderFields] = useState<FormFieldDefinition[]>(withEditorIds(parseFormSchema(JSON.stringify(DEFAULT_SCHEMA)).fields));
   const schemaSyncSourceRef = useRef<'builder' | 'json' | 'load'>('load');
+
+  const ensureParticipantNameField = (fields: FormFieldDefinition[], isPoll: boolean) => {
+    const hasNameField = fields.some(f => f.name === 'participant_name');
+    if (isPoll && !hasNameField) {
+      const nameField: FormFieldDefinition = {
+        editorId: createEditorFieldId(),
+        name: 'participant_name',
+        type: 'text',
+        label: language === 'en' ? 'Participant Name' : 'Name des Teilnehmer',
+        placeholder: language === 'en' ? 'e.g. Max Mustermann' : 'z.B. Max Mustermann',
+        required: true,
+        order: -1, // Put at top
+      };
+      return [nameField, ...fields];
+    }
+    return fields;
+  };
 
   useEffect(() => {
     const loadTenantOptions = async () => {
@@ -134,6 +157,7 @@ const FormEditor = () => {
         const formattedSchema = formatFormSchema(form.schema);
         setName(form.name);
         setDescription(form.description ?? '');
+        setType(form.type || 'form');
         schemaSyncSourceRef.current = 'load';
         setSchemaText(formattedSchema);
         setBuilderFields(withEditorIds(parseFormSchema(formattedSchema).fields));
@@ -143,6 +167,10 @@ const FormEditor = () => {
         setShareSlug(form.share_slug ?? '');
         setRequiresAuth(form.requires_auth);
         setApiEnabled(form.api_enabled);
+        setAllowAnonymous(form.allow_anonymous);
+        setVotingMode(form.voting_mode || 'live');
+        setDeadlineAt(form.deadline_at ? form.deadline_at.substring(0, 16) : '');
+        setReminderInterval(form.reminder_interval);
         setTenantId(form.tenant_id ?? '');
         setNotifyOwner(Boolean(form.notification_settings?.notify_owner));
         setNotifyStaff(Boolean(form.notification_settings?.notify_staff));
@@ -203,6 +231,7 @@ const FormEditor = () => {
       const payload = {
         name,
         description,
+        type,
         schema: parsedSchema.normalizedSchema,
         llm_instructions: llmInstructions,
         status,
@@ -210,6 +239,10 @@ const FormEditor = () => {
         share_slug: shareEnabled ? shareSlug || name : null,
         requires_auth: requiresAuth,
         api_enabled: apiEnabled,
+        allow_anonymous: allowAnonymous,
+        voting_mode: votingMode,
+        deadline_at: deadlineAt ? new Date(deadlineAt).toISOString() : null,
+        reminder_interval: reminderInterval,
         tenant_id: tenantId || null,
         notification_settings: {
           notify_owner: notifyOwner,
@@ -284,17 +317,47 @@ const FormEditor = () => {
                 <Label htmlFor="form-name">{language === 'en' ? 'Name' : 'Name'}</Label>
                 <Input id="form-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Lead Capture" />
               </div>
-              <div className="space-y-2">
-                <Label>{language === 'en' ? 'Status' : 'Status'}</Label>
-                <Select value={status} onValueChange={(value) => setStatus(value as FormRecord['status'])}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="published">Published</SelectItem>
-                    <SelectItem value="archived">Archived</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-4 grid-cols-2">
+                <div className="space-y-2">
+                  <Label>{language === 'en' ? 'Type' : 'Typ'}</Label>
+                  <Select value={type} onValueChange={(value) => {
+                    const newType = value as FormRecord['type'];
+                    setType(newType);
+                    if (newType === 'poll') {
+                      setShareEnabled(true);
+                    }
+                  }}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="form">
+                        <div className="flex items-center gap-2">
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          {language === 'en' ? 'Standard Form' : 'Standard-Formular'}
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="poll">
+                        <div className="flex items-center gap-2">
+                          <BarChart4 className="h-3.5 w-3.5" />
+                          {language === 'en' ? 'Poll / Vote' : 'Abstimmung / Poll'}
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{language === 'en' ? 'Status' : 'Status'}</Label>
+                  <Select value={status} onValueChange={(value) => setStatus(value as FormRecord['status'])}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="published">Published</SelectItem>
+                      <SelectItem value="archived">Archived</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
@@ -302,6 +365,65 @@ const FormEditor = () => {
               <Label htmlFor="form-description">{language === 'en' ? 'Description' : 'Beschreibung'}</Label>
               <Textarea id="form-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
             </div>
+
+            {type === 'poll' && (
+              <div className="rounded-2xl border bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-5 dark:from-slate-950 dark:via-slate-900 dark:to-slate-900">
+                <div className="mb-4 flex items-start gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 text-white shadow-sm">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      {language === 'en' ? 'Participant Configuration' : 'Teilnehmer-Konfiguration'}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'en'
+                        ? 'Define how names are collected. Turning on anonymous mode makes the name field optional.'
+                        : 'Definiere, wie Namen erfasst werden. Der anonyme Modus macht das Namensfeld optional.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-4 rounded-xl border bg-background/80 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>{language === 'en' ? 'Anonymous Mode' : 'Anonymer Modus'}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {language === 'en' ? 'Participants remain anonymous.' : 'Teilnehmer bleiben anonym.'}
+                        </p>
+                      </div>
+                      <Switch 
+                        checked={allowAnonymous} 
+                        onCheckedChange={(checked) => {
+                          setAllowAnonymous(checked);
+                          // Sync with participant_name field in schema if it exists
+                          const updatedFields = builderFields.map(f => 
+                            f.name === 'participant_name' ? { ...f, required: !checked } : f
+                          );
+                          handleBuilderChange(updatedFields);
+                        }} 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-center rounded-xl border border-dashed p-4">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        handleBuilderChange(ensureParticipantNameField(builderFields, true));
+                        toast.success(language === 'en' ? 'Name field added to schema.' : 'Namensfeld zum Schema hinzugefügt.');
+                      }}
+                      disabled={builderFields.some(f => f.name === 'participant_name')}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      {language === 'en' ? 'Add Standard Name Field' : 'Standard Namensfeld hinzufügen'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
@@ -490,6 +612,95 @@ const FormEditor = () => {
                 </div>
               </div>
             </div>
+
+            {type === 'poll' && (
+              <div className="rounded-2xl border bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-5 dark:from-slate-950 dark:via-slate-900 dark:to-slate-900">
+                <div className="mb-4 flex items-start gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 text-white shadow-sm">
+                    <Clock className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      {language === 'en' ? 'Poll settings' : 'Abstimmungs-Einstellungen'}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'en'
+                        ? 'Configure logic for deadlines, voting modes and automated reminders.'
+                        : 'Konfiguriere Deadlines, Abstimmungs-Modi und automatisierte Erinnerungen.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-3 rounded-xl border bg-background/80 p-4">
+                    <Label>{language === 'en' ? 'Voting Mode' : 'Abstimmungs-Modus'}</Label>
+                    <Select value={votingMode} onValueChange={(v) => setVotingMode(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="live">
+                          <div className="flex flex-col text-left">
+                            <span className="font-medium">{language === 'en' ? 'Live Results' : 'Ergebnisse sofort sichtbar'}</span>
+                            <span className="text-xs text-muted-foreground">{language === 'en' ? 'Participants see results after voting.' : 'Teilnehmer sehen Ergebnisse sofort nach Abgabe.'}</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="deadline">
+                          <div className="flex flex-col text-left">
+                            <span className="font-medium">{language === 'en' ? 'Hidden until Deadline' : 'Sichtbar nach Frist'}</span>
+                            <span className="text-xs text-muted-foreground">{language === 'en' ? 'Results only published after the deadline ends.' : 'Ergebnisse werden erst nach Ablauf der Frist veröffentlicht.'}</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border bg-background/80 p-4">
+                    <Label>{language === 'en' ? 'Deadline' : 'Frist / Deadline'}</Label>
+                    <Input 
+                      type="datetime-local" 
+                      value={deadlineAt} 
+                      onChange={(e) => setDeadlineAt(e.target.value)} 
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      {language === 'en' ? 'Optional. If set, no votes will be accepted after this date.' : 'Optional. Wenn gesetzt, werden nach diesem Datum keine Stimmen mehr angenommen.'}
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-3 rounded-xl border bg-background/80 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>{language === 'en' ? 'E-Mail Reminders' : 'E-Mail Erinnerungen'}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {language === 'en' ? 'Send automated reminders to staff who haven\'t voted yet.' : 'Sende automatische Erinnerungen an Mitarbeiter, die noch nicht abgestimmt haben.'}
+                        </p>
+                      </div>
+                      <Select 
+                        value={reminderInterval || 'off'} 
+                        onValueChange={(v) => setReminderInterval(v === 'off' ? null : v)}
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="off">{language === 'en' ? 'No reminders' : 'Keine Erinnerungen'}</SelectItem>
+                          <SelectItem value="24h">{language === 'en' ? 'Every 24 hours' : 'Alle 24 Stunden'}</SelectItem>
+                          <SelectItem value="48h">{language === 'en' ? 'Every 48 hours' : 'Alle 48 Stunden'}</SelectItem>
+                          <SelectItem value="72h">{language === 'en' ? 'Every 72 hours' : 'Alle 3 Tage'}</SelectItem>
+                          <SelectItem value="7d">{language === 'en' ? 'Weekly' : 'Wöchentlich'}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {reminderInterval && !notifyStaff && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 font-medium bg-amber-50 p-2 rounded border border-amber-200">
+                        <AlertCircle className="h-3 w-3" />
+                        {language === 'en' ? 'Reminders require "Notify staff recipients" or "Notify form owner" to be enabled.' : 'Erinnerungen benötigen aktivierte "Mitarbeiter benachrichtigen" oder "Formularbesitzer benachrichtigen" Einstellungen.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="llm-instructions">LLM Instructions</Label>

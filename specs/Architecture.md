@@ -47,7 +47,7 @@ The application has been migrated to a **Supabase-only architecture**. Historica
 ### Core Backend (Supabase)
 -   **Authentication (Supabase Auth):** Handles user sessions, registration, and role-based access control (RBAC). 
 -   **Product & Page Management:** Manages core product data (`mentorbooking_products`) and dynamic page content stored as JSONB in the `products` table.
--   **Forms Management:** Stores reusable form definitions in `forms` and submissions in `forms_answers`, including share-link, auth, and agent/API access settings.
+-   **Forms Management:** Stores reusable form definitions in `forms` and submissions in `forms_answers`, including share-link, auth, and agent/API access settings. **Poll System Extension:** Includes specialized data models for consensus voting, deadline management, and automated staff reminders via Cloudflare Workers `scheduled` handlers.
 -   **Communication Logs & API Observability:** Request/response traffic for the schema API, config routes, forms API, and MCP transport is captured in `agent_logs` by the Worker-side `agentLogger` middleware. The super-admin-only API Administration page (`src/pages/VerwaltungApi.tsx`) acts as the operator surface for this feature: it documents the loggable endpoints, exposes filtering/search for the route catalog, and now provides per-endpoint verbosity settings backed by `system_config` instead of a dedicated settings table.
 -   **Mentor & Staff Management:** 
     -   Supabase now acts as the primary source of truth for all users.

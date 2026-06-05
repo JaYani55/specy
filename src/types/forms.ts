@@ -1,5 +1,8 @@
 export type FormStatus = 'published' | 'archived';
 
+export type FormType = 'form' | 'poll';
+export type VotingMode = 'live' | 'deadline';
+
 export type FormFieldType =
   | 'text'
   | 'textarea'
@@ -13,7 +16,9 @@ export type FormFieldType =
   | 'multi-select'
   | 'select'
   | 'radio'
-  | 'date';
+  | 'date'
+  | 'consent-poll'
+  | 'consent-vote';
 
 export interface FormUploadedFileValue {
   name: string;
@@ -44,6 +49,7 @@ export interface FormFieldDefinition {
   width?: number;
   height?: number;
   options?: string[];
+  allow_custom?: boolean;
   upload_provider?: string;
   upload_mount?: string;
   upload_bucket?: string;
@@ -79,6 +85,7 @@ export interface FormRecord {
   name: string;
   slug: string;
   description: string | null;
+  type: FormType;
   schema: FormSchemaDefinition;
   llm_instructions: string | null;
   status: FormStatus;
@@ -86,6 +93,11 @@ export interface FormRecord {
   share_slug: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  allow_anonymous: boolean;
+  voting_mode: VotingMode;
+  deadline_at: string | null;
+  reminder_interval: string | null;
+  reminder_sent_at: string | null;
   tenant_id?: string | null;
   owner_user_id?: string | null;
   notification_settings?: FormNotificationSettings | null;
@@ -98,6 +110,7 @@ export interface FormAnswerRecord {
   id: string;
   form_id: string;
   submitted_by: string | null;
+  submitter_name: string | null;
   answers: Record<string, FormAnswerValue>;
   source_slug: string | null;
   submitted_via: 'share' | 'api' | 'page';
@@ -107,7 +120,7 @@ export interface FormAnswerRecord {
 }
 
 export interface PublicFormDefinition {
-  form: Pick<FormRecord, 'id' | 'name' | 'slug' | 'description' | 'status' | 'share_enabled' | 'share_slug' | 'requires_auth' | 'api_enabled'>;
+  form: Pick<FormRecord, 'id' | 'name' | 'slug' | 'description' | 'type' | 'status' | 'share_enabled' | 'share_slug' | 'requires_auth' | 'api_enabled' | 'allow_anonymous' | 'voting_mode' | 'deadline_at'>;
   fields: FormFieldDefinition[];
   llm_instructions: string | null;
 }

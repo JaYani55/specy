@@ -31,6 +31,7 @@ import Forms from "./pages/Forms";
 import FormEditor from "./pages/FormEditor";
 import FormAnswers from "./pages/FormAnswers";
 import FormSharePage from "./pages/FormSharePage";
+import PollResultsPage from "./pages/PollResultsPage";
 import Objects from "./pages/Objects";
 import ObjectEditor from "./pages/ObjectEditor";
 import ObjectSharePage from "./pages/ObjectSharePage";
@@ -306,6 +307,7 @@ const AppContent = () => {
           <Route path="/test-loader" element={<ProtectedRoute><TestLoader /></ProtectedRoute>} />
         </Route>
         <Route path="/forms/share/:tenantName/:formShareSlug" element={<FormSharePage />} />
+        <Route path="/forms/share/:tenantName/:formShareSlug/results" element={<PollResultsPage />} />
         <Route path="/objects/share/:tenantName/:objectShareSlug" element={<ObjectSharePage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

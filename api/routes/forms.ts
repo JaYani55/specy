@@ -8,7 +8,7 @@ import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../li
 
 const forms = new Hono<{ Bindings: Env }>();
 
-type FormFieldType = 'text' | 'textarea' | 'help-text' | 'image' | 'email' | 'number' | 'file-upload' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date';
+type FormFieldType = 'text' | 'textarea' | 'help-text' | 'image' | 'email' | 'number' | 'file-upload' | 'checkbox' | 'single-select' | 'multi-select' | 'select' | 'radio' | 'date' | 'consent-poll' | 'consent-vote';
 
 interface FormUploadedFileValue {
   name: string;
@@ -36,6 +36,7 @@ interface FormFieldDefinition {
   width?: number;
   height?: number;
   options?: string[];
+  allow_custom?: boolean;
   upload_provider?: string;
   upload_mount?: string;
   upload_bucket?: string;
@@ -54,6 +55,12 @@ interface FormRow {
   share_slug: string | null;
   requires_auth: boolean;
   api_enabled: boolean;
+  allow_anonymous?: boolean;
+  type?: 'form' | 'poll';
+  voting_mode?: 'live' | 'deadline';
+  deadline_at?: string | null;
+  reminder_interval?: string | null;
+  notification_settings?: any;
   tenant_id?: string | null;
   owner_user_id?: string | null;
 }
@@ -102,6 +109,8 @@ const VALID_FIELD_TYPES = new Set<FormFieldType>([
   'select',
   'radio',
   'date',
+  'consent-poll',
+  'consent-vote',
 ]);
 
 const DISPLAY_ONLY_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);
@@ -138,9 +147,13 @@ const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => 
   && (value.size === null || typeof value.size === 'number')
 );
 
-const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | null): string => {
+const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | any | null): string => {
   if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (isPlainObject(value) && 'position' in value) {
+    const pos = String(value.position || 'Unknown');
+    return value.reason ? `${pos} (${value.reason})` : pos;
+  }
   if (isUploadedFileValue(value)) {
     const preferredUrl = value.download_url || value.url;
     return preferredUrl ? `${value.name} (${preferredUrl})` : value.name;
@@ -151,14 +164,14 @@ const formatAnswerValue = (value: string | number | boolean | string[] | FormUpl
 
 const buildAnswerSummaryText = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>,
 ): string => fields
   .map((field) => `${field.label}: ${formatAnswerValue(answers[field.name] ?? null)}`)
   .join('\n');
 
 const buildAnswerSummaryHtml = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>,
 ): string => fields
   .map((field) => `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;vertical-align:top;">${escapeHtml(field.label)}</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(formatAnswerValue(answers[field.name] ?? null))}</td></tr>`)
   .join('');
@@ -166,7 +179,7 @@ const buildAnswerSummaryHtml = (
 const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>;
   fileLinks: FormFileNotificationLink[];
   answerId: string;
   submittedVia: 'share' | 'api' | 'page';
@@ -592,7 +605,7 @@ const validateAnswers = (
       case 'radio':
         if (typeof value !== 'string') {
           errors.push(`${field.name} must be a string.`);
-        } else if (!field.options?.includes(value)) {
+        } else if (!field.allow_custom && !field.options?.includes(value)) {
           errors.push(`${field.name} must be one of: ${field.options?.join(', ')}.`);
         } else {
           normalizedAnswers[field.name] = value;
@@ -601,10 +614,18 @@ const validateAnswers = (
       case 'multi-select':
         if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
           errors.push(`${field.name} must be an array of strings.`);
-        } else if (value.some((entry) => !field.options?.includes(entry))) {
+        } else if (!field.allow_custom && value.some((entry) => !field.options?.includes(entry))) {
           errors.push(`${field.name} contains values outside the allowed options.`);
         } else {
           normalizedAnswers[field.name] = value;
+        }
+        break;
+      case 'consent-poll':
+      case 'consent-vote':
+        if (!isPlainObject(value) || typeof (value as any).position !== 'string') {
+          errors.push(`${field.name} must be an object with a position string.`);
+        } else {
+          normalizedAnswers[field.name] = value as any;
         }
         break;
       default:
@@ -984,6 +1005,7 @@ const serializeForm = (form: FormRow, fields: FormFieldDefinition[]) => ({
     share_slug: form.share_slug,
     requires_auth: form.requires_auth,
     api_enabled: form.api_enabled,
+    allow_anonymous: Boolean(form.allow_anonymous),
   },
   fields,
   llm_instructions: form.llm_instructions,
@@ -1015,6 +1037,48 @@ forms.get('/share/:tenantName/:shareSlug', async (c) => {
   if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
 
   return c.json(serializeForm(form, fields));
+});
+
+forms.get('/share/:tenantName/:shareSlug/results', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Results view is disabled for this form.' }, 403);
+  if (form.type !== 'poll') return c.json({ error: 'Only polls have a results view.' }, 400);
+
+  // Check if results are viewable
+  const isExpired = form.deadline_at && new Date(form.deadline_at) < new Date();
+  const canViewResults = form.voting_mode === 'live' || isExpired;
+
+  if (!canViewResults) {
+    return c.json({ 
+      error: 'Results are not available yet.', 
+      is_locked: true,
+      deadline_at: form.deadline_at 
+    }, 403);
+  }
+
+  // Fetch answers
+  const { data: answers, error: answersError } = await supabase
+    .from('forms_answers')
+    .select('answers, submitter_name, created_at')
+    .eq('form_id', form.id);
+
+  if (answersError) return c.json({ error: 'Failed to load results.' }, 500);
+
+  return c.json({
+    form: {
+      id: form.id,
+      name: form.name,
+      schema: form.schema,
+      voting_mode: form.voting_mode,
+      deadline_at: form.deadline_at,
+    },
+    total_responses: answers?.length || 0,
+    responses: answers || [],
+  });
 });
 
 forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
@@ -1049,6 +1113,14 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
   if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
 
+  // Poll deadline check
+  if (form.type === 'poll' && form.deadline_at) {
+    const deadline = new Date(form.deadline_at);
+    if (deadline < new Date()) {
+      return c.json({ error: 'This poll has closed.' }, 403);
+    }
+  }
+
   const body = await c.req.json().catch(() => null);
   if (!body || !isPlainObject(body)) return c.json({ error: 'Invalid JSON body.' }, 400);
 
@@ -1063,6 +1135,13 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   }
 
   const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.share_slug;
+  let submitterName = typeof body.submitter_name === 'string' ? body.submitter_name : null;
+
+  // Fallback to participant_name from JSON if provided at that level
+  if (!submitterName && normalizedAnswers.participant_name) {
+    submitterName = String(normalizedAnswers.participant_name);
+  }
+
   const answerId = crypto.randomUUID();
   const { error } = await supabase
     .from('forms_answers')
@@ -1070,6 +1149,7 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
       id: answerId,
       form_id: form.id,
       submitted_by: submittedBy,
+      submitter_name: submitterName,
       answers: normalizedAnswers,
       source_slug: sourceSlug,
       submitted_via: 'share',
@@ -1196,5 +1276,141 @@ forms.post('/:identifier/answers', async (c) => {
 
   return c.json({ success: true, answer_id: answerId });
 });
+
+
+/**
+ * Parse interval strings like "24h", "1d", "48h" into milliseconds
+ */
+function parseReminderInterval(interval: string | null): number | null {
+  if (!interval) return null;
+  const match = interval.trim().toLowerCase().match(/^(\d+)\s*(h|d|m|w)$/);
+  if (!match) return null;
+  const val = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === 'm') return val * 60000;
+  if (unit === 'h') return val * 3600000;
+  if (unit === 'd') return val * 86400000;
+  if (unit === 'w') return val * 604800000;
+  return null;
+}
+
+/**
+ * Handle automated poll reminders (Scheduled Trigger)
+ */
+export async function handleFormReminders(env: Env) {
+  const supabase = await createSupabaseAdminClient(env);
+  console.log('Running poll reminder checks...');
+
+  // 1. Find all active forms with poll deadlines and reminder intervals
+  // Also include tenant info for URL generation
+  const { data: polls, error: pollsError } = await supabase
+    .from('forms')
+    .select('*, tenants:tenant_id(slug, name)')
+    .eq('status', 'published')
+    .eq('type', 'poll')
+    .not('reminder_interval', 'is', null)
+    .gt('deadline_at', new Date().toISOString());
+
+  if (pollsError || !polls) {
+    if (pollsError) console.error('Failed to fetch polls for reminders:', pollsError);
+    return;
+  }
+
+  for (const poll of (polls as FormWithTenantRow[])) {
+    const intervalMs = parseReminderInterval(poll.reminder_interval || null);
+    if (!intervalMs) continue;
+
+    // Check if we already sent a reminder for this poll recently
+    const { count, error: countError } = await supabase
+      .from('mail_delivery_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('form_id', poll.id)
+      .eq('event_type', 'poll_reminder')
+      .gt('created_at', new Date(Date.now() - intervalMs).toISOString());
+
+    if (countError) {
+      console.error(`Failed to check reminder history for poll ${poll.id}:`, countError);
+      continue;
+    }
+
+    if (count !== null && count > 0) {
+      console.log(`Reminder for poll ${poll.id} was already sent within ${poll.reminder_interval}. Skipping.`);
+      continue;
+    }
+
+    // Find all CURRENT participants
+    const { data: currentAnswers, error: answersError } = await supabase
+      .from('forms_answers')
+      .select('submitted_by, submitter_name')
+      .eq('form_id', poll.id);
+
+    if (answersError) {
+      console.error(`Failed to fetch current answers for poll ${poll.id}:`, answersError);
+      continue;
+    }
+
+    const votedUserIds = new Set((currentAnswers || [])
+      .map((a: any) => a.submitted_by)
+      .filter((id): id is string => Boolean(id)));
+    
+    const votedNames = new Set((currentAnswers || [])
+      .map((a: any) => (a.submitter_name || '').toLowerCase().trim())
+      .filter((name): name is string => Boolean(name)));
+
+    // Fetch ALL active staff to check who's missing
+    const { data: staffRecords, error: staffError } = await supabase
+      .from('staff')
+      .select('id, account_user_id, display_name, email')
+      .eq('status', 'active');
+
+    if (staffError || !staffRecords) {
+      console.error(`Failed to fetch staff records for poll ${poll.id}:`, staffError);
+      continue;
+    }
+
+    // Filter staff who haven't voted yet
+    const pendingStaff = (staffRecords as any[]).filter(s => {
+      // Check by user ID first
+      if (s.account_user_id && votedUserIds.has(s.account_user_id)) return false;
+      
+      // Fallback to name check
+      const name = (s.display_name || '').toLowerCase().trim();
+      if (votedNames.has(name)) return false;
+      
+      return Boolean(s.email);
+    });
+
+    if (pendingStaff.length === 0) {
+      console.log(`All staff members already voted for poll ${poll.id}.`);
+      continue;
+    }
+
+    const tenantSegment = poll.tenants?.slug || poll.tenants?.name || 'default';
+    const appUrl = (env as any).APP_URL || 'https://mentorbooking.de';
+    const pollUrl = `${appUrl}/forms/share/${encodeURIComponent(tenantSegment)}/${encodeURIComponent(poll.share_slug || poll.slug)}`;
+
+    const jobsToInsert = pendingStaff.map(member => ({
+      event_type: 'poll_reminder',
+      status: 'pending',
+      form_id: poll.id,
+      recipient_email: member.email,
+      subject: `Erinnerung: Umfrage "${poll.name}"`,
+      payload: {
+        text: `Hallo ${member.display_name},\n\nhast du schon bei der Umfrage "${poll.name}" abgestimmt? Die Frist läuft am ${new Date(poll.deadline_at!).toLocaleString('de-DE')} ab.\n\nHier kannst du abstimmen: ${pollUrl}`,
+        html: `<p>Hallo ${member.display_name},</p><p>hast du schon bei der Umfrage <strong>"${poll.name}"</strong> abgestimmt?</p><p>Die Frist läuft am ${new Date(poll.deadline_at!).toLocaleString('de-DE')} ab.</p><p><a href="${pollUrl}">Hier kannst du abstimmen</a></p>`,
+        formName: poll.name,
+        deadlineAt: poll.deadline_at,
+        staffId: member.id
+      }
+    }));
+
+    const { error: insertError } = await supabase.from('mail_delivery_jobs').insert(jobsToInsert);
+    if (insertError) {
+      console.error(`Failed to queue reminders for poll ${poll.id}:`, insertError);
+    } else {
+      console.log(`Queued ${jobsToInsert.length} reminders for poll ${poll.id}`);
+    }
+  }
+}
 
 export default forms;
