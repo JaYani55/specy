@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useBranding } from '@/hooks/useBranding';
 import { DEFAULT_BRANDING_SETTINGS, type BrandingSettings } from '@/services/brandingService';
 
-const DEFAULT_LOGO_URL = '/servicecms-transp.png';
+const DEFAULT_LOGO_URL = '/servicecms-transp_icon.png';
 
 type LogoVariant = 'navbar' | 'sidebar' | 'login' | 'preview';
 

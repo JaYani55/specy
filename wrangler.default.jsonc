@@ -69,7 +69,11 @@
       "/api/*",
       "/mcp",
       "/mcp/*",
-      "/.well-known/*"
+      "/.well-known/*",
+      "/forms/share/*",
+      "/objects/share/*",
+      "/s/*",
+      "/o/*"
     ]
   },
 

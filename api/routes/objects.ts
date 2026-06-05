@@ -59,11 +59,13 @@ const serializeObject = (obj: ObjectRow) => ({
 
 const getObjectByShareSlug = async (
   env: Env,
-  supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
   tenantNameSegment: string,
   shareSlug: string,
 ): Promise<ObjectRow | null> => {
-  const { data, error } = await supabase
+  // Use admin client for the lookup to ensure we find objects regardless of user RLS
+  // (visibility/auth requirement is checked afterward in the route handler)
+  const admin = await createSupabaseAdminClient(env);
+  const { data, error } = await admin
     .from('objects')
     .select('*, tenants:tenant_id (name, slug)')
     .eq('share_slug', shareSlug)
@@ -71,44 +73,21 @@ const getObjectByShareSlug = async (
     .neq('status', 'archived')
     .limit(20);
 
-  if (error) {
-    throw error;
-  }
-
+  if (error) throw error;
   const candidates = (data as ObjectWithTenantRow[] | null) ?? [];
   const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
 
   for (const obj of candidates) {
-    if (!obj.tenant_id) {
-      continue;
-    }
+    if (!obj.tenant_id) continue;
 
-    let resolvedTenantName: string | null = obj.tenants?.name ?? null;
-    let resolvedTenantSlug: string | null = obj.tenants?.slug ?? null;
-
-    if ((!resolvedTenantName || !resolvedTenantSlug) && obj.tenant_id) {
-      const admin = await createSupabaseAdminClient(env);
-      const { data: tenantData, error: tenantError } = await admin
-        .from('tenants')
-        .select('name, slug')
-        .eq('id', obj.tenant_id)
-        .maybeSingle();
-
-      if (tenantError) {
-        throw tenantError;
-      }
-
-      resolvedTenantName = typeof tenantData?.name === 'string' ? tenantData.name : resolvedTenantName;
-      resolvedTenantSlug = typeof tenantData?.slug === 'string' ? tenantData.slug : resolvedTenantSlug;
-    }
+    const resolvedTenantName = obj.tenants?.name;
+    const resolvedTenantSlug = obj.tenants?.slug;
 
     const matchesTenant = [resolvedTenantName, resolvedTenantSlug]
-      .filter((value): value is string => Boolean(value))
-      .some((value) => normalizeTenantNameSegment(value) === requestedTenantSegment);
+      .filter((v): v is string => Boolean(v))
+      .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
 
-    if (matchesTenant) {
-      return obj;
-    }
+    if (matchesTenant) return obj;
   }
 
   return null;
@@ -172,11 +151,79 @@ objects.get('/', async (c) => {
   return c.json({ objects: data ?? [] });
 });
 
+/**
+ * Metadata retrieval for Edge injection (no auth check, public fields only)
+ */
+export async function objectsWithMeta(env: Env, tenantName: string, shareSlug: string) {
+  const admin = await createSupabaseAdminClient(env);
+  const obj = await getObjectByShareSlug(env, tenantName, shareSlug);
+  if (!obj) return null;
+
+  let image: string | undefined;
+  try {
+    const data = obj.data;
+    if (data && typeof data === 'object') {
+      const findImage = (val: unknown): string | null => {
+        if (typeof val === 'string' && (val.startsWith('http') || val.startsWith('/')) && (val.match(/\.(jpeg|jpg|gif|png|webp|svg)/i))) return val;
+        if (Array.isArray(val)) {
+          for (const item of val) {
+            const found = findImage(item);
+            if (found) return found;
+          }
+        }
+        if (val && typeof val === 'object') {
+          const v = val as Record<string, unknown>;
+          // Check common image keys
+          for (const key of ['image', 'src', 'url', 'thumbnail', 'pic']) {
+            const pot = v[key];
+            if (typeof pot === 'string' && pot.match(/\.(jpeg|jpg|gif|png|webp|svg)/i)) return pot;
+          }
+          // Recurse
+          for (const k in v) {
+            const found = findImage(v[k]);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      const found = findImage(data);
+      if (found) image = found;
+    }
+  } catch (e) {
+    console.warn('Failed to extract image for metadata mapping:', e);
+  }
+
+  return {
+    name: obj.name,
+    description: obj.description,
+    image
+  };
+}
+
 objects.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
 
-  const obj = await getObjectByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const obj = await getObjectByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+  if (!obj || obj.status === 'archived') {
+    return c.json({ error: 'Object not found.' }, 404);
+  }
+  if (!obj.share_enabled) {
+    return c.json({ error: 'Share link is disabled for this object.' }, 403);
+  }
+  if (obj.requires_auth && !token) {
+    return c.json({ error: 'Authentication required.' }, 401);
+  }
+
+  return c.json(serializeObject(obj));
+});
+
+objects.get('/o/:tenantName/:shareSlug', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const obj = await getObjectByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!obj || obj.status === 'archived') {
     return c.json({ error: 'Object not found.' }, 404);
   }

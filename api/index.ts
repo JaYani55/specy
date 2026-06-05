@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import type { Env } from './lib/supabase';
+import type { Env, ScheduledEvent, ExecutionContext } from './lib/supabase';
 import schemas from './routes/schemas';
 import health from './routes/health';
 import logs from './routes/logs';
@@ -17,7 +17,78 @@ import specsRoute from './routes/specs';
 import { mountPluginRoutes } from './plugin-routes';
 import { agentLogger } from './middleware/agentLogger';
 
+import { formsWithMeta, handleFormReminders } from './routes/forms';
+import { objectsWithMeta } from './routes/objects';
+import { injectMetaTags, MetaTags } from './lib/htmlTemplate';
+
 const app = new Hono<{ Bindings: Env }>();
+
+// SPA Asset Interceptor
+app.get('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  const path = url.pathname;
+
+  // Skip API, MCP and well-known paths
+  if (path.startsWith('/api/') || path.startsWith('/mcp') || path.startsWith('/.well-known/')) {
+    return next();
+  }
+
+  // Intercept share pages for Forms and Objects (including short versions)
+  const formShareMatch = path.match(/^\/(?:forms\/share|s)\/([^/]+)\/([^/]+)$/);
+  const objectShareMatch = path.match(/^\/(?:objects\/share|o)\/([^/]+)\/([^/]+)$/);
+
+  if (formShareMatch || objectShareMatch) {
+    const assets = c.env.ASSETS;
+    if (!assets) return next();
+
+    try {
+      // For share pages, we ALWAYS want to serve index.html with injected metadata
+      // because SPA assets binding in wrangler might return a 200 index.html 
+      // without metadata or a 404/not-found.
+      const indexResponse = await assets.fetch(new Request(new URL('/index.html', url).toString()));
+      if (!indexResponse.ok) return next();
+      
+      const html = await indexResponse.text();
+      let meta: MetaTags = { 
+        title: 'Pluracon Service', 
+        description: 'Pluracon Platform',
+        origin: url.origin
+      };
+
+      if (formShareMatch) {
+        const [_, tenantName, shareSlug] = formShareMatch;
+        const data = await formsWithMeta(c.env, tenantName, shareSlug);
+        if (data) {
+          meta = { 
+            ...meta,
+            title: data.name, 
+            description: data.description || 'Teilnahme an der Umfrage/Formular',
+            image: data.image,
+            type: 'article'
+          };
+        }
+      } else if (objectShareMatch) {
+        const [_, tenantName, shareSlug] = objectShareMatch;
+        const data = await objectsWithMeta(c.env, tenantName, shareSlug);
+        if (data) {
+          meta = { 
+            ...meta,
+            title: data.name, 
+            description: data.description || 'Detaillierte Informationen ansehen',
+            image: data.image,
+            type: 'article'
+          };
+        }
+      }
+
+      return c.html(injectMetaTags(html, meta));
+    } catch (e) {
+      console.error('SPA Metadata Injection Error:', e);
+    }
+  }
+
+  return next();
+});
 
 // CORS — allow CMS and any frontend to call the API
 app.use('*', cors({
@@ -118,8 +189,10 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(event: any, env: Env, ctx: any) {
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const { handleFormReminders } = await import('./routes/forms');
     ctx.waitUntil(handleFormReminders(env));
   },
 };
+
+export { handleFormReminders };

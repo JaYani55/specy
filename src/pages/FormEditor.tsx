@@ -634,7 +634,7 @@ const FormEditor = () => {
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-3 rounded-xl border bg-background/80 p-4">
                     <Label>{language === 'en' ? 'Voting Mode' : 'Abstimmungs-Modus'}</Label>
-                    <Select value={votingMode} onValueChange={(v) => setVotingMode(v as any)}>
+                    <Select value={votingMode} onValueChange={(v) => setVotingMode(v as 'live' | 'deadline')}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>

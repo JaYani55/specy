@@ -36,7 +36,27 @@ export interface R2ObjectBody extends R2Object {
   blob(): Promise<Blob>;
 }
 
+export interface Fetcher {
+  fetch(request: Request | string, init?: RequestInit): Promise<Response>;
+}
+
+export interface ScheduledEvent {
+  cron: string;
+  scheduledTime: number;
+}
+
+export interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
 export interface Env {
+  // ── SPA Assets binding ─────────────────────────────────────────────────────
+  ASSETS?: Fetcher;
+
+  // ── App URLs ───────────────────────────────────────────────────────────────
+  APP_URL?: string;
+
   // ── Fallback vars for local `wrangler dev` (set in .dev.vars) ──────────────
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;

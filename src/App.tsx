@@ -306,9 +306,17 @@ const AppContent = () => {
 
           <Route path="/test-loader" element={<ProtectedRoute><TestLoader /></ProtectedRoute>} />
         </Route>
+        
+        {/* Long Share Routes (for backward compatibility) */}
         <Route path="/forms/share/:tenantName/:formShareSlug" element={<FormSharePage />} />
         <Route path="/forms/share/:tenantName/:formShareSlug/results" element={<PollResultsPage />} />
         <Route path="/objects/share/:tenantName/:objectShareSlug" element={<ObjectSharePage />} />
+        
+        {/* Short Share Routes (New Default) */}
+        <Route path="/s/:tenantName/:formShareSlug" element={<FormSharePage />} />
+        <Route path="/s/:tenantName/:formShareSlug/results" element={<PollResultsPage />} />
+        <Route path="/o/:tenantName/:objectShareSlug" element={<ObjectSharePage />} />
+
         <Route path="*" element={<NotFound />} />
       </Routes>
       

@@ -30,7 +30,7 @@ export interface FormUploadedFileValue {
   size: number | null;
 }
 
-export type FormAnswerValue = string | number | boolean | string[] | FormUploadedFileValue | null;
+export type FormAnswerValue = string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null;
 
 export interface FormFieldDefinition {
   editorId?: string;

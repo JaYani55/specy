@@ -60,7 +60,7 @@ interface FormRow {
   voting_mode?: 'live' | 'deadline';
   deadline_at?: string | null;
   reminder_interval?: string | null;
-  notification_settings?: any;
+  notification_settings?: Record<string, unknown> | null;
   tenant_id?: string | null;
   owner_user_id?: string | null;
 }
@@ -147,7 +147,7 @@ const isUploadedFileValue = (value: unknown): value is FormUploadedFileValue => 
   && (value.size === null || typeof value.size === 'number')
 );
 
-const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | any | null): string => {
+const formatAnswerValue = (value: string | number | boolean | string[] | FormUploadedFileValue | unknown | null): string => {
   if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (isPlainObject(value) && 'position' in value) {
@@ -164,14 +164,14 @@ const formatAnswerValue = (value: string | number | boolean | string[] | FormUpl
 
 const buildAnswerSummaryText = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>,
 ): string => fields
   .map((field) => `${field.label}: ${formatAnswerValue(answers[field.name] ?? null)}`)
   .join('\n');
 
 const buildAnswerSummaryHtml = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>,
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>,
 ): string => fields
   .map((field) => `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;vertical-align:top;">${escapeHtml(field.label)}</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(formatAnswerValue(answers[field.name] ?? null))}</td></tr>`)
   .join('');
@@ -179,7 +179,7 @@ const buildAnswerSummaryHtml = (
 const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | any | null>;
+  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>;
   fileLinks: FormFileNotificationLink[];
   answerId: string;
   submittedVia: 'share' | 'api' | 'page';
@@ -513,9 +513,9 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
 const validateAnswers = (
   fields: FormFieldDefinition[],
   answers: unknown,
-): { errors: string[]; normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null> } => {
+): { errors: string[]; normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null> } => {
   const errors: string[] = [];
-  const normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null> = {};
+  const normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null> = {};
 
   if (!isPlainObject(answers)) {
     return { errors: ['answers must be an object.'], normalizedAnswers };
@@ -622,10 +622,10 @@ const validateAnswers = (
         break;
       case 'consent-poll':
       case 'consent-vote':
-        if (!isPlainObject(value) || typeof (value as any).position !== 'string') {
+        if (!isPlainObject(value) || typeof (value as Record<string, unknown>).position !== 'string') {
           errors.push(`${field.name} must be an object with a position string.`);
         } else {
-          normalizedAnswers[field.name] = value as any;
+          normalizedAnswers[field.name] = value as Record<string, unknown>;
         }
         break;
       default:
@@ -942,13 +942,42 @@ const getFormByIdentifier = async (
   return (result.data as FormRow | null) ?? null;
 };
 
+/**
+ * Metadata retrieval for Edge injection (no auth check, public fields only)
+ */
+export async function formsWithMeta(env: Env, tenantName: string, shareSlug: string) {
+  const admin = await createSupabaseAdminClient(env);
+  const form = await getFormByShareSlug(env, tenantName, shareSlug);
+  if (!form) return null;
+
+  let image: string | undefined;
+  try {
+    const { fields } = normalizeSchema(form.schema || {});
+    // Extract first image field src
+    const imageField = fields.find(f => f.type === 'image' && f.src);
+    if (imageField) {
+      image = imageField.src;
+    }
+  } catch (e) {
+    console.warn('Failed to extract image for metadata mapping:', e);
+  }
+
+  return {
+    name: form.name,
+    description: form.description,
+    image
+  };
+}
+
 const getFormByShareSlug = async (
   env: Env,
-  supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
   tenantNameSegment: string,
   shareSlug: string,
 ): Promise<FormRow | null> => {
-  const { data, error } = await supabase
+  // Use admin client for the lookup to ensure we find forms that require auth (to correctly return 401 later)
+  // and to bypass RLS on tenant joins for reliable matching.
+  const admin = await createSupabaseAdminClient(env);
+  const { data, error } = await admin
     .from('forms')
     .select('*, tenants:tenant_id (name, slug)')
     .eq('share_slug', shareSlug)
@@ -961,34 +990,16 @@ const getFormByShareSlug = async (
   const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
 
   for (const form of forms) {
-    if (!form.tenant_id) {
-      continue;
-    }
+    if (!form.tenant_id) continue;
 
-    let resolvedTenantName: string | null = form.tenants?.name ?? null;
-    let resolvedTenantSlug: string | null = form.tenants?.slug ?? null;
-
-    // When called as anon, tenant joins can be hidden by RLS; resolve tenant via admin as fallback.
-    if ((!resolvedTenantName || !resolvedTenantSlug) && form.tenant_id) {
-      const admin = await createSupabaseAdminClient(env);
-      const { data: tenantData, error: tenantError } = await admin
-        .from('tenants')
-        .select('name, slug')
-        .eq('id', form.tenant_id)
-        .maybeSingle();
-
-      if (tenantError) throw tenantError;
-      resolvedTenantName = typeof tenantData?.name === 'string' ? tenantData.name : resolvedTenantName;
-      resolvedTenantSlug = typeof tenantData?.slug === 'string' ? tenantData.slug : resolvedTenantSlug;
-    }
+    const resolvedTenantName = form.tenants?.name;
+    const resolvedTenantSlug = form.tenants?.slug;
 
     const matchesTenant = [resolvedTenantName, resolvedTenantSlug]
-      .filter((value): value is string => Boolean(value))
-      .some((value) => normalizeTenantNameSegment(value) === requestedTenantSegment);
+      .filter((v): v is string => Boolean(v))
+      .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
 
-    if (matchesTenant) {
-      return form;
-    }
+    if (matchesTenant) return form;
   }
 
   return null;
@@ -1028,7 +1039,22 @@ forms.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
 
-  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
+  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+
+  const { fields, errors } = normalizeSchema(form.schema || {});
+  if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
+
+  return c.json(serializeForm(form, fields));
+});
+
+forms.get('/s/:tenantName/:shareSlug', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
@@ -1043,7 +1069,49 @@ forms.get('/share/:tenantName/:shareSlug/results', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
 
-  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Results view is disabled for this form.' }, 403);
+  if (form.type !== 'poll') return c.json({ error: 'Only polls have a results view.' }, 400);
+
+  // Check if results are viewable
+  const isExpired = form.deadline_at && new Date(form.deadline_at) < new Date();
+  const canViewResults = form.voting_mode === 'live' || isExpired;
+
+  if (!canViewResults) {
+    return c.json({ 
+      error: 'Results are not available yet.', 
+      is_locked: true,
+      deadline_at: form.deadline_at 
+    }, 403);
+  }
+
+  // Fetch answers
+  const { data: answers, error: answersError } = await supabase
+    .from('forms_answers')
+    .select('answers, submitter_name, created_at')
+    .eq('form_id', form.id);
+
+  if (answersError) return c.json({ error: 'Failed to load results.' }, 500);
+
+  return c.json({
+    form: {
+      id: form.id,
+      name: form.name,
+      schema: form.schema,
+      voting_mode: form.voting_mode,
+      deadline_at: form.deadline_at,
+    },
+    total_responses: answers?.length || 0,
+    responses: answers || [],
+  });
+});
+
+forms.get('/s/:tenantName/:shareSlug/results', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Results view is disabled for this form.' }, 403);
   if (form.type !== 'poll') return c.json({ error: 'Only polls have a results view.' }, 400);
@@ -1084,7 +1152,27 @@ forms.get('/share/:tenantName/:shareSlug/results', async (c) => {
 forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const formData = await c.req.formData().catch(() => null);
+
+  if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
+
+  const response = await handleFormUploadRequest({
+    env: c.env,
+    requestUrl: c.req.url,
+    form,
+    shareMode: true,
+    token,
+    formData,
+  });
+
+  return response;
+});
+
+forms.post('/s/:tenantName/:shareSlug/upload', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   const formData = await c.req.formData().catch(() => null);
 
   if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
@@ -1104,7 +1192,7 @@ forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
 forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
-  const form = await getFormByShareSlug(c.env, supabase, c.req.param('tenantName'), c.req.param('shareSlug'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
@@ -1150,7 +1238,7 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
       form_id: form.id,
       submitted_by: submittedBy,
       submitter_name: submitterName,
-      answers: normalizedAnswers,
+      answers: normalizedAnswers as any,
       source_slug: sourceSlug,
       submitted_via: 'share',
       ip_address: c.req.header('cf-connecting-ip') ?? null,
@@ -1166,7 +1254,85 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
       requestUrl: c.req.url,
       form,
       fields,
-      answers: normalizedAnswers,
+      answers: normalizedAnswers as any,
+      answerId,
+      submittedBy,
+      submittedVia: 'share',
+      sourceSlug,
+    });
+  } catch (notificationError) {
+    console.error(`Failed to queue form answer notifications for ${answerId}:`, notificationError);
+  }
+
+  return c.json({ success: true, answer_id: answerId });
+});
+
+forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
+  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+
+  const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
+  if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
+
+  // Poll deadline check
+  if (form.type === 'poll' && form.deadline_at) {
+    const deadline = new Date(form.deadline_at);
+    if (deadline < new Date()) {
+      return c.json({ error: 'This poll has closed.' }, 403);
+    }
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || !isPlainObject(body)) return c.json({ error: 'Invalid JSON body.' }, 400);
+
+  const { errors, normalizedAnswers } = validateAnswers(fields, body.answers);
+  if (errors.length > 0) return c.json({ error: 'Validation failed.', details: errors }, 400);
+
+  let submittedBy: string | null = null;
+  if (token) {
+    const auth = await verifyAuthSession(c.env, token);
+    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+    submittedBy = auth.userId;
+  }
+
+  const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.share_slug;
+  let submitterName = typeof body.submitter_name === 'string' ? body.submitter_name : null;
+
+  // Fallback to participant_name from JSON if provided at that level
+  if (!submitterName && normalizedAnswers.participant_name) {
+    submitterName = String(normalizedAnswers.participant_name);
+  }
+
+  const answerId = crypto.randomUUID();
+  const { error } = await supabase
+    .from('forms_answers')
+    .insert({
+      id: answerId,
+      form_id: form.id,
+      submitted_by: submittedBy,
+      submitter_name: submitterName,
+      answers: normalizedAnswers as any,
+      source_slug: sourceSlug,
+      submitted_via: 'share',
+      ip_address: c.req.header('cf-connecting-ip') ?? null,
+      user_agent: c.req.header('user-agent') ?? null,
+    })
+    ;
+
+  if (error) return c.json({ error: 'Failed to save answers.', detail: error.message }, 500);
+
+  try {
+    await enqueueFormAnswerNotifications({
+      env: c.env,
+      requestUrl: c.req.url,
+      form,
+      fields,
+      answers: normalizedAnswers as any,
       answerId,
       submittedBy,
       submittedVia: 'share',
@@ -1248,7 +1414,7 @@ forms.post('/:identifier/answers', async (c) => {
       id: answerId,
       form_id: form.id,
       submitted_by: submittedBy,
-      answers: normalizedAnswers,
+      answers: normalizedAnswers as any,
       source_slug: sourceSlug,
       submitted_via: submittedVia,
       ip_address: c.req.header('cf-connecting-ip') ?? null,
@@ -1264,7 +1430,7 @@ forms.post('/:identifier/answers', async (c) => {
       requestUrl: c.req.url,
       form,
       fields,
-      answers: normalizedAnswers,
+      answers: normalizedAnswers as any,
       answerId,
       submittedBy,
       submittedVia,
@@ -1350,11 +1516,11 @@ export async function handleFormReminders(env: Env) {
     }
 
     const votedUserIds = new Set((currentAnswers || [])
-      .map((a: any) => a.submitted_by)
+      .map((a) => a.submitted_by as string | null)
       .filter((id): id is string => Boolean(id)));
     
     const votedNames = new Set((currentAnswers || [])
-      .map((a: any) => (a.submitter_name || '').toLowerCase().trim())
+      .map((a) => (a.submitter_name as string | null || '').toLowerCase().trim())
       .filter((name): name is string => Boolean(name)));
 
     // Fetch ALL active staff to check who's missing
@@ -1369,7 +1535,7 @@ export async function handleFormReminders(env: Env) {
     }
 
     // Filter staff who haven't voted yet
-    const pendingStaff = (staffRecords as any[]).filter(s => {
+    const pendingStaff = staffRecords.filter(s => {
       // Check by user ID first
       if (s.account_user_id && votedUserIds.has(s.account_user_id)) return false;
       
@@ -1386,7 +1552,7 @@ export async function handleFormReminders(env: Env) {
     }
 
     const tenantSegment = poll.tenants?.slug || poll.tenants?.name || 'default';
-    const appUrl = (env as any).APP_URL || 'https://mentorbooking.de';
+    const appUrl = env.APP_URL || 'https://mentorbooking.de';
     const pollUrl = `${appUrl}/forms/share/${encodeURIComponent(tenantSegment)}/${encodeURIComponent(poll.share_slug || poll.slug)}`;
 
     const jobsToInsert = pendingStaff.map(member => ({

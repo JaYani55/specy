@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, Loader2, Lock, Paperclip, Upload, X, Clock, PieChart as PieChartIcon } from 'lucide-react';
+import { AlertCircle, Loader2, Lock, Paperclip, Upload, X, Clock, PieChart as PieChartIcon, Share2, Copy, Check, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import NotFound from '@/pages/NotFound';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -56,6 +56,7 @@ const FormSharePage = () => {
   const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [copied, setCopied] = useState(false);
   const submissionId = useMemo(() => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -76,6 +77,10 @@ const FormSharePage = () => {
         const definition = await getPublicFormByShareSlug(tenantName, formShareSlug);
         setFormDefinition(definition);
         setAnswers(buildInitialAnswers(definition.fields));
+        
+        // Update document title for the browser tab
+        document.title = `${definition.form.name} | ServiceCMS`;
+
         setError(null);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Failed to load form.');
@@ -85,7 +90,23 @@ const FormSharePage = () => {
     };
 
     void loadForm();
-  }, [tenantName, formShareSlug]);
+  }, [tenantName, formShareSlug, language]);
+
+  // Load MS Teams Share Launcher - wait until form is ready in the DOM
+  useEffect(() => {
+    if (isLoading || !formDefinition) return;
+
+    const script = document.createElement('script');
+    script.src = 'https://teams.microsoft.com/share/launcher.js';
+    script.defer = true;
+    document.body.appendChild(script);
+    
+    return () => {
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, [isLoading, formDefinition]);
 
   const requiredFieldNames = useMemo(
     () => new Set(formDefinition?.fields.filter((field) => field.required && !isDisplayOnlyFormFieldType(field.type)).map((field) => field.name) ?? []),
@@ -162,7 +183,7 @@ const FormSharePage = () => {
       if (!requiredFieldNames.has(field.name)) return false;
       if (field.type === 'checkbox') return answers[field.name] !== true;
       if (field.type === 'consent-vote' || field.type === 'consent-poll') {
-        const val = (answers[field.name] as any);
+        const val = answers[field.name] as { position?: string; reason?: string } | null;
         if (!val || !val.position) return true;
         if (field.type === 'consent-vote' && (val.position === 'disagree' || val.position === 'block') && !val.reason?.trim()) return true;
         if (field.type === 'consent-poll' && val.position === 'veto' && !val.reason?.trim()) return true;
@@ -193,6 +214,13 @@ const FormSharePage = () => {
     }
   };
 
+  const handleCopyLink = () => {
+    void navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    toast.success(language === 'en' ? 'Link copied to clipboard!' : 'Link in die Zwischenablage kopiert!');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const isExpired = formDefinition.form.deadline_at && new Date(formDefinition.form.deadline_at) < new Date();
   const isPoll = formDefinition.form.type === 'poll';
   const showResultsLink = isPoll && (formDefinition.form.voting_mode === 'live' || isExpired);
@@ -207,7 +235,23 @@ const FormSharePage = () => {
                 <CardTitle>{formDefinition.form.name}</CardTitle>
                 {formDefinition.form.description && <CardDescription>{formDefinition.form.description}</CardDescription>}
               </div>
-              <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-col items-end gap-2 text-right">
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-8 gap-2 border-primary/20 bg-primary/5 hover:bg-primary/10"
+                    onClick={handleCopyLink}
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <LinkIcon className="h-3.5 w-3.5" />}
+                    {language === 'en' ? 'Copy Link' : 'Link kopieren'}
+                  </Button>
+                  <div 
+                    className="teams-share-button" 
+                    data-href={window.location.href}
+                    data-icon-type="small"
+                  />
+                </div>
                 {isExpired && (
                   <Badge variant="destructive">
                     {language === 'en' ? 'Poll Closed' : 'Umfrage beendet'}
@@ -294,10 +338,10 @@ const FormSharePage = () => {
                             {language === 'en' ? 'Your Sentiment' : 'Dein Stimmungsbild'}
                           </Label>
                           <RadioGroup
-                            value={(answers[field.name] as any)?.position || ''}
+                            value={(answers[field.name] as { position?: string })?.position || ''}
                             onValueChange={(val) => setAnswers(curr => ({
                               ...curr,
-                              [field.name]: { ...(curr[field.name] as any || {}), position: val }
+                              [field.name]: { ...(curr[field.name] as unknown as Record<string, unknown> || {}), position: val }
                             }))}
                             className="grid grid-cols-2 gap-4 md:grid-cols-4"
                           >
@@ -324,7 +368,7 @@ const FormSharePage = () => {
                           </RadioGroup>
                         </div>
 
-                        {((answers[field.name] as any)?.position === 'veto') && (
+                        {((answers[field.name] as { position?: string })?.position === 'veto') && (
                           <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                             <Label htmlFor={`${field.name}-reason`} className="text-destructive font-medium">
                               {language === 'en' ? 'Reason (Required for Veto)' : 'Begründung (Erforderlich bei Veto)'}
@@ -332,10 +376,10 @@ const FormSharePage = () => {
                             <Textarea
                               id={`${field.name}-reason`}
                               placeholder={language === 'en' ? 'Please explain your veto...' : 'Bitte erkläre dein Veto...'}
-                              value={(answers[field.name] as any)?.reason || ''}
+                              value={(answers[field.name] as { reason?: string })?.reason || ''}
                               onChange={(e) => setAnswers(curr => ({
                                 ...curr,
-                                [field.name]: { ...(curr[field.name] as any || {}), reason: e.target.value }
+                                [field.name]: { ...(curr[field.name] as unknown as Record<string, unknown> || {}), reason: e.target.value }
                               }))}
                             />
                           </div>
@@ -356,10 +400,10 @@ const FormSharePage = () => {
                             {language === 'en' ? 'Your Position' : 'Deine Position'}
                           </Label>
                           <RadioGroup
-                            value={(answers[field.name] as any)?.position || ''}
+                            value={(answers[field.name] as { position?: string })?.position || ''}
                             onValueChange={(val) => setAnswers(curr => ({
                               ...curr,
-                              [field.name]: { ...(curr[field.name] as any || {}), position: val }
+                              [field.name]: { ...(curr[field.name] as unknown as Record<string, unknown> || {}), position: val }
                             }))}
                             className="grid grid-cols-2 gap-4 md:grid-cols-4"
                           >
@@ -386,7 +430,7 @@ const FormSharePage = () => {
                           </RadioGroup>
                         </div>
 
-                        {((answers[field.name] as any)?.position === 'disagree' || (answers[field.name] as any)?.position === 'block') && (
+                        {((answers[field.name] as { position?: string })?.position === 'disagree' || (answers[field.name] as { position?: string })?.position === 'block') && (
                           <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                             <Label htmlFor={`${field.name}-reason`} className="text-destructive font-medium">
                               {language === 'en' ? 'Reason (Required for Disagree/Block)' : 'Begründung (Erforderlich bei Ablehnung/Blockade)'}
@@ -394,10 +438,10 @@ const FormSharePage = () => {
                             <Textarea
                               id={`${field.name}-reason`}
                               placeholder={language === 'en' ? 'Please explain your concerns...' : 'Bitte erkläre deine Bedenken...'}
-                              value={(answers[field.name] as any)?.reason || ''}
+                              value={(answers[field.name] as { reason?: string })?.reason || ''}
                               onChange={(e) => setAnswers(curr => ({
                                 ...curr,
-                                [field.name]: { ...(curr[field.name] as any || {}), reason: e.target.value }
+                                [field.name]: { ...(curr[field.name] as unknown as Record<string, unknown> || {}), reason: e.target.value }
                               }))}
                             />
                           </div>
@@ -450,7 +494,7 @@ const FormSharePage = () => {
                             <span>{language === 'en' ? 'Uploading…' : 'Lade hoch…'}</span>
                           </div>
                         )}
-                        {typeof answers[field.name] === 'object' && answers[field.name] !== null && 'path' in answers[field.name] && (
+                        {typeof answers[field.name] === 'object' && answers[field.name] !== null && 'path' in (answers[field.name] as FormUploadedFileValue) && (
                           <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm">
                             <div className="min-w-0">
                               <p className="truncate font-medium">{(answers[field.name] as FormUploadedFileValue).name}</p>

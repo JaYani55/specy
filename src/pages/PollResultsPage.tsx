@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from '@/components/ui/tooltip';
 import { useTheme } from '@/contexts/ThemeContext';
 import { API_URL } from '@/lib/apiUrl';
-import { type FormSchemaDefinition } from '@/types/forms';
+import { type FormSchemaDefinition, type FormFieldType } from '@/types/forms';
 import { isDisplayOnlyFormFieldType } from '@/utils/forms';
 
 interface PollResultResponse {
@@ -24,7 +24,7 @@ interface PollResultResponse {
   };
   total_responses: number;
   responses: Array<{
-    answers: Record<string, any>;
+    answers: Record<string, unknown>;
     submitter_name: string | null;
     created_at: string;
   }>;
@@ -108,17 +108,17 @@ const PollResultsPage = () => {
   const schema = data.form.schema || {};
   const aggregatedResults = Object.entries(schema)
     .filter(([key, field]) => {
-      const type = (field as any).type;
-      return !isDisplayOnlyFormFieldType(type) && key !== 'participant_name';
+      const fieldDef = field as { type?: string };
+      return !isDisplayOnlyFormFieldType(fieldDef.type as FormFieldType) && key !== 'participant_name';
     })
     .map(([key, field]) => {
-      const fieldDef = field as any;
+      const fieldDef = field as { type?: FormFieldType; label?: string; options?: string[] };
       const fieldType = fieldDef.type;
 
       // For charts: counts
       const counts: Record<string, number> = {};
       // For tables: list of all entries
-      const entries: Array<{ name: string; value: any; reason?: string; timestamp: string }> = [];
+      const entries: Array<{ name: string; value: unknown; reason?: string; timestamp: string }> = [];
 
       data.responses.forEach(resp => {
         const val = resp.answers[key];

@@ -344,6 +344,43 @@ All forms (and polls specifically) include a `/results` dashboard:
 
 ---
 
+## Microsoft Teams Integration
+
+The forms system supports rich link unfurling and native sharing for Microsoft Teams.
+
+### 1. Open Graph (OG) Data
+
+Public share pages dynamically inject Open Graph meta tags into the document head when a form definition is loaded. Teams uses these tags to generate a visual preview card.
+
+| Tag | Content Source |
+| --- | --- |
+| `og:title` | Form `name` |
+| `og:description` | Form `description` |
+| `og:url` | Current share URL (tenant-slug based) |
+| `og:type` | `website` |
+
+If `requires_auth` is true, the Teams scraper will not be able to bypass the login requirement and will show a generic card for the login page.
+
+### 2. Teams Share Button
+
+The `FormSharePage` includes a declarative share button that triggers the Teams payload distribution center.
+
+- **Launcher Script**: `https://teams.microsoft.com/share/launcher.js`
+- **Class Identifier**: `teams-share-button`
+- **Configuration**:
+    - `data-href`: The canonical share URL (built using `tenant.slug`).
+    - `data-icon-type`: Set to `small` for header integration.
+
+### 3. Transport Workflow
+
+1. **Trigger**: User clicks the share button.
+2. **Pop-up**: A `window.open()` pop-up opens `https://teams.microsoft.com/share`.
+3. **Selection**: User selects target channel/chat.
+4. **Unfurling**: Teams backend performs a standard `GET` to the shared URL to fetch OG metadata.
+5. **Post**: The preview card and optional message are injected into the Teams conversation.
+
+---
+
 ## API Contracts
 
 ### `GET /api/forms`

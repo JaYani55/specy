@@ -349,7 +349,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     } finally {
       setUploading(false);
     }
-  }, [currentPath, activeSourceId, getAuthHeaders, onChange]);
+  }, [currentPath, activeSourceId, getAuthHeaders, onChange, roles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
