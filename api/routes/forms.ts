@@ -74,6 +74,7 @@ interface FormWithTenantRow extends FormRow {
 
 const normalizeTenantNameSegment = (value: string): string => value
   .toLowerCase()
+  .trim()
   .replace(/ä/g, 'ae')
   .replace(/ö/g, 'oe')
   .replace(/ü/g, 'ue')
@@ -979,7 +980,7 @@ const getFormByShareSlug = async (
   const admin = await createSupabaseAdminClient(env);
   const { data, error } = await admin
     .from('forms')
-    .select('*, tenants:tenant_id (name, slug)')
+    .select('*, tenants (name, slug)')
     .eq('share_slug', shareSlug)
     .eq('share_enabled', true)
     .neq('status', 'archived')

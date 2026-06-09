@@ -30,6 +30,8 @@ The overview is split into the following major processes:
 7. Agent and API interaction
 8. Plugin lifecycle
 9. Runtime content consumption
+10. Isibot flow authoring (PluraDash plugin) — constructs the per-tenant
+    flow document consumed by the separate isibot-fon Cloudflare Worker.
 
 ---
 
@@ -514,6 +516,76 @@ Frontend request
 
 ---
 
+## 10. Isibot Flow Authoring (PluraDash Plugin)
+
+```text
+Pool: ServiceCMS Platform + External isibot-fon Worker
+
+Lane: Staff User (support / super-admin)
+  Start Event: New tenant needs a phone-flow
+  Task: Open /plugins/pluradash/isibot/flow
+  Task: Create new flow or edit existing
+  Task: Configure business hours + config
+  Task: Add and connect nodes (gather/record/dial/hangup)
+  Task: Save flow
+  End Event: Flow persisted
+
+Lane: React SPA (PluraDash plugin)
+  Task: Load descriptors via isibot.flow.types hook
+  Task: Render builder UI with Card/Accordion layout
+  Task: Validate inputs against the discriminated union
+  Task: POST to /api/plugin/pluradash/isibot/flows
+  Task: Display kv_sync.ok from response
+  End Event: Editor state synced with response
+
+Lane: Cloudflare Worker API
+  Task: Authenticate JWT (support | super-admin)
+  Task: Validate payload with Zod (IsibotFlowUpsertSchema)
+  Task: Resolve tenant
+  Task: Upsert JSONB into pluradash.isibot_flows
+  Task: Mirror document to ISIBOT_FLOWS_KV (best-effort)
+  Task: Return { flow, kv_sync: { ok, key, synced_at, error } }
+
+Lane: Supabase
+  Task: Store flow row (RLS: tenant members SELECT, tenant admins WRITE)
+
+Lane: Cloudflare KV
+  Task: Store isibot/{tenantId} -> JSON document
+  End Event: KV mirror visible to isibot-fon worker
+
+Lane: External isibot-fon Worker
+  Start Event: Incoming Twilio call
+  Task: GET isibot/{tenantId} from KV
+  Task: Hydrate TwiML state machine from node map
+  Task: Render welcome_open / welcome_closed based on business_hours
+  End Event: Caller reaches the destination
+```
+
+### Decision Logic
+
+```text
+Save flow
+  -> Supabase row is the source of truth
+  -> KV mirror is best-effort
+  -> kv_sync.ok === false surfaces a warning (no request failure)
+  -> Operator can re-mirror via POST .../sync or the "Jetzt synchronisieren" button
+```
+
+### Flow Document Contract
+
+The full document shape, KV key layout, and KV sync semantics are
+documented in `specs/isibot-flows.md`. The summary:
+
+- JSONB row in `pluradash.isibot_flows` is authoritative.
+- KV key: `isibot/{tenantId}` (single key per tenant holding the full
+  document as JSON).
+- Setup wizard provisions the `isibot-flows` KV namespace + binding on
+  first run; `wrangler.default.jsonc` is never modified.
+- RLS: tenant members SELECT, tenant admins INSERT/UPDATE/DELETE.
+- Auth on the API: support OR super-admin (mirrors the rest of PluraDash).
+
+---
+
 ## Cross-Cutting Control Flows
 
 ### Logging and Observability
@@ -579,6 +651,7 @@ Lane: Staff User
   -> Manage forms
   -> Manage objects
   -> Manage plugins
+  -> Author Isibot phone-flows (PluraDash)
   -> Review answers and logs
   End
 
@@ -593,17 +666,25 @@ Lane: Cloudflare Worker API
   -> Expose REST and MCP endpoints
   -> Validate requests
   -> Log agent/API traffic
-  -> Coordinate revalidation and form submissions
+  -> Coordinate revalidation, form submissions, and Isibot KV mirrors
 
 Lane: Supabase
   -> Store users, roles, pages, schemas, forms, objects, answers, plugins
   -> Enforce RLS
   -> Return data to SPA and API
 
+Lane: Cloudflare KV
+  -> Mirror Isibot flow documents under isibot/{tenantId}
+  -> Read by the external isibot-fon worker on each call
+
 Lane: External Frontend / Agent
   -> Consume schema specs, page content, forms, or objects
   -> Register frontend
   -> Submit answers or request content
+
+Lane: External isibot-fon Worker
+  -> Read isibot/{tenantId} from KV
+  -> Drive TwiML state machine from the per-tenant node map
 ```
 
 ---
@@ -619,3 +700,4 @@ For implementation detail, use these docs alongside this workflow:
 - `docs/Forms.md`
 - `docs/Plugin_Development.md`
 - `docs/Supabase_Cloudflare-Setup.md`
+- `specs/isibot-flows.md` — PluraDash Isibot Flow Builder: JSONB ↔ KV contract, KV key layout, and provisioning notes for the external isibot-fon worker.

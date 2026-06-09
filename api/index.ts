@@ -34,8 +34,9 @@ app.get('*', async (c, next) => {
   }
 
   // Intercept share pages for Forms and Objects (including short versions)
-  const formShareMatch = path.match(/^\/(?:forms\/share|s)\/([^/]+)\/([^/]+)$/);
-  const objectShareMatch = path.match(/^\/(?:objects\/share|o)\/([^/]+)\/([^/]+)$/);
+  // Supported subpaths like /results are also intercepted to ensure SEO metadata
+  const formShareMatch = path.match(/^\/(?:forms\/share|s)\/([^/]+)\/([^/]+)(?:\/.*)?$/);
+  const objectShareMatch = path.match(/^\/(?:objects\/share|o)\/([^/]+)\/([^/]+)(?:\/.*)?$/);
 
   if (formShareMatch || objectShareMatch) {
     const assets = c.env.ASSETS;
@@ -173,8 +174,14 @@ app.route('/mcp', mcpRoute);
 // Plugin API routes (auto-wired from api/plugin-routes.ts)
 mountPluginRoutes(app);
 
-// 404 fallback
-app.notFound((c) => {
+// SPA Fallback for routes caught by run_worker_first but not handled by Hono
+app.notFound(async (c) => {
+  const assets = c.env.ASSETS;
+  if (assets) {
+    const url = new URL(c.req.url);
+    const response = await assets.fetch(new Request(new URL('/index.html', url).toString()));
+    if (response.ok) return response;
+  }
   return c.json({ error: 'Not found' }, 404);
 });
 

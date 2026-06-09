@@ -36,6 +36,34 @@ export interface R2ObjectBody extends R2Object {
   blob(): Promise<Blob>;
 }
 
+/**
+ * Minimal Cloudflare Workers KV binding interface.
+ * Avoids a hard dependency on @cloudflare/workers-types for projects that
+ * don't install them. Extend as needed.
+ *
+ * Provisioned by the setup wizard and bound to the generated wrangler.jsonc
+ * (NEVER wrangler.default.jsonc). The Isibot Flow Builder (PluraDash plugin)
+ * is the only consumer in v1.
+ */
+export interface KVNamespace {
+  /**
+   * Read a value. The return type narrows based on the `type` option:
+   *   - type: 'text'    → string | null
+   *   - type: 'json'    → unknown | null
+   *   - type: 'arrayBuffer' → ArrayBuffer | null
+   *   - type: 'stream'  → ReadableStream | null
+   *   - omitted         → string | null  (default in CF Workers is text)
+   */
+  get(key: string, options: { type: 'text' }): Promise<string | null>;
+  get(key: string, options: { type: 'json' }): Promise<unknown>;
+  get(key: string, options: { type: 'arrayBuffer' }): Promise<ArrayBuffer | null>;
+  get(key: string, options: { type: 'stream' }): Promise<ReadableStream | null>;
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string | ArrayBuffer | ReadableStream | ArrayBufferView | null, options?: { expirationTtl?: number; metadata?: Record<string, unknown> | null }): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<{ keys: Array<{ name: string; metadata?: Record<string, unknown> | null }>; list_complete: boolean; cursor?: string }>;
+}
+
 export interface Fetcher {
   fetch(request: Request | string, init?: RequestInit): Promise<Response>;
 }
@@ -81,6 +109,14 @@ export interface Env {
   // ── Cloudflare R2 bucket binding (optional, only when STORAGE_PROVIDER=r2) ──
   // Bound via r2_buckets in wrangler.jsonc
   MEDIA_BUCKET?: R2Bucket;
+
+  // ── Cloudflare KV binding (optional, provisioned by setup wizard) ───────
+  // The Isibot Flow Builder (PluraDash plugin) writes per-tenant flow
+  // documents here so the separate isibot-fon worker can read them.
+  // The binding is patched into the generated wrangler.jsonc by
+  // `scripts/setup.mjs` (stepIsibotFlowsKv). wrangler.default.jsonc
+  // is intentionally left without the binding.
+  ISIBOT_FLOWS_KV?: KVNamespace;
 
   // ── Cloudflare management credentials ──────────────────────────────────────
   // Used by the /api/secrets routes to call the CF REST API.

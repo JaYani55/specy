@@ -377,6 +377,75 @@ Usage guidance:
 
 > **Important:** the registry exists centrally, but core hook targets are still being adopted incrementally. Only use targets that the CMS explicitly documents as supported.
 
+#### Isibot flow node-type catalog
+
+Target: `isibot.flow.types` (scope: `api`).
+
+Allows plugins to contribute node-type descriptors to the PluraDash Isibot
+Flow Builder (see `specs/isibot-flows.md`). The core exposes an
+abstract descriptor shape; the concrete node-type union (e.g. gather /
+record / dial / hangup) is owned by the contributing plugin.
+
+Contract:
+
+```typescript
+interface IsibotFlowTypesHookContext {
+  descriptors: IsibotFlowTypeDescriptor[];
+}
+
+interface IsibotFlowTypeDescriptor {
+  type: string;             // unique stable id, e.g. "pluradash.isibot.gather"
+  label: string;            // German UI label
+  iconName: string;         // Lucide icon name (resolved by the UI)
+  color: string;            // badge color (CSS hex)
+  description: string;
+  defaultFields: Record<string, unknown>;
+  schemaSummary: Array<{
+    name: string;
+    kind: 'string' | 'number' | 'boolean' | 'enum' | 'string-map' | 'string-list' | 'phone' | 'url';
+    required?: boolean;
+  }>;
+}
+```
+
+The hook is consumed in two places:
+
+- **API** — `getIsibotFlowTypeDescriptors()` (in `api/lib/isibotFlowTypes.ts`)
+  walks `getRegisteredApiPluginHooks()` filtered by target and returns
+  the aggregated array.
+- **React** — `loadIsibotFlowTypeDescriptors(userRoles)` (in
+  `src/services/isibotFlowTypes.ts`) returns the same array on the
+  front-end.
+
+Usage guidance:
+
+- Each descriptor represents a single node type. To add a new type to
+  the builder, append a descriptor to the returned `descriptors` array
+  from your hook handler.
+- The full Zod schema for the node (with type-specific fields) lives in
+  the plugin and is consumed by the plugin's API + UI directly. The
+  core only knows about the abstract descriptor.
+- Use a namespaced `type` id (`<plugin-id>.isibot.<type>`) to avoid
+  collisions across plugins.
+
+Example handler:
+
+```typescript
+{
+  key: 'pluradash-isibot-flow-types',
+  target: 'isibot.flow.types',
+  scope: 'api',
+  kind: 'transform',
+  order: 100,
+  handler: async (context) => {
+    const typed = context as IsibotFlowTypesHookContext;
+    const existing = new Set(typed.descriptors.map((d) => d.type));
+    const fresh = ISIBOT_FLOW_DESCRIPTORS.filter((d) => !existing.has(d.type));
+    return { ...typed, descriptors: [...typed.descriptors, ...fresh] };
+  },
+}
+```
+
 ---
 
 ## 5. Adding Pages and Routes

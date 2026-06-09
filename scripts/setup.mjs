@@ -14,6 +14,10 @@
  *  6b. Write .env with VITE_ vars so Vite bakes them into the frontend bundle
  *  7. Apply database migrations via Supabase Management API
  *  8. Sync Supabase Edge Function secrets + deploy functions/send_email
+ *  8b. Provision ISIBOT_FLOWS_KV namespace for the PluraDash Isibot Flow Builder
+ *      (only when the plugins/pluradash/ directory is present; the binding is
+ *       patched into the generated wrangler.jsonc — wrangler.default.jsonc is
+ *       never modified)
  *  9. Build             (npm run build  — consumes .env)
  * 10. Deploy            (wrangler deploy)
  */
@@ -1146,6 +1150,184 @@ async function stepEdgeFunctionDeployment(projectRef, pat, supabaseUrl, supabase
   }
 }
 
+// ─── Isibot Flow Builder KV provisioning ────────────────────────────────────
+
+const ISIBOT_KV_BINDING = 'ISIBOT_FLOWS_KV';
+const ISIBOT_KV_DISPLAY_TITLE = 'Isibot Flow Builder KV';
+
+/**
+ * Whether the PluraDash plugin is present in the workspace. The KV
+ * provisioning step is only relevant when the plugin (and its API routes)
+ * are installed — we never add an unused binding to wrangler.jsonc.
+ */
+function hasPluradashPlugin() {
+  try {
+    return readFileSync(join(ROOT, 'plugins', 'pluradash', 'plugin.json'), 'utf8').length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract a Cloudflare KV namespace ID from `wrangler kv namespace create`
+ * or `wrangler kv namespace list` output. Returns null when nothing matches.
+ */
+function parseKvNamespaceId(rawOutput) {
+  if (!rawOutput) return null;
+  const json = tryParseJsonOutput(rawOutput);
+  if (Array.isArray(json)) {
+    const match = json.find((entry) => entry && (entry.title === ISIBOT_KV_BINDING || entry.id));
+    if (match?.id) return match.id;
+  }
+  if (json && typeof json === 'object' && typeof json.id === 'string') {
+    return json.id;
+  }
+  const idMatch = rawOutput.match(/[0-9a-f]{32}/i);
+  return idMatch ? idMatch[0] : null;
+}
+
+function tryParseJsonOutput(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function listIsibotKvNamespaces() {
+  // `wrangler kv namespace list` returns either JSON or a tabular list,
+  // depending on wrangler version. We try JSON first and fall back to
+  // regex extraction of any 32-char hex IDs.
+  const raw = wranglerSilent('kv', 'namespace', 'list', '--json');
+  const json = tryParseJsonOutput(raw ?? '');
+  if (Array.isArray(json)) {
+    return json;
+  }
+  if (raw) {
+    const matches = Array.from(raw.matchAll(/[0-9a-f]{32}/gi)).map((m) => m[0]);
+    return matches.map((id) => ({ id, title: '(existing namespace)' }));
+  }
+  return [];
+}
+
+function createIsibotKvNamespace() {
+  const raw = wranglerSilent('kv', 'namespace', 'create', ISIBOT_KV_BINDING);
+  return parseKvNamespaceId(raw ?? '');
+}
+
+/**
+ * Patch the kv_namespaces binding into the *generated* wrangler.jsonc.
+ *
+ * wrangler.default.jsonc is the committed template and is NEVER touched.
+ * The binding lives only in the generated (git-ignored) wrangler.jsonc so
+ * fresh clones can opt in or out by simply deleting that file.
+ *
+ * Idempotent: if the binding is already present, the helper no-ops.
+ */
+function patchWranglerKvNamespaces(namespaceId) {
+  const path = join(ROOT, 'wrangler.jsonc');
+  let txt;
+  try {
+    txt = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+
+  if (txt.includes(`"binding": "${ISIBOT_KV_BINDING}"`)) {
+    // Already patched; nothing to do.
+    return true;
+  }
+
+  // Locate the existing `r2_buckets` array (we place the KV binding right
+  // after it) and append a `kv_namespaces` block. If r2_buckets isn't
+  // present, append at the end of the top-level object.
+  const block = [
+    '',
+    '  // ── Isibot Flow Builder KV ───────────────────────────────────────────────',
+    '  // Provisioned by scripts/setup.mjs (stepIsibotFlowsKv).',
+    '  // PluraDash plugin writes per-tenant flow documents here; the external',
+    '  // isibot-fon worker reads them. wrangler.default.jsonc is intentionally',
+    '  // left without the binding — opt-in via npm run setup.',
+    '  "kv_namespaces": [',
+    `    { "binding": "${ISIBOT_KV_BINDING}", "id": "${namespaceId}" }`,
+    '  ],',
+  ].join('\n');
+
+  const r2Match = txt.match(/"r2_buckets"\s*:\s*\[[\s\S]*?\n\s*\],?/);
+  if (r2Match) {
+    const insertAt = r2Match.index + r2Match[0].length;
+    txt = `${txt.slice(0, insertAt)}\n${block}\n${txt.slice(insertAt)}`;
+  } else {
+    // Fall back to inserting right before the final closing brace of the
+    // top-level object. Find the last '}' that closes the file.
+    const lastBrace = txt.lastIndexOf('}');
+    if (lastBrace === -1) return false;
+    txt = `${txt.slice(0, lastBrace)}\n${block}\n${txt.slice(lastBrace)}`;
+  }
+
+  writeFileSync(path, txt, 'utf8');
+  return true;
+}
+
+async function stepIsibotFlowsKv() {
+  if (!hasPluradashPlugin()) {
+    log.info('PluraDash plugin is not installed — skipping Isibot KV provisioning.');
+    return;
+  }
+
+  const proceed = bailOnCancel(
+    await confirm({
+      message: `Provisionieren Sie den "${ISIBOT_KV_DISPLAY_TITLE}" (${ISIBOT_KV_BINDING}) für die PluraDash-Integration?`,
+      initialValue: true,
+    }),
+  );
+  if (!proceed) {
+    log.info('Übersprungen — setzen Sie ISIBOT_FLOWS_KV später manuell oder führen Sie das Setup erneut aus.');
+    return;
+  }
+
+  const s = spinner();
+  s.start(`Erstelle KV-Namespace "${ISIBOT_KV_BINDING}" (–remote)…`);
+  let namespaceId = createIsibotKvNamespace();
+  if (!namespaceId) {
+    s.stop(pc.yellow('Erstellung fehlgeschlagen — versuche vorhandene Namespaces zu finden …'));
+    const existing = listIsibotKvNamespaces();
+    if (existing.length === 0) {
+      log.warn('Keine bestehenden KV-Namespaces gefunden. Setzen Sie ISIBOT_FLOWS_KV später manuell.');
+      return;
+    }
+    namespaceId = await bailOnCancel(
+      await select({
+        message: 'Welcher bestehende KV-Namespace soll verwendet werden?',
+        options: existing.map((entry) => ({
+          label: `${pc.bold(entry.title || entry.id)}  ${pc.dim(entry.id)}`,
+          value: entry.id,
+        })),
+      }),
+    );
+  } else {
+    s.stop(pc.green(`KV-Namespace erstellt ✓  ${pc.dim(namespaceId)}`));
+  }
+
+  const patch = spinner();
+  patch.start(`Patche wrangler.jsonc mit kv_namespaces (${ISIBOT_KV_BINDING}) …`);
+  const ok = patchWranglerKvNamespaces(namespaceId);
+  if (ok) {
+    patch.stop(pc.green('wrangler.jsonc aktualisiert ✓'));
+  } else {
+    patch.stop(pc.yellow('Patch übersprungen — wrangler.jsonc wurde manuell bearbeitet.'));
+  }
+
+  log.success(
+    `${pc.bold(ISIBOT_KV_BINDING)} → ${pc.dim(namespaceId)}`,
+  );
+}
+
 async function stepBuild() {
   const go = bailOnCancel(
     await confirm({
@@ -1225,6 +1407,7 @@ async function main() {
       `  ${pc.cyan('5.')} Supabase URL ${pc.dim('(var)')} + publishable key ${pc.dim('(Worker secret)')} + secret key ${pc.dim('(Secrets Store)')} + storage`,
       `  ${pc.cyan('6.')} Apply database migrations via Supabase Management API`,
       `  ${pc.cyan('7.')} Sync Supabase Edge Function secrets + deploy ${pc.yellow('send_email')}`,
+      `  ${pc.cyan('7b.')} Provision ${pc.yellow('ISIBOT_FLOWS_KV')} for PluraDash ${pc.dim('(if installed)')}`,
       `  ${pc.cyan('8.')} Register first super-admin user`,
       `  ${pc.cyan('9.')} Build  →  Deploy`,
       '',
@@ -1300,6 +1483,10 @@ async function main() {
   // ── 8. Supabase Edge Function deployment ─────────────────────────────────
   log.step(pc.bold('Step 7 — Supabase Edge Function deployment'));
   await stepEdgeFunctionDeployment(projectRef, supabasePat, supabaseUrl, supabaseSecretKey, encryptionKey);
+
+  // ── 8b. Isibot Flow Builder KV provisioning (PluraDash-only) ─────────────
+  log.step(pc.bold('Step 7b — Isibot Flow Builder KV'));
+  await stepIsibotFlowsKv();
 
   // ── 9. First super-admin user ─────────────────────────────────────────────
   log.step(pc.bold('Step 8 — First super-admin user'));

@@ -32,6 +32,7 @@ interface ObjectWithTenantRow extends ObjectRow {
 
 const normalizeTenantNameSegment = (value: string): string => value
   .toLowerCase()
+  .trim()
   .replace(/ä/g, 'ae')
   .replace(/ö/g, 'oe')
   .replace(/ü/g, 'ue')
@@ -67,7 +68,7 @@ const getObjectByShareSlug = async (
   const admin = await createSupabaseAdminClient(env);
   const { data, error } = await admin
     .from('objects')
-    .select('*, tenants:tenant_id (name, slug)')
+    .select('*, tenants (name, slug)')
     .eq('share_slug', shareSlug)
     .eq('share_enabled', true)
     .neq('status', 'archived')

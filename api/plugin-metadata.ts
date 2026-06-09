@@ -83,6 +83,14 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
         "kind": "transform",
         "order": 100,
         "description": "Adds PluraDash download links for uploaded form files to notification e-mails."
+      },
+      {
+        "key": "pluradash-isibot-flow-types",
+        "target": "isibot.flow.types",
+        "scope": "api",
+        "kind": "transform",
+        "order": 100,
+        "description": "Registers the canonical Isibot flow node types (gather/record/dial/hangup) with the core builder."
       }
     ],
     "apiMetadata": null,
@@ -117,6 +125,22 @@ const registeredPluginMetadata: RegisteredPluginMetadata[] = [
           "forms.fileUpload.notification"
         ],
         "description": "Owns the PluraDash-specific tenant media and form-file routing rules without hardcoding bucket names into core."
+      },
+      {
+        "key": "pluradash-isibot-flow-builder",
+        "kind": "interface",
+        "targets": [
+          "/plugins/pluradash/isibot/flow"
+        ],
+        "description": "Provides the Isibot flow builder route and node-type catalog for the PluraDash plugin."
+      },
+      {
+        "key": "pluradash-isibot-flow-types",
+        "kind": "hook",
+        "targets": [
+          "isibot.flow.types"
+        ],
+        "description": "Owns the canonical Isibot flow node-type descriptors contributed through the core isibot.flow.types hook."
       }
     ]
   }
