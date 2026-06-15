@@ -110,14 +110,6 @@ export interface Env {
   // Bound via r2_buckets in wrangler.jsonc
   MEDIA_BUCKET?: R2Bucket;
 
-  // ── Cloudflare KV binding (optional, provisioned by setup wizard) ───────
-  // The Isibot Flow Builder (PluraDash plugin) writes per-tenant flow
-  // documents here so the separate isibot-fon worker can read them.
-  // The binding is patched into the generated wrangler.jsonc by
-  // `scripts/setup.mjs` (stepIsibotFlowsKv). wrangler.default.jsonc
-  // is intentionally left without the binding.
-  ISIBOT_FLOWS_KV?: KVNamespace;
-
   // ── Cloudflare management credentials ──────────────────────────────────────
   // Used by the /api/secrets routes to call the CF REST API.
   // Set via: npx wrangler secret put CF_API_TOKEN
@@ -127,6 +119,10 @@ export interface Env {
   // Set via vars in wrangler.jsonc (non-sensitive)
   CF_ACCOUNT_ID?: string;
   SECRETS_STORE_ID?: string;
+
+  // ── Local Dev Fallbacks ──────────────────────────────────────────────────
+  // These allow using plain vars in .dev.vars when Secrets Store is not used
+  SUPABASE_SECRET_KEY?: string;
 }
 
 /**
@@ -165,14 +161,26 @@ export async function createSupabaseClient(env: Env, token?: string) {
  * Never falls back to a plain var to prevent accidental exposure.
  */
 export async function createSupabaseAdminClient(env: Env) {
-  if (!env.SS_SUPABASE_SECRET_KEY) {
-    throw new Error('SS_SUPABASE_SECRET_KEY is not bound. Add SUPABASE_SECRET_KEY to your Secrets Store and bind it in wrangler.jsonc.');
+  // 1. Prefer Secrets Store binding (standard for this project in production)
+  if (env.SS_SUPABASE_SECRET_KEY) {
+    const key = await env.SS_SUPABASE_SECRET_KEY.get();
+    return createClient(env.SUPABASE_URL, key, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
   }
-  const key = await env.SS_SUPABASE_SECRET_KEY.get();
-  return createClient(env.SUPABASE_URL, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+
+  // 2. Fall back to plain env var (common for local `wrangler dev` with .dev.vars)
+  if (env.SUPABASE_SECRET_KEY) {
+    return createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+  }
+
+  throw new Error('SS_SUPABASE_SECRET_KEY is not bound and SUPABASE_SECRET_KEY fallback is missing.');
 }
