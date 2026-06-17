@@ -122,7 +122,11 @@ const DocumentLanguageUpdater = () => {
 
 // Content component must be used inside Router
 const AppContent = () => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <LoadingState fullHeight={true} />;
+  }
 
   return (
     <>
