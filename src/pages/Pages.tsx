@@ -917,7 +917,14 @@ const Pages: React.FC = () => {
       setIsLoading(true);
       const data = await getSchemas();
       setSchemas(data);
-      setTenantNames(await getVisibleTenantNameMap(data.map((schema) => schema.tenant_id)));
+
+      // Tenant name resolution is best-effort — don't let it block schema rendering
+      try {
+        setTenantNames(await getVisibleTenantNameMap(data.map((schema) => schema.tenant_id)));
+      } catch (tenantErr) {
+        console.warn('[Pages] Tenant name resolution failed, continuing without tenant labels:', tenantErr);
+        setTenantNames({});
+      }
 
       const groups = groupSchemasByTLD(data);
 

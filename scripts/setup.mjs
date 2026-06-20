@@ -986,6 +986,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202605240004_tenant_assignment_rls_fix.sql',
     '202605240005_console_visibility_hardening.sql',
     '202605240006_webapps_multi_tenant.sql',
+    '202606200001_page_schema_visibility_fix.sql',
     '202605250001_tenant_storage_management.sql',
     'objects.sql',
     '202605310001_markdown_objects.sql',

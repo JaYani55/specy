@@ -129,11 +129,12 @@ The following multi-tenancy migrations were added:
 4. `migrations/202605240004_tenant_assignment_rls_fix.sql`
 5. `migrations/202605240005_console_visibility_hardening.sql`
 6. `migrations/202605250001_tenant_storage_management.sql`
+7. `migrations/202606200001_page_schema_visibility_fix.sql` _(follow-up to `005` — restores visibility of system-owned `page_schemas` rows to all authenticated users, see [Migration 7](#migration-7-page-schema-visibility-fix))_
 
 Manifest status:
 
-- `scripts/lib/core-update.mjs` contains `001` through `005` plus `202605250001_tenant_storage_management.sql`
-- `scripts/setup.mjs` now also contains `001` through `005` plus `202605250001_tenant_storage_management.sql`
+- `scripts/lib/core-update.mjs` contains `001` through `005` plus `202605250001_tenant_storage_management.sql` and `202606200001_page_schema_visibility_fix.sql`
+- `scripts/setup.mjs` now also contains `001` through `005` plus `202605250001_tenant_storage_management.sql` and `202606200001_page_schema_visibility_fix.sql`
 
 This distinction matters operationally:
 
@@ -625,6 +626,52 @@ That means:
 
 ---
 
+## Migration 7: Page Schema Visibility Fix
+
+File: `migrations/202606200001_page_schema_visibility_fix.sql`
+
+### Purpose
+
+This migration is a targeted follow-up to Migration 5. It restores visibility of system-owned `page_schemas` rows to all authenticated users after a regression introduced by hardening.
+
+### Problem
+
+Migration 5 replaced `authenticated_select_page_schemas` with:
+
+```sql
+using (
+  (owner_user_id is null and public.is_super_admin())
+  or public.can_access_owned_row(tenant_id, owner_user_id)
+);
+```
+
+The intent was to tighten access. The side effect was that the system-seeded default schemas (`service-product`, `blog`, etc. with `owner_user_id IS NULL`) only became visible when `public.is_super_admin()` returned true.
+
+This combined with the auth-gated route rendering change in `App.tsx` (documented in [`Architecture.md`](Architecture.md) and `specs/changes/2026-06-20-page-schema-visibility-fix.md`) to produce a console regression:
+
+- non-super-admin users resolve zero rows from `getSchemas()`
+- the empty-state handler in `src/pages/Pages.tsx` interprets that as "no frontends connected yet" and renders the tutorial introduction
+- the underlying data is fine, so the issue is invisible until somebody opens Supabase directly
+
+### Key Changes
+
+- `authenticated_select_page_schemas` is rewritten so that rows with `owner_user_id IS NULL` are visible to every authenticated user, restoring the pre-Migration-5 behavior for system-owned schemas
+- `authenticated_select_page_schema_specs` is updated symmetrically so the spec endpoint chain remains reachable for non-super-admin viewers when the linked schema is system-owned
+- mutating policies introduced in Migration 4 remain unchanged — inserting a row with `owner_user_id IS NULL` still requires `super-admin`
+
+### Operational Effect
+
+- the Pages console once again shows the populated dashboard for authenticated users
+- super-admin visibility is preserved
+- tenant-owned schema visibility is preserved
+- the only effective change is that system-owned schemas are now visible to all authenticated users, matching the original "default schemas are global resources" model
+
+### Why Not Edit Migration 5 In Place
+
+Existing migration files must not be edited once shipped — re-running a migration must produce the same final schema state on every deployment. The fix is therefore delivered as a new migration that drops and re-creates the affected policies.
+
+---
+
 ## Route-Level Changes
 
 Database hardening alone is not sufficient when route handlers use a service client that bypasses RLS. The following route changes were therefore included.
@@ -1042,8 +1089,8 @@ Because there is only one production database, deployment should be treated as a
 
 1. Review all five multi-tenancy migrations in full.
 3. Review `202605250001_tenant_storage_management.sql` in full before rollout.
-4. Confirm update environments will apply `004`, `005`, and `202605250001_tenant_storage_management.sql` through `scripts/lib/core-update.mjs`.
-5. Confirm both `scripts/lib/core-update.mjs` and `scripts/setup.mjs` still include `004`, `005`, and `202605250001_tenant_storage_management.sql` before release.
+4. Confirm update environments will apply `004`, `005`, `202605250001_tenant_storage_management.sql`, and `202606200001_page_schema_visibility_fix.sql` through `scripts/lib/core-update.mjs`.
+5. Confirm both `scripts/lib/core-update.mjs` and `scripts/setup.mjs` still include `004`, `005`, `202605250001_tenant_storage_management.sql`, and `202606200001_page_schema_visibility_fix.sql` before release.
 6. Review the ownership backfill rules for legacy content.
 7. Identify which tables may contain rows with no trustworthy owner signal.
 8. Confirm operational owners for:
@@ -1124,6 +1171,16 @@ That means deployment review must consider both:
 - whether the core storage migration and routes are correct
 - whether the installed plugin hooks grant storage only to the intended users
 
+### 6. Pages Console Required System-Owned Schema Visibility
+
+**Status: resolved by `migrations/202606200001_page_schema_visibility_fix.sql`.**
+
+The `authenticated_select_page_schemas` policy introduced in Migration 5 had the side effect of hiding system-owned `page_schemas` rows (`owner_user_id IS NULL`, e.g. the seeded `service-product` and `blog` defaults) from regular authenticated users, because the visibility clause required `public.is_super_admin()` for that branch.
+
+Combined with the auth-gated route rendering change in `App.tsx` (see [`specs/Architecture.md`](Architecture.md) and `specs/changes/2026-06-20-page-schema-visibility-fix.md`), the Pages console then resolved zero schemas for non-super-admin users. The empty-state handler in `src/pages/Pages.tsx` rendered the onboarding tutorial instead of the populated dashboard, masking the regression as a "no frontends connected yet" message.
+
+The follow-up migration re-opens the SELECT path for system-owned schemas to all authenticated users while leaving the mutating restrictions in Migration 4 untouched. Mutating system-owned schemas still requires `super-admin`, so this is a visibility-only relaxation.
+
 ---
 
 ## Future Follow-Up Work
@@ -1139,6 +1196,7 @@ Recommended next steps:
 5. Document tenant bootstrap and tenant membership administration in user/operator-facing docs.
 6. Consider introducing an explicit migration audit report after production rollout.
 7. Add integration tests that verify managed storage visibility, quota enforcement, and unauthenticated object access for tracked objects.
+8. Audit other console surfaces (`Forms`, `Objects`, `Specs`) for the same class of regression that the auth-gated route rendering change exposed in `Pages` — the underlying tightening of `authenticated_select_*` policies may have hidden UX failures that depend on global reads for system-owned rows.
 
 ---
 
@@ -1159,6 +1217,7 @@ Recommended next steps:
 - `202605240004_tenant_assignment_rls_fix.sql`
 - `202605240005_console_visibility_hardening.sql`
 - `202605250001_tenant_storage_management.sql`
+- `202606200001_page_schema_visibility_fix.sql`
 
 ### Platform-Only Tables After This Change
 

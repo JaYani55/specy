@@ -31,6 +31,7 @@ The application is built using **React 18** with **Vite** as the build tool, fol
     -   **Full SeaTable Decommissioning:** Removed all legacy SeaTable library code, custom hooks, and type definitions. Verified codebase for 0 linting errors post-removal.
     -   **Context API Cleanup:** Refactored `AuthContext` and `DataContext` to eliminate third-party CRM initialization bottlenecks.
     -   **React 18 Named Export Fixes:** Standardized hook imports across high-traffic files (e.g., `App.tsx`) to resolve TS server resolution errors for `useEffect` and `useState`.
+    -   **Auth-Gated Route Rendering:** `AppContent` now reads `loading` from `useAuth()` and renders a full-height `LoadingState` until auth hydration completes, before mounting any routes (including dynamic plugin routes). Previously, routes were rendered immediately with `user?.roles ?? []`, which meant plugin-contributed routes were absent during the auth hydration window and direct visits to plugin URLs (e.g. `/plugins/pluradash/isibot/flow`) fell through to the `*` `NotFound` route. The guard ensures role-based route filtering and `ProtectedRoute` checks operate on a fully-resolved auth state.
 -   **Suggested Next Steps:**
     -   **Route Level Code-Splitting:** Implement `React.lazy` and `Suspense` in `App.tsx` to reduce the initial bundle size and improve load times.
     -   **Standardize Server State:** Categorize all API interactions into TanStack Query hooks (`useQuery`, `useMutation`) to ensure consistent caching and simplified error handling.
