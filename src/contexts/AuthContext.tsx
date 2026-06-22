@@ -137,10 +137,7 @@ const loadAppData = async (session: Session, queryClient: QueryClient) => {
       });
 
       // Update the cache with events that include staff profile pictures
-      await new Promise<void>((resolve) => {
-        queryClient.setQueryData([QUERY_KEYS.EVENTS], eventsWithStaff);
-        resolve();
-      });
+      queryClient.setQueryData([QUERY_KEYS.EVENTS], eventsWithStaff);
     } else {
       queryClient.setQueryData([QUERY_KEYS.EVENTS], []);
     }
@@ -157,12 +154,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isInitialAuthRef = useRef(true);
   const hasInitializedRef = useRef(false);
 
-  // REMOVE the second useEffect with initAuth completely
-  // Keep only this one useEffect for auth management
   useEffect(() => {
     let mounted = true;
+    let authSubscription: any = null; // Track subscription for cleanup
     
-    // Safety timeout
     safetyTimeoutRef.current = window.setTimeout(() => {
       if (mounted) {
         dispatch({ type: 'SET_LOADING', payload: { loading: false } });
@@ -179,7 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: { session }, error } = await authHelpers.getSession();
         if (error) throw error;
 
-        // Set up SINGLE auth listener
+        // 1. Assign listener token to scoped variable for proper cleanup
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
           if (!mounted) return;
 
@@ -187,15 +182,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             case 'SIGNED_IN': {
               if (!newSession) return;
               
-              // Only process if it's the initial auth
+              // Only trigger if it's the initial application cold boot
               if (isInitialAuthRef.current) {
                 const userData = await fetchUserData(newSession);
                 dispatch({ 
                   type: 'AUTH_STATE_CHANGED', 
-                  payload: {
-                    session: newSession,
-                    user: userData
-                  }
+                  payload: { session: newSession, user: userData }
                 });
                 isInitialAuthRef.current = false;
               }
@@ -205,24 +197,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               dispatch({ type: 'LOGOUT_SUCCESS' });
               break;
             }
-            default: {
-              // Ignore all other events
-            }
+            default:
+              break;
           }
         });
 
-        // Handle initial session
+        authSubscription = subscription;
+
+        // Handle initial session check
         if (session) {
           const userData = await fetchUserData(session);
           dispatch({ 
             type: 'AUTH_STATE_CHANGED', 
-            payload: {
-              session,
-              user: userData
-            }
+            payload: { session, user: userData }
           });
-          isInitialAuthRef.current = false;
         }
+        
+        // CRITICAL FIX: If no session was found on startup, the initial auth 
+        // evaluation is officially over. Turn this false so manual logins don't collide.
+        isInitialAuthRef.current = false;
 
         if (safetyTimeoutRef.current) {
           clearTimeout(safetyTimeoutRef.current);
@@ -232,6 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           type: 'AUTH_STATE_CHANGED', 
           payload: { session: null }
         });
+        isInitialAuthRef.current = false;
       } finally {
         dispatch({ type: 'SET_LOADING', payload: { loading: false } });
       }
@@ -241,11 +235,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
+      if (authSubscription) {
+        authSubscription.unsubscribe(); // Clean up memory leak
+      }
       if (safetyTimeoutRef.current) {
         clearTimeout(safetyTimeoutRef.current);
       }
     };
-  }, []); // Empty dependency array
+  }, []);
 
   const fetchUserData = async (session: Session): Promise<User | null> => {
     try {
@@ -313,8 +310,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Update the login function
   const login = async (email: string, password: string): Promise<void> => {
     try {
-      dispatch({ type: 'SET_LOADING', payload: { loading: true } });
-      
       // 1. Clear everything first
       queryClient.removeQueries();
       queryClient.clear();
@@ -356,8 +351,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         payload: { error: error as Error }
       });
       throw error;
-    } finally {
-      dispatch({ type: 'SET_LOADING', payload: { loading: false } });
     }
   };
 
@@ -384,13 +377,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Perform Supabase signout
       await supabase.auth.signOut();
       
-      // Redirect and reload
+      // Redirect (browser immediately unloads page here)
       window.location.href = '/login';
-      window.location.reload();
 
     } catch (error) {
       window.location.href = '/login';
-      window.location.reload();
     }
   };
 

@@ -6,6 +6,7 @@ import Logo from "@/components/shared/Logo";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { Loader2, AlertCircle } from "lucide-react";
+import { AuthApiError } from '@supabase/supabase-js';
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -35,18 +36,21 @@ const Login = () => {
       navigate("/", { replace: true });
     } catch (err: unknown) {
       console.error("Login error:", err);
-      const message = err instanceof Error ? err.message : undefined;
-      
-      // Handle the specific "Not permitted" error
-      if (message?.includes('Not permitted') || message?.includes('Keine Berechtigung')) {
+      const errorObj = err as { name?: string; message?: string };
+      const isAuthApiError = errorObj?.name === 'AuthApiError';
+      const message = isAuthApiError || err instanceof Error ? (err as Error).message : String(err);
+      const trimmedMessage = message?.trim() || '';
+
+      if (trimmedMessage.includes('Email not confirmed') || trimmedMessage.includes('E-Mail nicht bestätigt')) {
+        setError(language === "en" 
+          ? "Please confirm your email address to log in." 
+          : "Bitte bestätigen Sie Ihre E-Mail-Adresse, um sich anzumelden.");
+      } else if (trimmedMessage.includes('Not permitted') || trimmedMessage.includes('Keine Berechtigung')) {
         setError(language === "en" 
           ? "You don't have permission to access this application" 
           : "Sie haben keine Berechtigung für diese Anwendung");
       } else {
-        // Handle other errors
-        setError(message || (language === "en" 
-          ? "Login failed" 
-          : "Anmeldung fehlgeschlagen"));
+        setError(trimmedMessage || (language === "en" ? "Login failed" : "Anmeldung fehlgeschlagen"));
       }
     } finally {
       setIsLoading(false);
