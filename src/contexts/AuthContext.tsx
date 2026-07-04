@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { Session } from '@supabase/supabase-js';
+import type { Subscription } from '@supabase/auth-js';
 import { supabase } from '../lib/supabase';
 import { User, UserRole } from '@/types/auth';
 import { useQueryClient, QueryClient } from '@tanstack/react-query';
@@ -156,7 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    let authSubscription: any = null; // Track subscription for cleanup
+    let authSubscription: Subscription | null = null; // Track subscription for cleanup
     
     safetyTimeoutRef.current = window.setTimeout(() => {
       if (mounted) {

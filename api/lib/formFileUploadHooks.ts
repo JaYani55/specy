@@ -48,11 +48,13 @@ export interface FormFileNotificationLink {
   url: string;
 }
 
+export type FormAnswerValue = string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null;
+
 export interface FormFileNotificationHookContext {
   requestUrl: string;
   form: FormUploadFormRef;
   answerId: string;
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
+  answers: Record<string, FormAnswerValue>;
   fields: FormUploadFieldRef[];
   fileLinks: FormFileNotificationLink[];
 }

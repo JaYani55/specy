@@ -144,7 +144,7 @@ const normalizeInput = (input: SaveFormInput, ownerUserId?: string | null) => {
     if (shareSlugError) throw new Error(shareSlugError);
   }
 
-  return {
+  const payload = {
     name: input.name,
     slug,
     description: input.description || null,
@@ -160,9 +160,13 @@ const normalizeInput = (input: SaveFormInput, ownerUserId?: string | null) => {
     voting_mode: input.voting_mode || 'live',
     deadline_at: input.deadline_at || null,
     reminder_interval: input.reminder_interval || null,
-    tenant_id: input.tenant_id || null,
-    owner_user_id: ownerUserId || null,
     published_at: input.status === 'published' ? new Date().toISOString() : null,
+  };
+
+  return {
+    ...payload,
+    ...(input.tenant_id !== undefined ? { tenant_id: input.tenant_id } : {}),
+    ...(ownerUserId !== undefined ? { owner_user_id: ownerUserId } : {}),
   };
 };
 

@@ -96,6 +96,8 @@ interface MailDeliveryJobRow {
   id: string;
 }
 
+type FormAnswerValue = string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null;
+
 const VALID_FIELD_TYPES = new Set<FormFieldType>([
   'text',
   'textarea',
@@ -165,14 +167,14 @@ const formatAnswerValue = (value: string | number | boolean | string[] | FormUpl
 
 const buildAnswerSummaryText = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>,
+  answers: Record<string, FormAnswerValue>,
 ): string => fields
   .map((field) => `${field.label}: ${formatAnswerValue(answers[field.name] ?? null)}`)
   .join('\n');
 
 const buildAnswerSummaryHtml = (
   fields: FormFieldDefinition[],
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>,
+  answers: Record<string, FormAnswerValue>,
 ): string => fields
   .map((field) => `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;vertical-align:top;">${escapeHtml(field.label)}</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(formatAnswerValue(answers[field.name] ?? null))}</td></tr>`)
   .join('');
@@ -180,7 +182,7 @@ const buildAnswerSummaryHtml = (
 const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | unknown | null>;
+  answers: Record<string, FormAnswerValue>;
   fileLinks: FormFileNotificationLink[];
   answerId: string;
   submittedVia: 'share' | 'api' | 'page';
@@ -309,7 +311,7 @@ const enqueueFormAnswerNotifications = async (input: {
   requestUrl: string;
   form: FormRow;
   fields: FormFieldDefinition[];
-  answers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | null>;
+  answers: Record<string, FormAnswerValue>;
   answerId: string;
   submittedBy: string | null;
   submittedVia: 'share' | 'api' | 'page';
@@ -514,9 +516,9 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
 const validateAnswers = (
   fields: FormFieldDefinition[],
   answers: unknown,
-): { errors: string[]; normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null> } => {
+): { errors: string[]; normalizedAnswers: Record<string, FormAnswerValue> } => {
   const errors: string[] = [];
-  const normalizedAnswers: Record<string, string | number | boolean | string[] | FormUploadedFileValue | Record<string, unknown> | null> = {};
+  const normalizedAnswers: Record<string, FormAnswerValue> = {};
 
   if (!isPlainObject(answers)) {
     return { errors: ['answers must be an object.'], normalizedAnswers };
@@ -1239,7 +1241,7 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
       form_id: form.id,
       submitted_by: submittedBy,
       submitter_name: submitterName,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       source_slug: sourceSlug,
       submitted_via: 'share',
       ip_address: c.req.header('cf-connecting-ip') ?? null,
@@ -1255,7 +1257,7 @@ forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
       requestUrl: c.req.url,
       form,
       fields,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       answerId,
       submittedBy,
       submittedVia: 'share',
@@ -1317,7 +1319,7 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
       form_id: form.id,
       submitted_by: submittedBy,
       submitter_name: submitterName,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       source_slug: sourceSlug,
       submitted_via: 'share',
       ip_address: c.req.header('cf-connecting-ip') ?? null,
@@ -1333,7 +1335,7 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
       requestUrl: c.req.url,
       form,
       fields,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       answerId,
       submittedBy,
       submittedVia: 'share',
@@ -1415,7 +1417,7 @@ forms.post('/:identifier/answers', async (c) => {
       id: answerId,
       form_id: form.id,
       submitted_by: submittedBy,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       source_slug: sourceSlug,
       submitted_via: submittedVia,
       ip_address: c.req.header('cf-connecting-ip') ?? null,
@@ -1431,7 +1433,7 @@ forms.post('/:identifier/answers', async (c) => {
       requestUrl: c.req.url,
       form,
       fields,
-      answers: normalizedAnswers as any,
+      answers: normalizedAnswers,
       answerId,
       submittedBy,
       submittedVia,
