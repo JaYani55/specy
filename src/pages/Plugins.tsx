@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Puzzle,
@@ -80,7 +80,7 @@ import {
   upsertSecret,
   type CfSecret,
 } from '@/services/connectionsService';
-import type { PluginConfigFieldDefinition, PluginRegistration } from '@/types/plugin';
+import type { PluginConfigFieldDefinition, PluginDefinition, PluginRegistration } from '@/types/plugin';
 import { getPlugins } from '@/plugins/loader';
 
 // ─── Status badge ──────────────────────────────────────────────────────────────
@@ -235,6 +235,10 @@ export default function Plugins() {
 
   // Runtime plugins (from build-time registry)
   const runtimePlugins = getPlugins();
+  const runtimePluginBySlug = useMemo(
+    () => new Map(runtimePlugins.map((plugin) => [plugin.id, plugin])),
+    [runtimePlugins],
+  );
 
   // ── Guard ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -624,6 +628,7 @@ export default function Plugins() {
             <PluginCard
               key={plugin.id}
               plugin={plugin}
+              runtimePlugin={runtimePluginBySlug.get(plugin.slug) ?? null}
               tenantLabel={plugin.tenant_id ? (tenantNames[plugin.tenant_id] ?? null) : null}
               isActive={!isWebappRegistration(plugin) && runtimePlugins.some((r) => r.id === plugin.slug)}
               onConfig={isWebappRegistration(plugin) ? undefined : () => openConfig(plugin)}
@@ -1082,6 +1087,7 @@ export default function Plugins() {
 // ─── Plugin Card ──────────────────────────────────────────────────────────────
 interface PluginCardProps {
   plugin: PluginRegistration;
+  runtimePlugin: PluginDefinition | null;
   tenantLabel?: string | null;
   isActive: boolean;
   onConfig?: () => void;
@@ -1090,7 +1096,7 @@ interface PluginCardProps {
   onDelete: () => void;
 }
 
-function PluginCard({ plugin, tenantLabel, isActive, onConfig, onManageWebappTenant, onToggle, onDelete }: PluginCardProps) {
+function PluginCard({ plugin, runtimePlugin, tenantLabel, isActive, onConfig, onManageWebappTenant, onToggle, onDelete }: PluginCardProps) {
   const isWebapp = isWebappRegistration(plugin);
   const badge = STATUS_BADGE[plugin.status] ?? STATUS_BADGE.registered;
   const schemaFields = getPluginSchemaFields(plugin);
@@ -1098,6 +1104,9 @@ function PluginCard({ plugin, tenantLabel, isActive, onConfig, onManageWebappTen
   const publicCount = schemaFields.length - secretCount;
   const link = getPluginLink(plugin);
   const linkLabel = getPluginLinkLabel(plugin.kind);
+  const apiRoutes = runtimePlugin?.apiMetadata?.routes ?? [];
+  const capabilities = runtimePlugin?.capabilities ?? [];
+  const apiBasePath = runtimePlugin?.apiMetadata?.basePath ?? (runtimePlugin ? `/api/plugin/${runtimePlugin.id}` : null);
 
   return (
     <Card>
@@ -1159,6 +1168,48 @@ function PluginCard({ plugin, tenantLabel, isActive, onConfig, onManageWebappTen
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription className="text-xs">{plugin.error_message}</AlertDescription>
           </Alert>
+        )}
+
+        {!isWebapp && runtimePlugin && apiRoutes.length > 0 && (
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Shield className="h-4 w-4 text-violet-600" />
+              Plugin-Endpunkte
+            </div>
+            <div className="space-y-2 text-xs text-muted-foreground">
+              {apiRoutes.map((route) => (
+                <div key={route.id} className="rounded-md bg-muted/40 px-3 py-2">
+                  <div className="font-mono text-foreground">{route.method} {apiBasePath}{route.path}</div>
+                  {route.summary && <div>{route.summary}</div>}
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1">
+                    <span>Auth: {route.auth ?? 'public'}</span>
+                    <span>Logging: {route.logging ?? 'agentLogger'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!isWebapp && runtimePlugin && capabilities.length > 0 && (
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Info className="h-4 w-4 text-primary" />
+              Runtime-Fähigkeiten
+            </div>
+            <div className="space-y-2 text-xs text-muted-foreground">
+              {capabilities.map((capability) => (
+                <div key={capability.key} className="rounded-md bg-muted/40 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-foreground">{capability.key}</span>
+                    <Badge variant="outline">{capability.kind}</Badge>
+                  </div>
+                  {capability.description && <div className="pt-1">{capability.description}</div>}
+                  {capability.targets?.length ? <div className="pt-1 font-mono">{capability.targets.join(', ')}</div> : null}
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         <Separator />

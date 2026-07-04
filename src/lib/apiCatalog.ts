@@ -1,3 +1,5 @@
+import { getPluginApiRoutes } from '@/plugins/loader';
+
 export type ApiParameterLocation = 'path' | 'query' | 'header' | 'body';
 
 export type ApiEndpointMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -39,7 +41,7 @@ export function buildLoggingEndpointKey(endpoint: Pick<ApiEndpointDefinition, 'm
   return `${endpoint.method} ${endpoint.path}`;
 }
 
-export const API_CATALOG: ApiEndpointDefinition[] = [
+export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
   {
     id: 'root-discovery',
     tag: 'Platform',
@@ -1225,130 +1227,6 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
     notes: ['Exposes tools like list_schemas, get_schema_spec, register_frontend, and check_health.', 'Transport semantics are defined by @modelcontextprotocol/sdk and @hono/mcp.'],
   },
   {
-    id: 'pluradash-isibot-recordings-register',
-    tag: 'Plugins',
-    method: 'POST',
-    path: '/api/plugin/pluradash/connectors/isibot/recordings',
-    summary: 'Register a direct-uploaded Isibot recording in managed tenant storage',
-    description: 'Worker-only connector endpoint for the separate isibot-fon service. Accepts metadata for an already uploaded recording object, validates the managed tenant prefix, resolves the tenant storage owner, and inserts one row into tenant_storage_objects.',
-    auth: 'worker-secret',
-    mountsAt: '/api/plugin/pluradash',
-    sourceFile: 'plugins/pluradash/api/index.ts',
-    logging: 'agentLogger',
-    parameters: [
-      { name: 'Authorization', in: 'header', required: true, type: 'Bearer connector secret', description: 'PLURADASH_CONNECTOR_SECRET or fallback PLURADASH_STREAM_SECRET.' },
-      { name: 'tenantId', in: 'body', required: true, type: 'uuid', description: 'Tenant/workspace UUID used for ownership and prefix validation.' },
-      { name: 'objectKey', in: 'body', required: true, type: 'string', description: 'Existing R2 object key under tenant/{tenantId}/user/{ownerUserId}/files/Recordings/... .' },
-      { name: 'filename', in: 'body', required: true, type: 'string', description: 'Original display filename to persist in tenant_storage_objects.' },
-      { name: 'sizeBytes', in: 'body', required: true, type: 'number', description: 'Final stored object size in bytes.' },
-      { name: 'contentType', in: 'body', required: false, type: 'string', description: 'Optional MIME type such as audio/wav.' },
-      { name: 'folderPath', in: 'body', required: false, type: 'string', description: 'Optional subfolder that is nested under Recordings/ before prefix validation.' },
-    ],
-    requestExample: `{
-  "tenantId": "4d2f6e78-7b18-4d8b-9b79-4d834ecb1234",
-  "objectKey": "tenant/4d2f6e78-7b18-4d8b-9b79-4d834ecb1234/user/8f3d36e6-1f77-4c55-b4a6-22a9f74d5678/files/Recordings/2026/07/04/call-2026-07-04.wav",
-  "filename": "call-2026-07-04.wav",
-  "sizeBytes": 182736,
-  "contentType": "audio/wav",
-  "folderPath": "2026/07/04"
-}`,
-    responseExamples: [
-      {
-        status: 201,
-        description: 'Recording metadata registered.',
-        example: `{
-  "created": true,
-  "item": {
-    "id": "uuid",
-    "tenantId": "4d2f6e78-7b18-4d8b-9b79-4d834ecb1234",
-    "userId": "8f3d36e6-1f77-4c55-b4a6-22a9f74d5678",
-    "filename": "call-2026-07-04.wav",
-    "objectKey": "tenant/.../files/Recordings/2026/07/04/call-2026-07-04.wav",
-    "folderPath": "Recordings/2026/07/04",
-    "contentType": "audio/wav",
-    "sizeBytes": 182736,
-    "sourceMountId": "pluradash",
-    "retrievalUrl": "https://cms.example.com/api/media/object/...",
-    "downloadUrl": "https://cms.example.com/plugins/pluradash?tenantId=...&path=Recordings/2026/07/04&download=tenant/...",
-    "createdAt": "2026-07-04T10:00:00.000Z"
-  }
-}`,
-      },
-      {
-        status: 409,
-        description: 'The object key is already registered with conflicting metadata.',
-        example: `{
-  "error": "objectKey is already registered to a different managed file."
-}`,
-      },
-    ],
-    sideEffects: ['Inserts one row into tenant_storage_objects when the object key is not already tracked.', 'Increments used_bytes_cached through the tenant storage trigger.', 'Resolves ownership from tenants.default_for_user_id or tenants.created_by.'],
-    tables: ['tenant_storage_objects', 'tenant_storage_allocations', 'tenants'],
-    notes: ['The worker must upload the file to R2 before calling this endpoint.', 'This route writes metadata only and never streams file bytes through the CMS.'],
-  },
-  {
-    id: 'pluradash-isibot-archive-register',
-    tag: 'Plugins',
-    method: 'POST',
-    path: '/api/plugin/pluradash/connectors/isibot/archive-files',
-    summary: 'Register an arbitrary direct-uploaded Dateiarchiv file for PluraDash',
-    description: 'Worker-only connector endpoint for generic downloadable files. Restricts folder registration to file-archive/... paths, validates the managed tenant prefix, and inserts one row into tenant_storage_objects for the resolved tenant owner.',
-    auth: 'worker-secret',
-    mountsAt: '/api/plugin/pluradash',
-    sourceFile: 'plugins/pluradash/api/index.ts',
-    logging: 'agentLogger',
-    parameters: [
-      { name: 'Authorization', in: 'header', required: true, type: 'Bearer connector secret', description: 'PLURADASH_CONNECTOR_SECRET or fallback PLURADASH_STREAM_SECRET.' },
-      { name: 'tenantId', in: 'body', required: true, type: 'uuid', description: 'Tenant/workspace UUID used for ownership and prefix validation.' },
-      { name: 'objectKey', in: 'body', required: true, type: 'string', description: 'Existing R2 object key under tenant/{tenantId}/user/{ownerUserId}/files/file-archive/... .' },
-      { name: 'filename', in: 'body', required: true, type: 'string', description: 'Display filename stored in tenant_storage_objects.' },
-      { name: 'sizeBytes', in: 'body', required: true, type: 'number', description: 'Final stored object size in bytes.' },
-      { name: 'contentType', in: 'body', required: false, type: 'string', description: 'Optional MIME type for download responses.' },
-      { name: 'folderPath', in: 'body', required: true, type: 'string', description: 'Managed archive folder, restricted to file-archive/... .' },
-    ],
-    requestExample: `{
-  "tenantId": "4d2f6e78-7b18-4d8b-9b79-4d834ecb1234",
-  "objectKey": "tenant/4d2f6e78-7b18-4d8b-9b79-4d834ecb1234/user/8f3d36e6-1f77-4c55-b4a6-22a9f74d5678/files/file-archive/isibot/transcript.txt",
-  "filename": "transcript.txt",
-  "sizeBytes": 4096,
-  "contentType": "text/plain",
-  "folderPath": "file-archive/isibot"
-}`,
-    responseExamples: [
-      {
-        status: 201,
-        description: 'Archive metadata registered.',
-        example: `{
-  "created": true,
-  "item": {
-    "id": "uuid",
-    "tenantId": "4d2f6e78-7b18-4d8b-9b79-4d834ecb1234",
-    "userId": "8f3d36e6-1f77-4c55-b4a6-22a9f74d5678",
-    "filename": "transcript.txt",
-    "objectKey": "tenant/.../files/file-archive/isibot/transcript.txt",
-    "folderPath": "file-archive/isibot",
-    "contentType": "text/plain",
-    "sizeBytes": 4096,
-    "sourceMountId": "pluradash",
-    "retrievalUrl": "https://cms.example.com/api/media/object/...",
-    "downloadUrl": "https://cms.example.com/plugins/pluradash?tenantId=...&path=file-archive/isibot&download=tenant/...",
-    "createdAt": "2026-07-04T10:00:00.000Z"
-  }
-}`,
-      },
-      {
-        status: 400,
-        description: 'Folder path escapes the allowed archive namespace.',
-        example: `{
-  "error": "folderPath must stay within the file-archive namespace."
-}`,
-      },
-    ],
-    sideEffects: ['Inserts one row into tenant_storage_objects when the object key is not already tracked.', 'Increments used_bytes_cached through the tenant storage trigger.', 'Makes the file browseable through the PluraDash Dateiarchiv UI and download route.'],
-    tables: ['tenant_storage_objects', 'tenant_storage_allocations', 'tenants'],
-    notes: ['The worker must upload the file to R2 before calling this endpoint.', 'This route is limited to file-archive/... registrations and rejects other folder roots.'],
-  },
-  {
     id: 'plugin-routes-dynamic',
     tag: 'Plugins',
     method: 'GET',
@@ -1370,8 +1248,40 @@ export const API_CATALOG: ApiEndpointDefinition[] = [
   },
 ];
 
-export const AGENT_LOGGER_ENDPOINTS = API_CATALOG.filter(
-  (endpoint) => endpoint.logging === 'agentLogger' && endpoint.path.startsWith('/'),
-);
+function toPluginApiEndpoint(route: ReturnType<typeof getPluginApiRoutes>[number]): ApiEndpointDefinition {
+  return {
+    id: route.id,
+    tag: route.tag,
+    method: route.method,
+    path: `${route.basePath}${route.path}`,
+    summary: route.summary ?? `${route.pluginName} API route`,
+    description: route.description ?? `Plugin-provided endpoint from ${route.pluginName}.`,
+    auth: route.auth ?? 'public',
+    mountsAt: route.basePath,
+    sourceFile: `plugins/${route.pluginId}/api/index.ts`,
+    logging: route.logging ?? 'agentLogger',
+    parameters: route.parameters,
+    requestExample: route.requestExample,
+    responseExamples: route.responseExamples ?? [{ status: 200, description: 'Route-specific response.' }],
+    sideEffects: route.sideEffects,
+    tables: route.tables,
+    notes: route.notes,
+  };
+}
 
-export const API_TAGS = Array.from(new Set(API_CATALOG.map((endpoint) => endpoint.tag)));
+export function getApiCatalog(userRoles?: string[]): ApiEndpointDefinition[] {
+  return [
+    ...CORE_API_CATALOG,
+    ...getPluginApiRoutes(userRoles).map(toPluginApiEndpoint),
+  ];
+}
+
+export function getAgentLoggerEndpoints(userRoles?: string[]): ApiEndpointDefinition[] {
+  return getApiCatalog(userRoles).filter(
+    (endpoint) => endpoint.logging === 'agentLogger' && endpoint.path.startsWith('/'),
+  );
+}
+
+export function getApiTags(userRoles?: string[]): string[] {
+  return Array.from(new Set(getApiCatalog(userRoles).map((endpoint) => endpoint.tag)));
+}

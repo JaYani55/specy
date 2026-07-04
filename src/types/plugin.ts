@@ -120,17 +120,49 @@ export interface PluginHookContribution<TContext = unknown, TResult = unknown>
 }
 
 export interface PluginApiRouteMetadata {
+  /** Stable endpoint identifier inside the plugin namespace. */
+  id: string;
   /** HTTP method, e.g. GET or POST. */
-  method: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   /** Plugin-local path starting with '/'. */
   path: string;
   /** Optional human-readable summary. */
   summary?: string;
+  /** Optional long-form description for admin API tooling. */
+  description?: string;
+  /** Auth model for the endpoint. */
+  auth?: 'public' | 'bearer-optional' | 'bearer-required' | 'worker-secret';
+  /** Logging model for the endpoint. */
+  logging?: 'agentLogger' | 'internal' | 'none';
+  /** Optional parameter descriptors. */
+  parameters?: Array<{
+    name: string;
+    in: 'path' | 'query' | 'header' | 'body';
+    required: boolean;
+    type: string;
+    description: string;
+  }>;
+  /** Optional request-body example. */
+  requestExample?: string;
+  /** Optional response examples. */
+  responseExamples?: Array<{
+    status: number;
+    description: string;
+    example?: string;
+  }>;
+  /** Optional side-effect notes. */
+  sideEffects?: string[];
+  /** Optional backing stores/tables. */
+  tables?: string[];
+  /** Optional operator notes. */
+  notes?: string[];
 }
 
 export interface PluginApiMetadata {
   /** Optional base path override for discovery. Defaults to /api/plugin/{slug}. */
   basePath?: string;
+  /** Optional grouping tag used by admin tooling. Defaults to 'Plugins'. */
+  tag?: string;
   /** Optional list of plugin API routes for discovery. */
   routes?: PluginApiRouteMetadata[];
 }

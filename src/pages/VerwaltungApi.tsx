@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { AGENT_LOGGER_ENDPOINTS, API_CATALOG, API_TAGS, buildLoggingEndpointKey, type ApiEndpointDefinition } from '@/lib/apiCatalog';
+import { buildLoggingEndpointKey, getAgentLoggerEndpoints, getApiCatalog, getApiTags, type ApiEndpointDefinition } from '@/lib/apiCatalog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -238,7 +238,10 @@ const VerwaltungApi: React.FC = () => {
   const [loggingLoading, setLoggingLoading] = useState(true);
   const [loggingSaving, setLoggingSaving] = useState(false);
 
-  const loggableEndpoints = useMemo(() => AGENT_LOGGER_ENDPOINTS, []);
+  const apiCatalog = useMemo(() => getApiCatalog(permissions.userRoles), [permissions.userRoles]);
+  const apiTags = useMemo(() => getApiTags(permissions.userRoles), [permissions.userRoles]);
+
+  const loggableEndpoints = useMemo(() => getAgentLoggerEndpoints(permissions.userRoles), [permissions.userRoles]);
   const allLoggableKeys = useMemo(
     () => loggableEndpoints.map((endpoint) => buildLoggingEndpointKey(endpoint)),
     [loggableEndpoints],
@@ -286,16 +289,16 @@ const VerwaltungApi: React.FC = () => {
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://cms.example.com';
 
   const counts = useMemo(() => {
-    const mutable = API_CATALOG.filter((endpoint) => endpoint.method !== 'GET').length;
-    const authProtected = API_CATALOG.filter((endpoint) => endpoint.auth !== 'public').length;
+    const mutable = apiCatalog.filter((endpoint) => endpoint.method !== 'GET').length;
+    const authProtected = apiCatalog.filter((endpoint) => endpoint.auth !== 'public').length;
     const logged = loggingLoading ? allLoggableKeys.length : selectedLogKeys.length;
     return {
-      total: API_CATALOG.length,
+      total: apiCatalog.length,
       mutable,
       authProtected,
       logged,
     };
-  }, [allLoggableKeys.length, loggingLoading, selectedLogKeys.length]);
+  }, [allLoggableKeys.length, apiCatalog, loggingLoading, selectedLogKeys.length]);
 
   const selectedLogKeySet = useMemo(() => new Set(selectedLogKeys), [selectedLogKeys]);
 
@@ -346,7 +349,7 @@ const VerwaltungApi: React.FC = () => {
 
   const filteredEndpoints = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return API_CATALOG.filter((endpoint) => {
+    return apiCatalog.filter((endpoint) => {
       const matchesTag = activeTag === 'all' || endpoint.tag === activeTag;
       if (!matchesTag) return false;
       if (!normalizedQuery) return true;
@@ -361,14 +364,14 @@ const VerwaltungApi: React.FC = () => {
       ].join(' ').toLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [activeTag, query]);
+  }, [activeTag, apiCatalog, query]);
 
   const grouped = useMemo(() => {
-    return API_TAGS.reduce<Record<string, ApiEndpointDefinition[]>>((accumulator, tag) => {
+    return apiTags.reduce<Record<string, ApiEndpointDefinition[]>>((accumulator, tag) => {
       accumulator[tag] = filteredEndpoints.filter((endpoint) => endpoint.tag === tag);
       return accumulator;
     }, {});
-  }, [filteredEndpoints]);
+  }, [apiTags, filteredEndpoints]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -462,13 +465,13 @@ const VerwaltungApi: React.FC = () => {
             <Tabs value={activeTag} onValueChange={setActiveTag}>
               <TabsList className="flex h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
                 <TabsTrigger value="all">{language === 'de' ? 'Alle' : 'All'}</TabsTrigger>
-                {API_TAGS.map((tag) => (
+                {apiTags.map((tag) => (
                   <TabsTrigger key={tag} value={tag}>{tag}</TabsTrigger>
                 ))}
               </TabsList>
               <TabsContent value={activeTag} className="mt-6 space-y-6">
                 {activeTag === 'all' ? (
-                  API_TAGS.map((tag) => (
+                  apiTags.map((tag) => (
                     grouped[tag]?.length ? (
                       <section key={tag} className="space-y-4">
                         <div className="flex items-center justify-between gap-3">

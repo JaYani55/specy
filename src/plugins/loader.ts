@@ -7,6 +7,8 @@
 
 import registeredPlugins from './registry';
 import type {
+  PluginApiMetadata,
+  PluginApiRouteMetadata,
   PluginCapabilityDescriptor,
   PluginDefinition,
   PluginHookContribution,
@@ -123,6 +125,28 @@ export function getPluginCapabilities(userRoles?: string[]): Array<PluginCapabil
     (plugin.capabilities ?? []).map((capability) => ({
       ...capability,
       pluginId: plugin.id,
+    }))
+  );
+}
+
+export function getPluginApiMetadata(userRoles?: string[]): Array<PluginApiMetadata & { pluginId: string; pluginName: string }> {
+  return getPlugins(userRoles)
+    .filter((plugin) => Boolean(plugin.apiMetadata))
+    .map((plugin) => ({
+      ...(plugin.apiMetadata as PluginApiMetadata),
+      pluginId: plugin.id,
+      pluginName: plugin.name,
+    }));
+}
+
+export function getPluginApiRoutes(userRoles?: string[]): Array<PluginApiRouteMetadata & { pluginId: string; pluginName: string; basePath: string; tag: string }> {
+  return getPluginApiMetadata(userRoles).flatMap((metadata) =>
+    (metadata.routes ?? []).map((route) => ({
+      ...route,
+      pluginId: metadata.pluginId,
+      pluginName: metadata.pluginName,
+      basePath: metadata.basePath ?? `/api/plugin/${metadata.pluginId}`,
+      tag: metadata.tag ?? 'Plugins',
     }))
   );
 }
