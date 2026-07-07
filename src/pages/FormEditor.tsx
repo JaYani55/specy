@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
+import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from '@/services/formService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { type FormFieldDefinition, type FormNotificationStaffOption, type FormRecord } from '@/types/forms';
@@ -66,6 +68,7 @@ const FormEditor = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { user } = useAuth();
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(formId));
   const [isSaving, setIsSaving] = useState(false);
   const [name, setName] = useState('');
@@ -257,6 +260,29 @@ const FormEditor = () => {
         : await createForm(payload);
 
       toast.success(language === 'en' ? 'Form saved.' : 'Formular gespeichert.');
+
+      // Trigger afterCreate hook for KB auto sync
+      if (!formId && savedForm.id) {
+        try {
+          const { getPluginHooks } = await import('@/plugins/loader');
+          const hooks = getPluginHooks('knowledgeBase.entity.afterCreate', user?.roles || []);
+          const context = {
+            entityType: 'form',
+            entityId: savedForm.id,
+            tenantId: tenantId || null,
+          };
+          for (const hook of hooks) {
+            try {
+              await hook.handler(context);
+            } catch (hErr) {
+              console.error('Error running afterCreate hook:', hErr);
+            }
+          }
+        } catch (hookErr) {
+          console.error('Failed to run afterCreate hooks:', hookErr);
+        }
+      }
+
       navigate(`/forms/${savedForm.id}`, { replace: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to save form.');
@@ -421,6 +447,13 @@ const FormEditor = () => {
                       {language === 'en' ? 'Add Standard Name Field' : 'Standard Namensfeld hinzufügen'}
                     </Button>
                   </div>
+              {formId && (
+                <EntityActionsRow
+                  entityType="form"
+                  entityId={formId}
+                  tenantId={tenantId}
+                />
+              )}
                 </div>
               </div>
             )}

@@ -22,6 +22,8 @@ import {
   listRegistryMcpSpecs,
   type DiscoverableSpecSummary,
 } from '../lib/specRegistry';
+import { registerPluginMcpTools } from '../lib/mcpHooks';
+import type { VerifiedAuthSession } from '../lib/auth';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -95,11 +97,18 @@ const newSchemaToolSchema = {
   }).optional().describe('Optional schema routing and integration requirements'),
 };
 
-async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed: boolean, authToken: string | null) {
+async function createMcpServerWithTools(
+  env: Env,
+  baseUrl: string,
+  includeClosed: boolean,
+  authSession: VerifiedAuthSession | null,
+) {
   const server = new McpServer({
     name: 'specy',
     version: '1.0.0',
   });
+
+  const authToken = authSession?.token ?? null;
 
   const supabase = await createSupabaseClient(env, authToken ?? undefined);
 
@@ -621,6 +630,15 @@ async function createMcpServerWithTools(env: Env, baseUrl: string, includeClosed
     );
   });
 
+  await registerPluginMcpTools({
+    env,
+    server,
+    baseUrl,
+    auth: authSession,
+    includeClosed,
+    registeredToolNames,
+  });
+
   return server;
 }
 
@@ -735,7 +753,7 @@ mcpRoute.all('/', async (c) => {
   }
 
   const transport = new StreamableHTTPTransport();
-  const mcpServer = await createMcpServerWithTools(c.env, baseUrl, includeClosed, authSession?.token ?? null);
+  const mcpServer = await createMcpServerWithTools(c.env, baseUrl, includeClosed, authSession);
   await mcpServer.connect(transport);
 
   return transport.handleRequest(c);

@@ -56,4 +56,3 @@ api/plugin-metadata.ts
 # Per-plugin npm dependency tracking (gitignored — keeps plugin deps out of package.json).
 # Reinstalled automatically by ensure-registry.mjs on every predev/prebuild.
 plugin-deps.json
-

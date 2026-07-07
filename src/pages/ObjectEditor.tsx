@@ -31,6 +31,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ObjectContentBlocksEditor } from '@/components/objects/ObjectContentBlocksEditor';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
+import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { createObject, generateObjectSlug, getObject, updateObject } from '@/services/objectService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import type { ContentBlock } from '@/types/pagebuilder';
@@ -1126,6 +1128,7 @@ const ObjectEditor: React.FC = () => {
   const { objectId } = useParams<{ objectId: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { user } = useAuth();
   const isEditing = !!objectId && objectId !== 'new';
 
   const [isLoading, setIsLoading] = useState(isEditing);
@@ -1409,6 +1412,29 @@ const ObjectEditor: React.FC = () => {
         toast.success(language === 'en' ? 'Object saved.' : 'Objekt gespeichert.');
       } else {
         const created = await createObject(payload);
+
+        // Trigger afterCreate hook for KB auto sync
+        if (created?.id) {
+          try {
+            const { getPluginHooks } = await import('@/plugins/loader');
+            const hooks = getPluginHooks('knowledgeBase.entity.afterCreate', user?.roles || []);
+            const context = {
+              entityType: 'object',
+              entityId: created.id,
+              tenantId: tenantId || null,
+            };
+            for (const hook of hooks) {
+              try {
+                await hook.handler(context);
+              } catch (hErr) {
+                console.error('Error running afterCreate hook:', hErr);
+              }
+            }
+          } catch (hookErr) {
+            console.error('Failed to run afterCreate hooks:', hookErr);
+          }
+        }
+
         toast.success(language === 'en' ? 'Object created.' : 'Objekt erstellt.');
         navigate(`/objects/${created.id}`, { replace: true });
       }
@@ -1544,6 +1570,13 @@ const ObjectEditor: React.FC = () => {
                     : 'Wofür wird dieses Objekt verwendet?'
                 }
               />
+              {isEditing && existingObject && (
+                <EntityActionsRow
+                  entityType="object"
+                  entityId={existingObject.id}
+                  tenantId={tenantId}
+                />
+              )}
             </div>
 
             <div className="space-y-1.5">

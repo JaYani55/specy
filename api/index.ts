@@ -14,6 +14,7 @@ import pluginsRoute from './routes/plugins';
 import formsRoute from './routes/forms';
 import objectsRoute from './routes/objects';
 import specsRoute from './routes/specs';
+import knowledgeBase from './routes/knowledgeBase';
 import { mountPluginRoutes } from './plugin-routes';
 import { agentLogger } from './middleware/agentLogger';
 
@@ -169,6 +170,7 @@ app.route('/api/plugins', pluginsRoute);
 app.route('/api/forms', formsRoute);
 app.route('/api/objects', objectsRoute);
 app.route('/api/specs', specsRoute);
+app.route('/api/knowledge-base', knowledgeBase);
 app.route('/mcp', mcpRoute);
 
 // Plugin API routes (auto-wired from api/plugin-routes.ts)

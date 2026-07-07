@@ -38,6 +38,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Save, Eye, Loader2, ExternalLink, Plus, Trash2, ChevronDown, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { savePage, triggerRevalidation } from '@/services/pageService';
 import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
 import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
@@ -726,6 +729,8 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   });
 
   // ── Save state
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [isSaving, setIsSaving]                 = useState(false);
   const [savedSlug, setSavedSlug]               = useState<string | null>(null);
   const [revalResult, setRevalResult]           = useState<{ success: boolean; message: string } | null>(null);
@@ -805,6 +810,30 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
 
       const result = await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
       setSavedSlug(result.slug);
+      // Trigger afterCreate hook for KB auto sync
+      if (!pageId && result.id) {
+        try {
+          const { getPluginHooks } = await import('@/plugins/loader');
+          const hooks = getPluginHooks('knowledgeBase.entity.afterCreate', user?.roles || []);
+          const context = {
+            entityType: 'page',
+            entityId: result.id,
+            tenantId: schema.tenant_id || null,
+          };
+          for (const hook of hooks) {
+            try {
+              await hook.handler(context);
+            } catch (hErr) {
+              console.error('Error running afterCreate hook:', hErr);
+            }
+          }
+        } catch (hookErr) {
+          console.error('Failed to run afterCreate hooks:', hookErr);
+        }
+
+        navigate(`/pages/schema/${schemaSlug}/edit/${result.id}`, { replace: true });
+      }
+
       toast.success(`Seite "${pageName}" gespeichert als /${result.slug}`);
 
       if (schema.registration_status === 'registered' && initialStatus === 'published' && result.slug) {
@@ -868,6 +897,13 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
               />
             </div>
             <div className="space-y-1.5">
+          {pageId && (
+            <EntityActionsRow
+              entityType="page"
+              entityId={pageId}
+              tenantId={schema.tenant_id}
+            />
+          )}
               <Label htmlFor="page-slug" className="text-sm font-medium">
                 URL-Slug
               </Label>

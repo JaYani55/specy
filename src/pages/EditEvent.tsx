@@ -13,6 +13,7 @@ import { calculateEndTime } from '@/utils/timeUtils';
 import { calculateEventStatus } from '../utils/eventUtils';
 import { EventStatus, EventMode } from '@/types/event';
 import { ensureCompanyRecord } from '@/services/company/companyService';
+import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
 
@@ -284,6 +285,14 @@ const EditEvent = () => {
         isLoading={isLoading}
         mode="edit"
       />
+
+      {id && eventData?.tenant_id && (
+        <EntityActionsRow
+          entityType="event"
+          entityId={id}
+          tenantId={eventData.tenant_id}
+        />
+      )}
     </div>
   );
 };

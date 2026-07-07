@@ -55,7 +55,7 @@ const CreateEvent = () => {
         companyName: values.company,
       });
 
-      const { error } = await supabase
+      const { data: createdRecords, error } = await supabase
         .from('mentorbooking_events')
         .insert({
           company: companyRecord.name,
@@ -78,9 +78,32 @@ const CreateEvent = () => {
           teams_link: values.teams_link ?? "",
           initial_selected_mentors: values.initial_selected_mentors ?? [],
         })
-        .select();
+        .select('id, tenant_id');
       
       if (error) throw error;
+
+      // Trigger afterCreate hook for KB auto sync
+      const createdRecord = createdRecords?.[0];
+      if (createdRecord?.id) {
+        try {
+          const { getPluginHooks } = await import('@/plugins/loader');
+          const hooks = getPluginHooks('knowledgeBase.entity.afterCreate', user?.roles || []);
+          const context = {
+            entityType: 'event',
+            entityId: createdRecord.id,
+            tenantId: createdRecord.tenant_id || null,
+          };
+          for (const hook of hooks) {
+            try {
+              await hook.handler(context);
+            } catch (hErr) {
+              console.error('Error running afterCreate hook:', hErr);
+            }
+          }
+        } catch (hookErr) {
+          console.error('Failed to run afterCreate hooks:', hookErr);
+        }
+      }
       
       await refetchEvents();
       
