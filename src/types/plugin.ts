@@ -74,6 +74,17 @@ export interface PluginManifest {
    * Optional high-level capability summary for admin and discovery tooling.
    */
   capabilities?: PluginCapabilityDescriptor[];
+
+  /**
+   * Declarative Cloudflare Worker bindings that the plugin requires at deploy time.
+   * The build system merges these into wrangler.jsonc inside the auto-generated
+   * PLUGIN BINDINGS section. Each binding type is optional; the merge script
+   * deduplicates by binding name across all installed plugins.
+   *
+   * EUPL note: declarative binding declarations keep plugin infrastructure
+   * requirements in plugin.json, never in core wrangler config files.
+   */
+  wrangler_bindings?: PluginWranglerBindings;
 }
 
 export type PluginConfigFieldType = 'text' | 'textarea' | 'url' | 'secret';
@@ -178,6 +189,66 @@ export interface PluginCapabilityDescriptor {
   targets?: string[];
   /** Human-readable description for discovery/admin tooling. */
   description?: string;
+}
+
+// ─── Wrangler Bindings ────────────────────────────────────────────────────────
+/**
+ * Declarative Cloudflare Worker bindings contributed by plugins.
+ * Each entry in every array is injected into wrangler.jsonc at build time.
+ * The merge script deduplicates by `binding` name across all plugins.
+ *
+ * @see https://developers.cloudflare.com/workers/wrangler/configuration/#bindings
+ */
+export interface PluginWranglerBindings {
+  /** R2 bucket bindings. Merged into wrangler.jsonc r2_buckets[]. */
+  r2_buckets?: PluginWranglerR2Binding[];
+  /** AI Gateway bindings. Merged into wrangler.jsonc ai_gateway[]. */
+  ai_gateway?: PluginWranglerAiGatewayBinding[];
+  /** KV namespace bindings. Merged into wrangler.jsonc kv_namespaces[]. */
+  kv_namespaces?: PluginWranglerKvBinding[];
+  /** Durable Object bindings. Merged into wrangler.jsonc durable_objects.bindings[]. */
+  durable_objects?: PluginWranglerDurableObjectBinding[];
+  /** Plain environment vars (non-secret). Merged into wrangler.jsonc vars. */
+  vars?: Record<string, string>;
+  /** Secrets Store secret bindings. Merged into wrangler.jsonc secrets_store_secrets[]. */
+  secrets_store_secrets?: PluginWranglerSecretsStoreBinding[];
+}
+
+export interface PluginWranglerR2Binding {
+  /** JS variable name in the Worker, e.g. "MY_R2". */
+  binding: string;
+  /** Cloudflare R2 bucket name. */
+  bucket_name: string;
+}
+
+export interface PluginWranglerAiGatewayBinding {
+  /** JS variable name in the Worker, e.g. "AI_GATEWAY". */
+  binding: string;
+  /** Cloudflare AI Gateway ID (UUID). */
+  gateway_id: string;
+}
+
+export interface PluginWranglerKvBinding {
+  /** JS variable name in the Worker, e.g. "MY_KV". */
+  binding: string;
+  /** KV namespace ID (32-char hex string). */
+  namespace_id: string;
+}
+
+export interface PluginWranglerDurableObjectBinding {
+  /** JS variable name in the Worker, e.g. "MY_DO". */
+  name: string;
+  /** Durable Object class name exported by the Worker. */
+  class_name: string;
+}
+
+export interface PluginWranglerSecretsStoreBinding {
+  /** JS variable name in the Worker, e.g. "SS_MY_SECRET". */
+  binding: string;
+  /** Secrets Store UUID. */
+  store_id: string;
+  /** Secret name inside the store. */
+  secret_name: string;
 }
 
 export interface PluginAccessRule {

@@ -51,6 +51,7 @@ The CMS now maintains **multiple generated plugin registries** from the workspac
 - `api/plugin-routes.ts` — generated Hono mount table for plugin APIs
 - `api/plugin-hooks.ts` — generated backend hook contributions for core API/service hook runners
 - `api/plugin-metadata.ts` — generated runtime-discovery metadata for hooks, APIs, and capabilities
+- `wrangler.jsonc` — auto-generated plugin binding section (AI Gateway, KV, Durable Objects) injected from plugin manifests
 
 This keeps the extension boundary centralized and explicit for EUPL-safe interoperability:
 
@@ -186,7 +187,15 @@ This is the metadata file the install script reads and validates.
       "description": "Your service API key",
       "required": false
     }
-  ]
+  ],
+  "wrangler_bindings": {
+    "ai_gateway": [
+      {
+        "binding": "AI_GATEWAY_MY_PLUGIN",
+        "gateway_id": "00000000-0000-0000-0000-000000000000"
+      }
+    ]
+  }
 }
 ```
 
@@ -216,6 +225,76 @@ This is the metadata file the install script reads and validates.
 | `api_metadata` | `object` | — | Optional descriptive API metadata for runtime discovery. Supports `basePath` and `routes[]`, where each route declares `method`, `path`, and optional `summary`. |
 | `capabilities` | `object[]` | `[]` | Optional high-level capability descriptors for discovery/admin tooling. Each entry declares `key`, `kind` (`"interface" | "hook" | "api"`), optional `targets[]`, and `description`. |
 | `config_schema` | `object[]` | `[]` | Configuration fields the plugin needs. Each entry has `key`, `label`, optional `description`, `type` (`"text" | "textarea" | "url" | "secret"`), optional `required`, optional `placeholder`, and optional `expose_to_frontend`. The install script prints these at the end; values are set via the Plugins admin UI at `/plugins`. |
+| `wrangler_bindings` | `object` | — | Declarative Cloudflare Worker bindings the plugin requires at deploy time. See [§3.1 — Wrangler Bindings](#31-wrangler-bindings). |
+
+### 3.1 Wrangler Bindings
+
+If your plugin needs Cloudflare Worker bindings (AI Gateway, KV namespaces, Durable Objects), declare them in `plugin.json` under `wrangler_bindings`. The build system automatically injects these into `wrangler.jsonc` inside a dedicated auto-generated section.
+
+> **Note:** `r2_buckets`, `vars`, and `secrets_store_secrets` are owned by the CMS core and cannot be declared in `wrangler_bindings`. Add those entries directly to `wrangler.jsonc` instead.
+
+#### Supported binding types
+
+```typescript
+interface PluginWranglerBindings {
+  /** AI Gateway bindings. */
+  ai_gateway?: PluginWranglerAiGatewayBinding[];
+  /** KV namespace bindings. */
+  kv_namespaces?: PluginWranglerKvBinding[];
+  /** Durable Object bindings. */
+  durable_objects?: PluginWranglerDurableObjectBinding[];
+}
+
+interface PluginWranglerAiGatewayBinding {
+  binding: string;    // JS variable name, e.g. "AI_GATEWAY_MY_PLUGIN"
+  gateway_id: string; // Cloudflare AI Gateway ID (UUID)
+}
+
+interface PluginWranglerKvBinding {
+  binding: string;       // JS variable name, e.g. "MY_PLUGIN_KV"
+  namespace_id: string;  // KV namespace ID (32-char hex string)
+}
+
+interface PluginWranglerDurableObjectBinding {
+  name: string;       // JS variable name, e.g. "MY_PLUGIN_DO"
+  class_name: string; // Durable Object class name exported by the Worker
+}
+```
+
+#### Example
+
+```json
+{
+  "wrangler_bindings": {
+    "ai_gateway": [
+      {
+        "binding": "AI_GATEWAY_MY_PLUGIN",
+        "gateway_id": "00000000-0000-0000-0000-000000000000"
+      }
+    ],
+    "kv_namespaces": [
+      {
+        "binding": "MY_PLUGIN_KV",
+        "namespace_id": "0123456789abcdef0123456789abcdef"
+      }
+    ],
+    "durable_objects": [
+      {
+        "name": "MY_PLUGIN_DO",
+        "class_name": "MyDurableObject"
+      }
+    ]
+  }
+}
+```
+
+#### Conflict detection
+
+The build system validates that no two plugins declare the same binding name within a given type. If a conflict is detected, the build fails with a clear error message pointing to the two plugins involved.
+
+#### EUPL compliance
+
+Declaring wrangler bindings in `plugin.json` keeps plugin infrastructure requirements in plugin code, never in core wrangler config files. The core provides only the merge mechanism — a build-time hook that reads plugin manifests and writes the auto-generated section in `wrangler.jsonc`. This follows the same pattern as `migrations[]` and `config_schema`.
 
 ### Optional runtime access contract
 

@@ -12,6 +12,19 @@ export const HOOKS_REGISTRY_FILE = join(GENERATED_PLUGINS_DIR, 'hooks-registry.t
 export const PLUGIN_ROUTES_FILE = join(ROOT, 'api', 'plugin-routes.ts');
 export const PLUGIN_METADATA_FILE = join(ROOT, 'api', 'plugin-metadata.ts');
 export const PLUGIN_HOOKS_FILE = join(ROOT, 'api', 'plugin-hooks.ts');
+export const WRANGLER_CONFIG_FILE = join(ROOT, 'wrangler.jsonc');
+
+const PLUGIN_BINDINGS_START = '// ── PLUGIN BINDINGS (AUTO-GENERATED';
+const PLUGIN_BINDINGS_END   = '// ── END PLUGIN BINDINGS ──';
+
+const WRANGLER_BINDING_TYPES = [
+  'r2_buckets',
+  'ai_gateway',
+  'kv_namespaces',
+  'durable_objects',
+  'vars',
+  'secrets_store_secrets',
+];
 
 function stripExtension(filePath) {
   return filePath.replace(/\.[^.]+$/, '');
@@ -193,5 +206,193 @@ export function getRegisteredApiPluginHooks(): PluginHookContribution[] {
 }
 `, 'utf8');
 
+  rebuildWranglerPluginBindings(plugins);
+
   return plugins;
+}
+
+// ─── Wrangler Plugin Binding Injection ───────────────────────────────────────
+
+/**
+ * Plugin-contributed binding types that are injected into the auto-generated
+ * section of wrangler.jsonc. These are types NOT owned by core — core already
+ * defines r2_buckets, vars, and secrets_store_secrets at the top level.
+ *
+ * `ai_gateway`, `kv_namespaces`, and `durable_objects` are plugin-only and
+ * injected here. If a plugin needs an R2 bucket or Worker secret, it should
+ * use the core section (manual merge) or a future hook mechanism.
+ */
+const PLUGIN_OWNED_BINDING_TYPES = [
+  'ai_gateway',
+  'kv_namespaces',
+  'durable_objects',
+];
+
+/**
+ * Extract the `binding` name (or `name` for durable_objects) from a binding entry.
+ */
+function getBindingName(type, entry) {
+  if (type === 'durable_objects') {
+    return entry.name;
+  }
+  return entry.binding;
+}
+
+/**
+ * Gather and validate wrangler bindings from all installed plugin manifests.
+ * Returns a Map<type, { pluginId, entries[] }> with deduplication and conflict detection.
+ */
+function collectPluginWranglerBindings(plugins) {
+  const collected = new Map();
+
+  for (const plugin of plugins) {
+    const bindings = plugin.manifest?.wrangler_bindings;
+    if (!bindings || typeof bindings !== 'object') {
+      continue;
+    }
+
+    for (const type of PLUGIN_OWNED_BINDING_TYPES) {
+      const entries = bindings[type];
+      if (!Array.isArray(entries) || entries.length === 0) {
+        continue;
+      }
+
+      if (!collected.has(type)) {
+        collected.set(type, []);
+      }
+
+      for (const entry of entries) {
+        const name = getBindingName(type, entry);
+        if (!name || typeof name !== 'string') {
+          console.warn(`!  Plugin "${plugin.id}": skipping malformed ${type} entry (missing binding name).`);
+          continue;
+        }
+
+        // Check for duplicates across plugins
+        const existing = collected.get(type).find(
+          (e) => getBindingName(type, e.entry) === name,
+        );
+        if (existing) {
+          console.error(
+            `x  Binding conflict: "${name}" (${type}) claimed by both "${existing.pluginId}" and "${plugin.id}".`,
+          );
+          console.error(`   Rename one of the bindings so they don't collide.`);
+          process.exit(1);
+        }
+
+        collected.get(type).push({ pluginId: plugin.id, entry });
+      }
+    }
+
+    // Validate that plugins don't declare core-owned binding types in wrangler_bindings
+    for (const type of ['r2_buckets', 'vars', 'secrets_store_secrets']) {
+      if (bindings[type]) {
+        console.warn(
+          `!  Plugin "${plugin.id}" declares wrangler_bindings.${type} — ` +
+          `${type} is owned by core. Add entries directly to wrangler.jsonc instead.`,
+        );
+      }
+    }
+  }
+
+  return collected;
+}
+
+/**
+ * Build the JSONC content block for the plugin bindings section.
+ * Returns an empty string if no plugin bindings are contributed.
+ */
+function generatePluginBindingsBlock(collected) {
+  if (collected.size === 0) {
+    return '';
+  }
+
+  const blocks = [];
+
+  // Generate ai_gateway entries
+  const aiGateway = collected.get('ai_gateway');
+  if (aiGateway && aiGateway.length > 0) {
+    const entries = aiGateway.map(({ pluginId, entry }) => {
+      return `    {\n      "binding": "${entry.binding}",\n      "gateway_id": "${entry.gateway_id}"  // ${pluginId}\n    }`;
+    });
+    blocks.push(`  "ai_gateway": [\n${entries.join(',\n')}\n  ]`);
+  }
+
+  // Generate kv_namespaces entries
+  const kvNamespaces = collected.get('kv_namespaces');
+  if (kvNamespaces && kvNamespaces.length > 0) {
+    const entries = kvNamespaces.map(({ pluginId, entry }) => {
+      return `    {\n      "binding": "${entry.binding}",\n      "namespace_id": "${entry.namespace_id}"  // ${pluginId}\n    }`;
+    });
+    blocks.push(`  "kv_namespaces": [\n${entries.join(',\n')}\n  ]`);
+  }
+
+  // Generate durable_objects entries
+  const durableObjects = collected.get('durable_objects');
+  if (durableObjects && durableObjects.length > 0) {
+    const entries = durableObjects.map(({ pluginId, entry }) => {
+      return `    {\n      "name": "${entry.name}",\n      "class_name": "${entry.class_name}"  // ${pluginId}\n    }`;
+    });
+    blocks.push(`  "durable_objects": {\n    "bindings": [\n${entries.join(',\n')}\n    ]\n  }`);
+  }
+
+  return blocks.length > 0 ? blocks.join(',\n\n') + ',' : '';
+}
+
+/**
+ * Read wrangler.jsonc and replace the content between the plugin bindings
+ * start/end markers with the generated binding block.
+ */
+function rebuildWranglerPluginBindings(plugins) {
+  if (!existsSync(WRANGLER_CONFIG_FILE)) {
+    console.warn('!  wrangler.jsonc not found — skipping plugin wrangler binding injection.');
+    return;
+  }
+
+  const raw = readFileSync(WRANGLER_CONFIG_FILE, 'utf8');
+  const lines = raw.split(/\r?\n/);
+
+  // Find the line indices of start and end markers
+  let startLineIdx = -1;
+  let endLineIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (startLineIdx === -1 && lines[i].includes(PLUGIN_BINDINGS_START)) {
+      startLineIdx = i;
+    }
+    if (startLineIdx !== -1 && lines[i].includes(PLUGIN_BINDINGS_END)) {
+      endLineIdx = i;
+      break;
+    }
+  }
+
+  if (startLineIdx === -1 || endLineIdx === -1 || endLineIdx <= startLineIdx) {
+    console.warn(
+      '!  wrangler.jsonc is missing the PLUGIN BINDINGS marker section. ' +
+      `Add these markers:\n  ${PLUGIN_BINDINGS_START}\n  ${PLUGIN_BINDINGS_END}`,
+    );
+    return;
+  }
+
+  const collected = collectPluginWranglerBindings(plugins);
+  const block = generatePluginBindingsBlock(collected);
+
+  // Detect the indentation used in the file (tabs vs spaces)
+  const startLine = lines[startLineIdx];
+  const indent = startLine.startsWith('\t') ? '\t' : '  ';
+
+  // Rebuild: keep everything up to and including the start marker line,
+  // insert the binding block (or blank line), then the end marker line onward
+  const before = lines.slice(0, startLineIdx + 1).join('\n');
+  const after = lines.slice(endLineIdx).join('\n');
+
+  const injected = block
+    ? `\n\n${block}\n\n${indent}`
+    : '\n';
+
+  const newRaw = before + injected + after;
+  writeFileSync(WRANGLER_CONFIG_FILE, newRaw, 'utf8');
+
+  if (block) {
+    console.log(`i  Injected plugin wrangler bindings: ${[...collected.keys()].join(', ')}`);
+  }
 }
