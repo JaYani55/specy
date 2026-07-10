@@ -218,12 +218,12 @@ export function getRegisteredApiPluginHooks(): PluginHookContribution[] {
  * section of wrangler.jsonc. These are types NOT owned by core — core already
  * defines r2_buckets, vars, and secrets_store_secrets at the top level.
  *
- * `ai_gateway`, `kv_namespaces`, and `durable_objects` are plugin-only and
- * injected here. If a plugin needs an R2 bucket or Worker secret, it should
- * use the core section (manual merge) or a future hook mechanism.
+ * `ai` (singleton object, not array), `kv_namespaces`, and `durable_objects`
+ * are plugin-only and injected here. If a plugin needs an R2 bucket or Worker
+ * secret, it should use the core section (manual merge) or a future hook mechanism.
  */
 const PLUGIN_OWNED_BINDING_TYPES = [
-  'ai_gateway',
+  'ai',
   'kv_namespaces',
   'durable_objects',
 ];
@@ -235,15 +235,21 @@ function getBindingName(type, entry) {
   if (type === 'durable_objects') {
     return entry.name;
   }
+  // For `ai`, use 'ai' as the canonical binding name since it's a singleton
+  if (type === 'ai') {
+    return entry.binding || 'AI';
+  }
   return entry.binding;
 }
 
 /**
  * Gather and validate wrangler bindings from all installed plugin manifests.
  * Returns a Map<type, { pluginId, entries[] }> with deduplication and conflict detection.
+ * Also collects plugin vars separately for injection into the existing vars block.
  */
 function collectPluginWranglerBindings(plugins) {
   const collected = new Map();
+  const pluginVars = {};  // { key: { value, pluginId } }
 
   for (const plugin of plugins) {
     const bindings = plugin.manifest?.wrangler_bindings;
@@ -252,6 +258,34 @@ function collectPluginWranglerBindings(plugins) {
     }
 
     for (const type of PLUGIN_OWNED_BINDING_TYPES) {
+      // `ai` is a singleton object, not an array
+      if (type === 'ai') {
+        const entry = bindings[type];
+        if (!entry || typeof entry !== 'object' || !entry.binding) {
+          continue;
+        }
+
+        if (!collected.has(type)) {
+          collected.set(type, []);
+        }
+
+        const name = getBindingName(type, entry);
+        const existing = collected.get(type).find(
+          (e) => getBindingName(type, e.entry) === name,
+        );
+        if (existing) {
+          console.error(
+            `x  Binding conflict: "${name}" (${type}) claimed by both "${existing.pluginId}" and "${plugin.id}".`,
+          );
+          console.error(`   Rename one of the bindings so they don't collide.`);
+          process.exit(1);
+        }
+
+        collected.get(type).push({ pluginId: plugin.id, entry });
+        continue;
+      }
+
+      // Array-based binding types (kv_namespaces, durable_objects)
       const entries = bindings[type];
       if (!Array.isArray(entries) || entries.length === 0) {
         continue;
@@ -284,8 +318,23 @@ function collectPluginWranglerBindings(plugins) {
       }
     }
 
+    // Collect plugin-declared vars for injection into the existing vars block
+    if (bindings.vars && typeof bindings.vars === 'object' && !Array.isArray(bindings.vars)) {
+      for (const [key, value] of Object.entries(bindings.vars)) {
+        if (typeof value !== 'string') continue;
+        if (pluginVars[key]) {
+          console.error(
+            `x  Var conflict: "${key}" claimed by both "${pluginVars[key].pluginId}" and "${plugin.id}".`,
+          );
+          console.error(`   Rename one of the vars so they don't collide.`);
+          process.exit(1);
+        }
+        pluginVars[key] = { value, pluginId: plugin.id };
+      }
+    }
+
     // Validate that plugins don't declare core-owned binding types in wrangler_bindings
-    for (const type of ['r2_buckets', 'vars', 'secrets_store_secrets']) {
+    for (const type of ['r2_buckets', 'secrets_store_secrets']) {
       if (bindings[type]) {
         console.warn(
           `!  Plugin "${plugin.id}" declares wrangler_bindings.${type} — ` +
@@ -294,6 +343,9 @@ function collectPluginWranglerBindings(plugins) {
       }
     }
   }
+
+  // Attach vars to collected so they can be used by the caller
+  collected.__vars = pluginVars;
 
   return collected;
 }
@@ -309,13 +361,12 @@ function generatePluginBindingsBlock(collected) {
 
   const blocks = [];
 
-  // Generate ai_gateway entries
-  const aiGateway = collected.get('ai_gateway');
-  if (aiGateway && aiGateway.length > 0) {
-    const entries = aiGateway.map(({ pluginId, entry }) => {
-      return `    {\n      "binding": "${entry.binding}",\n      "gateway_id": "${entry.gateway_id}"  // ${pluginId}\n    }`;
-    });
-    blocks.push(`  "ai_gateway": [\n${entries.join(',\n')}\n  ]`);
+  // Generate ai binding (singleton object)
+  const aiEntries = collected.get('ai');
+  if (aiEntries && aiEntries.length > 0) {
+    // Only use the first AI binding (there cannot be duplicates — validated above)
+    const { pluginId, entry } = aiEntries[0];
+    blocks.push(`  "ai": {\n    "binding": "${entry.binding}"  // ${pluginId}\n  }`);
   }
 
   // Generate kv_namespaces entries
@@ -376,14 +427,127 @@ function rebuildWranglerPluginBindings(plugins) {
   const collected = collectPluginWranglerBindings(plugins);
   const block = generatePluginBindingsBlock(collected);
 
+  // ── Inject plugin-declared vars into the existing "vars": { } block ──
+  const pluginVars = collected.__vars || {};
+  const varKeys = Object.keys(pluginVars);
+
+  let modifiedLines = [...lines];
+
+  if (varKeys.length > 0) {
+    // ── Step 1: Remove any previously injected plugin vars ──
+    // Lines ending with "// <pluginId>" inside the vars block are plugin-injected.
+    const pluginIds = new Set(plugins.map((p) => p.id));
+    const cleanedLines = [];
+    let insideVars = false;
+    let varsDepth = 0;
+    for (let i = 0; i < modifiedLines.length; i++) {
+      const line = modifiedLines[i];
+      const stripped = line.replace(/\/\/.*$/g, '').trim();
+
+      if (!insideVars) {
+        if (line.includes('"vars"') && line.includes('{')) {
+          insideVars = true;
+          varsDepth = 1;
+        }
+        cleanedLines.push(line);
+        continue;
+      }
+
+      // Track brace depth inside vars
+      const openBraces = (stripped.match(/{/g) || []).length;
+      const closeBraces = (stripped.match(/}/g) || []).length;
+      varsDepth += openBraces - closeBraces;
+
+      // Check if this line is a plugin-injected var (has // <pluginId> comment)
+      const commentMatch = line.match(/\/\/\s*([\w-]+)\s*$/);
+      const isPluginVar = commentMatch && pluginIds.has(commentMatch[1]);
+
+      if (isPluginVar) {
+        // Skip this line — it was injected by a previous run
+        continue;
+      }
+
+      cleanedLines.push(line);
+
+      if (varsDepth <= 0) {
+        insideVars = false;
+      }
+    }
+    modifiedLines = cleanedLines;
+
+    // ── Step 2: Find the vars block closing brace and inject ──
+    // Recalculate startLineIdx since we may have removed lines
+    startLineIdx = -1;
+    endLineIdx = -1;
+    for (let i = 0; i < modifiedLines.length; i++) {
+      if (startLineIdx === -1 && modifiedLines[i].includes(PLUGIN_BINDINGS_START)) {
+        startLineIdx = i;
+      }
+      if (startLineIdx !== -1 && modifiedLines[i].includes(PLUGIN_BINDINGS_END)) {
+        endLineIdx = i;
+        break;
+      }
+    }
+
+    const searchEnd = startLineIdx;
+    const varLines = modifiedLines.slice(0, searchEnd);
+
+    // Find the vars key
+    let varsKeyIdx = -1;
+    for (let i = searchEnd - 1; i >= 0; i--) {
+      if (varLines[i].includes('"vars"')) {
+        varsKeyIdx = i;
+        break;
+      }
+    }
+
+    if (varsKeyIdx !== -1) {
+      // Find the matching closing brace of the vars block
+      let braceCount = 0;
+      let varsCloseIdx = -1;
+      let foundVars = false;
+      for (let i = varsKeyIdx; i < searchEnd; i++) {
+        const line = varLines[i];
+        const stripped = line.replace(/\/\/.*$/g, '');
+        const openBraces = (stripped.match(/{/g) || []).length;
+        const closeBraces = (stripped.match(/}/g) || []).length;
+
+        if (!foundVars) {
+          if (line.includes('{')) foundVars = true;
+          braceCount = openBraces - closeBraces;
+          continue;
+        }
+
+        braceCount += openBraces - closeBraces;
+        if (braceCount <= 0) {
+          varsCloseIdx = i;
+          break;
+        }
+      }
+
+      if (varsCloseIdx !== -1) {
+        const prevLine = varsCloseIdx > 0 ? modifiedLines[varsCloseIdx - 1] : '';
+        const varIndent = prevLine.match(/^(\s*)/)?.[1] ?? '\t\t';
+        const varEntries = varKeys.map((key) => {
+          const { value, pluginId } = pluginVars[key];
+          return `${varIndent}"${key}": "${value}"  // ${pluginId}`;
+        });
+
+        modifiedLines.splice(varsCloseIdx, 0, ...varEntries.map((l) => l + '\n'));
+        startLineIdx += varEntries.length;
+        endLineIdx += varEntries.length;
+      }
+    }
+  }
+
   // Detect the indentation used in the file (tabs vs spaces)
-  const startLine = lines[startLineIdx];
+  const startLine = modifiedLines[startLineIdx];
   const indent = startLine.startsWith('\t') ? '\t' : '  ';
 
   // Rebuild: keep everything up to and including the start marker line,
   // insert the binding block (or blank line), then the end marker line onward
-  const before = lines.slice(0, startLineIdx + 1).join('\n');
-  const after = lines.slice(endLineIdx).join('\n');
+  const before = modifiedLines.slice(0, startLineIdx + 1).join('\n');
+  const after = modifiedLines.slice(endLineIdx).join('\n');
 
   const injected = block
     ? `\n\n${block}\n\n${indent}`

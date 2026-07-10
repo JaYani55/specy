@@ -202,8 +202,8 @@ export interface PluginCapabilityDescriptor {
 export interface PluginWranglerBindings {
   /** R2 bucket bindings. Merged into wrangler.jsonc r2_buckets[]. */
   r2_buckets?: PluginWranglerR2Binding[];
-  /** AI Gateway bindings. Merged into wrangler.jsonc ai_gateway[]. */
-  ai_gateway?: PluginWranglerAiGatewayBinding[];
+  /** AI binding for Workers AI (singleton — merged into wrangler.jsonc ai). */
+  ai?: PluginWranglerAiBinding;
   /** KV namespace bindings. Merged into wrangler.jsonc kv_namespaces[]. */
   kv_namespaces?: PluginWranglerKvBinding[];
   /** Durable Object bindings. Merged into wrangler.jsonc durable_objects.bindings[]. */
@@ -221,11 +221,10 @@ export interface PluginWranglerR2Binding {
   bucket_name: string;
 }
 
-export interface PluginWranglerAiGatewayBinding {
-  /** JS variable name in the Worker, e.g. "AI_GATEWAY". */
+/** AI binding for Workers AI (singleton — not an array). */
+export interface PluginWranglerAiBinding {
+  /** JS variable name for the AI binding, typically "AI". */
   binding: string;
-  /** Cloudflare AI Gateway ID (UUID). */
-  gateway_id: string;
 }
 
 export interface PluginWranglerKvBinding {

@@ -158,7 +158,7 @@ If the plugin declares `wrangler_bindings` in its `plugin.json`, those bindings 
 ```
 
 Supported binding types:
-- `ai_gateway` — AI Gateway bindings
+- `ai` — Workers AI binding (singleton object)
 - `kv_namespaces` — KV namespace bindings
 - `durable_objects` — Durable Object bindings
 

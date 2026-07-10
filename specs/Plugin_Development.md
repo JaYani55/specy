@@ -189,12 +189,9 @@ This is the metadata file the install script reads and validates.
     }
   ],
   "wrangler_bindings": {
-    "ai_gateway": [
-      {
-        "binding": "AI_GATEWAY_MY_PLUGIN",
-        "gateway_id": "00000000-0000-0000-0000-000000000000"
-      }
-    ]
+    "ai": {
+      "binding": "AI"
+    }
   }
 }
 ```
@@ -237,17 +234,16 @@ If your plugin needs Cloudflare Worker bindings (AI Gateway, KV namespaces, Dura
 
 ```typescript
 interface PluginWranglerBindings {
-  /** AI Gateway bindings. */
-  ai_gateway?: PluginWranglerAiGatewayBinding[];
+  /** AI binding for Workers AI (singleton object, not array). */
+  ai?: PluginWranglerAiBinding;
   /** KV namespace bindings. */
   kv_namespaces?: PluginWranglerKvBinding[];
   /** Durable Object bindings. */
   durable_objects?: PluginWranglerDurableObjectBinding[];
 }
 
-interface PluginWranglerAiGatewayBinding {
-  binding: string;    // JS variable name, e.g. "AI_GATEWAY_MY_PLUGIN"
-  gateway_id: string; // Cloudflare AI Gateway ID (UUID)
+interface PluginWranglerAiBinding {
+  binding: string;    // JS variable name, typically "AI"
 }
 
 interface PluginWranglerKvBinding {
@@ -266,12 +262,9 @@ interface PluginWranglerDurableObjectBinding {
 ```json
 {
   "wrangler_bindings": {
-    "ai_gateway": [
-      {
-        "binding": "AI_GATEWAY_MY_PLUGIN",
-        "gateway_id": "00000000-0000-0000-0000-000000000000"
-      }
-    ],
+    "ai": {
+      "binding": "AI"
+    },
     "kv_namespaces": [
       {
         "binding": "MY_PLUGIN_KV",
