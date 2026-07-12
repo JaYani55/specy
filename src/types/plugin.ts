@@ -351,6 +351,30 @@ export interface PluginDefinition {
   apiMetadata?: PluginApiMetadata;
   /** Optional runtime-discovery capability metadata. */
   capabilities?: PluginCapabilityDescriptor[];
+  /**
+   * Optional admin connection settings sections contributed by this plugin.
+   * Each section renders as a Card inside /admin/connections.
+   */
+  adminSections?: PluginAdminConnectionSection[];
+}
+
+// ─── Admin Connection Section ─────────────────────────────────────────────────
+/**
+ * A settings section contributed by a plugin that renders inside the
+ * /admin/connections page. Plugins use this to add configuration UIs
+ * for services like AI models, providers, etc.
+ */
+export interface PluginAdminConnectionSection {
+  /** Unique section identifier inside the plugin namespace. */
+  id: string;
+  /** Human-readable section title shown as the Card header. */
+  title: string;
+  /** Optional description shown below the title. */
+  description?: string;
+  /** The React component to render inside the Card. */
+  component: ComponentType;
+  /** Lower numbers render first; defaults to 100. */
+  order?: number;
 }
 
 // ─── Database Record ─────────────────────────────────────────────────────────

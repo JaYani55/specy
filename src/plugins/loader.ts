@@ -7,6 +7,7 @@
 
 import registeredPlugins from './registry';
 import type {
+  PluginAdminConnectionSection,
   PluginApiMetadata,
   PluginApiRouteMetadata,
   PluginCapabilityDescriptor,
@@ -149,4 +150,15 @@ export function getPluginApiRoutes(userRoles?: string[]): Array<PluginApiRouteMe
       tag: metadata.tag ?? 'Plugins',
     }))
   );
+}
+
+/**
+ * Returns all admin connection settings sections contributed by plugins,
+ * filtered by user roles and sorted by order.
+ */
+export function getPluginAdminConnectionSections(userRoles?: string[]): PluginAdminConnectionSection[] {
+  return registeredPlugins
+    .filter((plugin) => isPluginAccessible(plugin, userRoles))
+    .flatMap((plugin) => plugin.adminSections ?? [])
+    .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
 }

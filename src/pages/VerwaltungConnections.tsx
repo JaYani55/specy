@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -53,6 +53,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { usePermissions } from '@/hooks/usePermissions';
+import { getPluginAdminConnectionSections } from '@/plugins/loader';
+import type { PluginAdminConnectionSection } from '@/types/plugin';
 import {
   listSecrets,
   getEnvStatus,
@@ -570,6 +572,12 @@ const VerwaltungConnections: React.FC = () => {
   // Extra CF secrets not in the manifest
   const extraCfSecrets = cfSecrets.filter(
     (s) => !SECRETS_MANIFEST.some((m) => m.name === s.name) && !OPERATIONAL_CONFIG_SECRET_NAMES.has(s.name),
+  );
+
+  // Plugin admin connection sections
+  const pluginAdminSections = useMemo<PluginAdminConnectionSection[]>(
+    () => getPluginAdminConnectionSections(permissions.roles),
+    [permissions.roles],
   );
 
   // ── Summary stats ───────────────────────────────────────────────────────
@@ -1252,6 +1260,24 @@ const VerwaltungConnections: React.FC = () => {
             </pre>
           </CardContent>
         </Card>
+
+        {/* ── Plugin Admin Sections ── */}
+        {pluginAdminSections.map((section) => {
+          const SectionComponent = section.component;
+          return (
+            <Card key={section.id}>
+              <CardHeader>
+                <CardTitle className="text-lg">{section.title}</CardTitle>
+                {section.description && (
+                  <CardDescription>{section.description}</CardDescription>
+                )}
+              </CardHeader>
+              <CardContent>
+                <SectionComponent />
+              </CardContent>
+            </Card>
+          );
+        })}
 
       </div>
 
