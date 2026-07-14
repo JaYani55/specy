@@ -208,6 +208,8 @@ export interface PluginWranglerBindings {
   kv_namespaces?: PluginWranglerKvBinding[];
   /** Durable Object bindings. Merged into wrangler.jsonc durable_objects.bindings[]. */
   durable_objects?: PluginWranglerDurableObjectBinding[];
+  /** Queue bindings. Merged into wrangler.jsonc queues. */
+  queues?: PluginWranglerQueuesBinding;
   /** Plain environment vars (non-secret). Merged into wrangler.jsonc vars. */
   vars?: Record<string, string>;
   /** Secrets Store secret bindings. Merged into wrangler.jsonc secrets_store_secrets[]. */
@@ -248,6 +250,29 @@ export interface PluginWranglerSecretsStoreBinding {
   store_id: string;
   /** Secret name inside the store. */
   secret_name: string;
+}
+
+export interface PluginWranglerQueuesBinding {
+  /** Producer bindings. Each entry declares a queue name and JS binding name. */
+  producers?: PluginWranglerQueueProducerBinding[];
+  /** Consumer bindings. Each entry declares a queue name and consumer settings. */
+  consumers?: PluginWranglerQueueConsumerBinding[];
+}
+
+export interface PluginWranglerQueueProducerBinding {
+  /** Cloudflare Queue name. */
+  queue: string;
+  /** JS variable name in the Worker, e.g. "MY_QUEUE". */
+  binding: string;
+}
+
+export interface PluginWranglerQueueConsumerBinding {
+  /** Cloudflare Queue name. */
+  queue: string;
+  /** Maximum messages per batch (default: 10). */
+  max_batch_size?: number;
+  /** Maximum seconds to wait before delivering a partial batch (default: 5). */
+  max_batch_timeout?: number;
 }
 
 export interface PluginAccessRule {

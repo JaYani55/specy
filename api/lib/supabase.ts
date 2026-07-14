@@ -78,6 +78,15 @@ export interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+/**
+ * Minimal Cloudflare Workers Queue binding interface.
+ * See: https://developers.cloudflare.com/queues/platform/javascript-apis/
+ */
+export interface Queue<Body = unknown> {
+  send(body: Body, options?: { contentType?: 'text' | 'bytes' | 'json' | 'v8'; delaySeconds?: number }): Promise<void>;
+  sendBatch(messages: Iterable<{ body: Body; contentType?: 'text' | 'bytes' | 'json' | 'v8'; delaySeconds?: number }>): Promise<void>;
+}
+
 export interface Env {
   // ── SPA Assets binding ─────────────────────────────────────────────────────
   ASSETS?: Fetcher;

@@ -426,4 +426,56 @@ objects.delete('/:id', async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * Programmatic object creation for use by plugins, queue consumers, and hooks.
+ * Uses the admin client (bypasses RLS) — callers are responsible for authorization.
+ */
+export interface CreateObjectInternalInput {
+  name: string;
+  slug: string;
+  description?: string | null;
+  agent_description?: string | null;
+  object_type?: 'json' | 'markdown';
+  schema?: Record<string, unknown>;
+  data?: Record<string, unknown> | unknown[];
+  status?: 'published' | 'archived';
+  requires_auth?: boolean;
+  api_enabled?: boolean;
+  share_enabled?: boolean;
+  share_slug?: string | null;
+  tenant_id?: string | null;
+}
+
+export async function createObjectInternal(
+  env: Env,
+  input: CreateObjectInternalInput,
+): Promise<ObjectRow> {
+  const admin = await createSupabaseAdminClient(env);
+  const { data, error } = await admin
+    .from('objects')
+    .insert({
+      name: input.name.trim(),
+      slug: input.slug.trim(),
+      description: input.description ?? null,
+      agent_description: input.agent_description ?? null,
+      object_type: input.object_type === 'markdown' ? 'markdown' : 'json',
+      schema: input.schema ?? {},
+      data: input.data ?? {},
+      status: input.status === 'archived' ? 'archived' : 'published',
+      requires_auth: input.requires_auth ?? false,
+      api_enabled: input.api_enabled ?? false,
+      share_enabled: input.share_enabled ?? false,
+      share_slug: input.share_enabled ? (input.share_slug?.trim() || input.slug.trim()) : null,
+      tenant_id: input.tenant_id?.trim() || null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create object: ${error.message}`);
+  }
+
+  return data as ObjectRow;
+}
+
 export default objects;

@@ -96,6 +96,24 @@ export const ObjectContentRenderer: React.FC<ObjectContentRendererProps> = ({ bl
           );
         }
 
+        if (block.type === 'audio') {
+          return (
+            <figure key={block.id} className="space-y-3 overflow-hidden rounded-2xl border bg-muted/20 p-4">
+              <audio
+                controls
+                preload="metadata"
+                className="w-full"
+                src={block.src}
+              >
+                Ihr Browser unterstützt kein Audio-Playback.
+              </audio>
+              {block.caption ? (
+                <figcaption className="text-sm text-muted-foreground">{block.caption}</figcaption>
+              ) : null}
+            </figure>
+          );
+        }
+
         return null;
       })}
     </div>

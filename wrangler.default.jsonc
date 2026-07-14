@@ -103,11 +103,7 @@
 
   "secrets_store_secrets": [
     {
-      // Supabase secret key — bypasses RLS, stored in Secrets Store only.
-      // The publishable key and managed-secret encryption key are Worker secrets.
-      // SUPABASE_URL and storage settings stay in vars above.
       "binding": "SS_SUPABASE_SECRET_KEY",
-      // <<< REPLACE: Same Secrets Store UUID as SECRETS_STORE_ID above
       "store_id": "REPLACE_WITH_YOUR_SECRETS_STORE_ID",
       "secret_name": "SUPABASE_SECRET_KEY"
     }

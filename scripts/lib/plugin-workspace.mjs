@@ -226,6 +226,7 @@ const PLUGIN_OWNED_BINDING_TYPES = [
   'ai',
   'kv_namespaces',
   'durable_objects',
+  'queues',
 ];
 
 /**
@@ -285,6 +286,61 @@ function collectPluginWranglerBindings(plugins) {
         continue;
       }
 
+      // `queues` is an object with producers[] and consumers[] arrays
+      if (type === 'queues') {
+        const queuesBinding = bindings[type];
+        if (!queuesBinding || typeof queuesBinding !== 'object') {
+          continue;
+        }
+
+        if (!collected.has(type)) {
+          collected.set(type, []);
+        }
+
+        // Collect producers
+        const producers = queuesBinding.producers;
+        if (Array.isArray(producers)) {
+          for (const entry of producers) {
+            if (!entry.queue || !entry.binding) {
+              console.warn(`!  Plugin "${plugin.id}": skipping malformed queues.producers entry (missing queue or binding).`);
+              continue;
+            }
+            const existing = collected.get(type).find(
+              (e) => e.entry.queue === entry.queue && e.entry.binding === entry.binding,
+            );
+            if (existing) {
+              console.error(
+                `x  Queue producer conflict: "${entry.binding}" → "${entry.queue}" claimed by both "${existing.pluginId}" and "${plugin.id}".`,
+              );
+              process.exit(1);
+            }
+            collected.get(type).push({ pluginId: plugin.id, entry: { ...entry, _kind: 'producer' } });
+          }
+        }
+
+        // Collect consumers
+        const consumers = queuesBinding.consumers;
+        if (Array.isArray(consumers)) {
+          for (const entry of consumers) {
+            if (!entry.queue) {
+              console.warn(`!  Plugin "${plugin.id}": skipping malformed queues.consumers entry (missing queue).`);
+              continue;
+            }
+            const existing = collected.get(type).find(
+              (e) => e.entry.queue === entry.queue && e.entry._kind === 'consumer',
+            );
+            if (existing) {
+              console.error(
+                `x  Queue consumer conflict: "${entry.queue}" claimed by both "${existing.pluginId}" and "${plugin.id}".`,
+              );
+              process.exit(1);
+            }
+            collected.get(type).push({ pluginId: plugin.id, entry: { ...entry, _kind: 'consumer' } });
+          }
+        }
+        continue;
+      }
+
       // Array-based binding types (kv_namespaces, durable_objects)
       const entries = bindings[type];
       if (!Array.isArray(entries) || entries.length === 0) {
@@ -333,8 +389,31 @@ function collectPluginWranglerBindings(plugins) {
       }
     }
 
+    // Collect plugin-declared secrets_store_secrets for injection into the core array
+    if (bindings.secrets_store_secrets && Array.isArray(bindings.secrets_store_secrets)) {
+      if (!collected.has('secrets_store_secrets')) {
+        collected.set('secrets_store_secrets', []);
+      }
+      for (const entry of bindings.secrets_store_secrets) {
+        if (!entry.binding || !entry.store_id || !entry.secret_name) {
+          console.warn(`!  Plugin "${plugin.id}": skipping malformed secrets_store_secrets entry (missing binding, store_id, or secret_name).`);
+          continue;
+        }
+        const existing = collected.get('secrets_store_secrets').find(
+          (e) => e.entry.binding === entry.binding,
+        );
+        if (existing) {
+          console.error(
+            `x  Secrets conflict: "${entry.binding}" claimed by both "${existing.pluginId}" and "${plugin.id}".`,
+          );
+          process.exit(1);
+        }
+        collected.get('secrets_store_secrets').push({ pluginId: plugin.id, entry });
+      }
+    }
+
     // Validate that plugins don't declare core-owned binding types in wrangler_bindings
-    for (const type of ['r2_buckets', 'secrets_store_secrets']) {
+    for (const type of ['r2_buckets']) {
       if (bindings[type]) {
         console.warn(
           `!  Plugin "${plugin.id}" declares wrangler_bindings.${type} — ` +
@@ -352,9 +431,17 @@ function collectPluginWranglerBindings(plugins) {
 
 /**
  * Build the JSONC content block for the plugin bindings section.
- * Returns an empty string if no plugin bindings are contributed.
+ * @param {Map} collected - Collected bindings by type
+ * @param {string} indentUnit - The indentation string (e.g. "\t" or "  ")
+ * @returns {string} JSONC block content, or empty string if nothing to inject
  */
-function generatePluginBindingsBlock(collected) {
+function generatePluginBindingsBlock(collected, indentUnit = '  ') {
+  const I0 = '';                     // block root
+  const I1 = indentUnit;             // keys like "queues":
+  const I2 = indentUnit + indentUnit; // array brackets / object braces
+  const I3 = I2 + indentUnit;        // object keys inside array entries
+  const I4 = I3 + indentUnit;        // // pluginId comments
+
   if (collected.size === 0) {
     return '';
   }
@@ -364,27 +451,51 @@ function generatePluginBindingsBlock(collected) {
   // Generate ai binding (singleton object)
   const aiEntries = collected.get('ai');
   if (aiEntries && aiEntries.length > 0) {
-    // Only use the first AI binding (there cannot be duplicates — validated above)
     const { pluginId, entry } = aiEntries[0];
-    blocks.push(`  "ai": {\n    "binding": "${entry.binding}"  // ${pluginId}\n  }`);
+    blocks.push(`${I1}"ai": {\n${I2}"binding": "${entry.binding}"  // ${pluginId}\n${I1}}`);
   }
 
   // Generate kv_namespaces entries
   const kvNamespaces = collected.get('kv_namespaces');
   if (kvNamespaces && kvNamespaces.length > 0) {
-    const entries = kvNamespaces.map(({ pluginId, entry }) => {
-      return `    {\n      "binding": "${entry.binding}",\n      "namespace_id": "${entry.namespace_id}"  // ${pluginId}\n    }`;
-    });
-    blocks.push(`  "kv_namespaces": [\n${entries.join(',\n')}\n  ]`);
+    const entries = kvNamespaces.map(({ pluginId, entry }) =>
+      `${I3}{\n${I4}"binding": "${entry.binding}",\n${I4}"namespace_id": "${entry.namespace_id}"  // ${pluginId}\n${I3}}`);
+    blocks.push(`${I1}"kv_namespaces": [\n${entries.join(',\n')}\n${I1}]`);
   }
 
   // Generate durable_objects entries
   const durableObjects = collected.get('durable_objects');
   if (durableObjects && durableObjects.length > 0) {
-    const entries = durableObjects.map(({ pluginId, entry }) => {
-      return `    {\n      "name": "${entry.name}",\n      "class_name": "${entry.class_name}"  // ${pluginId}\n    }`;
-    });
-    blocks.push(`  "durable_objects": {\n    "bindings": [\n${entries.join(',\n')}\n    ]\n  }`);
+    const entries = durableObjects.map(({ pluginId, entry }) =>
+      `${I3}{\n${I4}"name": "${entry.name}",\n${I4}"class_name": "${entry.class_name}"  // ${pluginId}\n${I3}}`);
+    blocks.push(`${I1}"durable_objects": {\n${I2}"bindings": [\n${entries.join(',\n')}\n${I2}]\n${I1}}`);
+  }
+
+  // Generate queues entries
+  const queuesEntries = collected.get('queues');
+  if (queuesEntries && queuesEntries.length > 0) {
+    const producers = queuesEntries.filter((e) => e.entry._kind === 'producer');
+    const consumers = queuesEntries.filter((e) => e.entry._kind === 'consumer');
+    const queueParts = [];
+
+    if (producers.length > 0) {
+      const producerLines = producers.map(({ pluginId, entry }) =>
+        `${I4}{\n${I4}${indentUnit}"queue": "${entry.queue}",\n${I4}${indentUnit}"binding": "${entry.binding}"  // ${pluginId}\n${I4}}`);
+      queueParts.push(`${I2}"producers": [\n${producerLines.join(',\n')}\n${I2}]`);
+    }
+
+    if (consumers.length > 0) {
+      const consumerLines = consumers.map(({ pluginId, entry }) => {
+        const parts = [`${I4}${indentUnit}"queue": "${entry.queue}"`];
+        if (entry.max_batch_size !== undefined) parts.push(`${I4}${indentUnit}"max_batch_size": ${entry.max_batch_size}`);
+        if (entry.max_batch_timeout !== undefined) parts.push(`${I4}${indentUnit}"max_batch_timeout": ${entry.max_batch_timeout}`);
+        parts.push(`${I4}${indentUnit}// ${pluginId}`);
+        return `${I4}{\n${parts.join(',\n')}\n${I4}}`;
+      });
+      queueParts.push(`${I2}"consumers": [\n${consumerLines.join(',\n')}\n${I2}]`);
+    }
+
+    blocks.push(`${I1}"queues": {\n${queueParts.join(',\n')}\n${I1}}`);
   }
 
   return blocks.length > 0 ? blocks.join(',\n\n') + ',' : '';
@@ -425,7 +536,11 @@ function rebuildWranglerPluginBindings(plugins) {
   }
 
   const collected = collectPluginWranglerBindings(plugins);
-  const block = generatePluginBindingsBlock(collected);
+
+  // Detect the indentation used in the file (tabs vs spaces) before generating
+  const indentUnit = lines[startLineIdx].startsWith('\t') ? '\t' : '  ';
+
+  const block = generatePluginBindingsBlock(collected, indentUnit);
 
   // ── Inject plugin-declared vars into the existing "vars": { } block ──
   const pluginVars = collected.__vars || {};
@@ -473,7 +588,44 @@ function rebuildWranglerPluginBindings(plugins) {
         insideVars = false;
       }
     }
+
+    // ── Step 1b: Clean up trailing commas left by removed plugin vars ──
+    // Scan backward from the vars closing brace to find the last real property
+    // and strip its trailing comma if the removed var was the last one.
     modifiedLines = cleanedLines;
+    // Re-find the vars closing brace
+    let varsCloseBraceIdx = -1;
+    let vd2 = 0;
+    let inV2 = false;
+    for (let i = 0; i < modifiedLines.length; i++) {
+      const line = modifiedLines[i];
+      if (!inV2 && line.includes('"vars"') && line.includes('{')) {
+        inV2 = true;
+        vd2 = 1;
+        continue;
+      }
+      if (!inV2) continue;
+      const s = line.replace(/\/\/.*$/g, '').trim();
+      vd2 += (s.match(/{/g) || []).length;
+      vd2 -= (s.match(/}/g) || []).length;
+      if (vd2 <= 0) {
+        varsCloseBraceIdx = i;
+        break;
+      }
+    }
+    // Walk backward from the closing brace to find the last non-blank property line
+    if (varsCloseBraceIdx > 0) {
+      for (let i = varsCloseBraceIdx - 1; i >= 0; i--) {
+        const trimmed = modifiedLines[i].replace(/\/\/.*$/g, '').trim();
+        if (!trimmed) continue; // skip blank lines
+        // If this line ends with a dangling comma (no next property before }),
+        // strip the comma
+        if (trimmed.endsWith(',')) {
+          modifiedLines[i] = modifiedLines[i].replace(/,\s*(\/\/.*)?$/, '$1');
+        }
+        break;
+      }
+    }
 
     // ── Step 2: Find the vars block closing brace and inject ──
     // Recalculate startLineIdx since we may have removed lines
@@ -526,8 +678,29 @@ function rebuildWranglerPluginBindings(plugins) {
       }
 
       if (varsCloseIdx !== -1) {
-        const prevLine = varsCloseIdx > 0 ? modifiedLines[varsCloseIdx - 1] : '';
-        const varIndent = prevLine.match(/^(\s*)/)?.[1] ?? '\t\t';
+        // Detect indentation from existing vars properties, not the previous line
+        // (which could be blank if the removed plugin var was the last property)
+        const varIndent = (modifiedLines[varsKeyIdx].match(/^(\s*)/)?.[1] ?? '  ') + '  ';
+
+        // Ensure the last non-blank line before the closing brace ends with a comma
+        let lastPropIdx = varsCloseIdx - 1;
+        while (lastPropIdx > varsKeyIdx) {
+          const trimmed = modifiedLines[lastPropIdx].replace(/\/\/.*$/g, '').trim();
+          if (trimmed && trimmed !== '}') break;
+          lastPropIdx--;
+        }
+        if (lastPropIdx > varsKeyIdx) {
+          const lastLine = modifiedLines[lastPropIdx];
+          const lastStripped = lastLine.replace(/\/\/.*$/g, '').trim();
+          if (lastStripped && !lastStripped.endsWith(',') && !lastStripped.endsWith('{')) {
+            if (/\/\/.*$/.test(lastLine)) {
+              modifiedLines[lastPropIdx] = lastLine.replace(/(\/\/.*$)/, ',$1');
+            } else {
+              modifiedLines[lastPropIdx] = lastLine + ',';
+            }
+          }
+        }
+
         const varEntries = varKeys.map((key) => {
           const { value, pluginId } = pluginVars[key];
           return `${varIndent}"${key}": "${value}"  // ${pluginId}`;
@@ -540,9 +713,127 @@ function rebuildWranglerPluginBindings(plugins) {
     }
   }
 
-  // Detect the indentation used in the file (tabs vs spaces)
-  const startLine = modifiedLines[startLineIdx];
-  const indent = startLine.startsWith('\t') ? '\t' : '  ';
+  // ── Inject plugin-declared secrets_store_secrets into the core array ──
+  // Approach: extract the raw JSONC array text, strip comments, JSON.parse it,
+  // merge plugin secrets (deduplicating by binding name), JSON.stringify back
+  // with the detected indentation, and splice the replacement in.
+  const secretsEntries = collected.get('secrets_store_secrets');
+  if (secretsEntries && secretsEntries.length > 0) {
+    const coreSection = modifiedLines.slice(0, startLineIdx);
+    let secretsKeyLine = -1;   // line with "secrets_store_secrets"
+    let secretsOpenLine = -1;  // line with [
+    let secretsCloseLine = -1; // line with ]
+    let inSecrets = false;
+    let bracketDepth = 0;
+    for (let i = 0; i < coreSection.length; i++) {
+      const line = coreSection[i];
+      if (!inSecrets && line.includes('"secrets_store_secrets"')) {
+        inSecrets = true;
+        secretsKeyLine = i;
+        if (line.includes('[')) secretsOpenLine = i;
+        // Count brackets on this line even when key and [ are on the same line
+        const stripped = line.replace(/\/\/.*$/g, '');
+        bracketDepth += (stripped.match(/\[/g) || []).length;
+        bracketDepth -= (stripped.match(/\]/g) || []).length;
+        if (bracketDepth <= 0) {
+          secretsCloseLine = i;
+          break;
+        }
+        continue;
+      }
+      if (!inSecrets) continue;
+      if (secretsOpenLine === -1 && line.includes('[')) secretsOpenLine = i;
+      const stripped = line.replace(/\/\/.*$/g, '');
+      bracketDepth += (stripped.match(/\[/g) || []).length;
+      bracketDepth -= (stripped.match(/\]/g) || []).length;
+      if (bracketDepth <= 0) {
+        secretsCloseLine = i;
+        break;
+      }
+    }
+
+    if (secretsOpenLine !== -1 && secretsCloseLine !== -1) {
+      // Step 1: extract the raw text between `[` and `]`, strip comments, parse as JSON
+      const rawLines = modifiedLines.slice(secretsOpenLine, secretsCloseLine + 1);
+      const rawText = rawLines.join('\n');
+      // Extract just the JSON array: everything from the first `[` to the last `]`
+      const firstBracket = rawText.indexOf('[');
+      const lastBracket = rawText.lastIndexOf(']');
+      if (firstBracket !== -1 && lastBracket > firstBracket) {
+        let jsonText = rawText.slice(firstBracket + 1, lastBracket);
+        // Strip // line comments and /* block comments */
+        jsonText = jsonText.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+        // Try to parse as a JSON array — it may have trailing commas, try to fix
+        let coreSecrets = [];
+        try {
+          coreSecrets = JSON.parse('[' + jsonText + ']');
+        } catch {
+          // If parse fails (trailing commas are common), try removing trailing commas before ] or }
+          const cleaned = jsonText.replace(/,\s*([}\]])/g, '$1');
+          try {
+            coreSecrets = JSON.parse('[' + cleaned + ']');
+          } catch {
+            console.warn('!  Could not parse secrets_store_secrets as JSON — skipping injection.');
+          }
+        }
+
+        if (Array.isArray(coreSecrets) && coreSecrets.length >= 0) {
+          // Step 2: remove any plugin-injected secrets (identified by matching binding names)
+          const pluginBindingNames = new Set(secretsEntries.map((s) => s.entry.binding));
+          const filteredSecrets = coreSecrets.filter((s) => !pluginBindingNames.has(s.binding));
+
+          // Step 3: merge plugin secrets
+          const merged = [...filteredSecrets, ...secretsEntries.map((s) => s.entry)];
+
+          // Step 4: detect indentation and re-serialize
+          const coreIndent = (modifiedLines[secretsOpenLine].match(/^(\s*)/)?.[1] ?? '  ');
+          const entryIndent = coreIndent + '  ';
+          const innerIndent = entryIndent + '  ';
+          const serialized = merged.map((entry) => {
+            const { binding, store_id, secret_name } = entry;
+            const lines = [
+              `${entryIndent}{`,
+              `${innerIndent}"binding": ${JSON.stringify(binding)},`,
+              `${innerIndent}"store_id": ${JSON.stringify(store_id)},`,
+              `${innerIndent}"secret_name": ${JSON.stringify(secret_name)}`,
+              `${entryIndent}}`,
+            ];
+            return lines.join('\n');
+          });
+
+          const arrayContent = serialized.length > 0
+            ? '\n' + serialized.join(',\n') + '\n' + coreIndent
+            : '';
+
+          // Step 5: splice the replacement — preserve the "secrets_store_secrets" key line
+          // if it's separate from the [ line, otherwise reconstruct it
+          const beforeSecrets = modifiedLines.slice(0, secretsOpenLine);
+          const afterSecrets = modifiedLines.slice(secretsCloseLine + 1);
+
+          if (secretsKeyLine === secretsOpenLine) {
+            // Key and [ are on the same line — reconstruct the full line
+            const keyIndent = (modifiedLines[secretsKeyLine].match(/^(\s*)/)?.[1] ?? '  ');
+            modifiedLines = [
+              ...beforeSecrets,
+              `${keyIndent}"secrets_store_secrets": [${arrayContent}],`,
+              ...afterSecrets,
+            ];
+          } else {
+            // Key and [ are on separate lines — keep the key line, replace only the array
+            modifiedLines = [
+              ...beforeSecrets,
+              `${coreIndent}[${arrayContent}],`,
+              ...afterSecrets,
+            ];
+          }
+
+          // Recalculate marker positions
+          startLineIdx = modifiedLines.findIndex((l) => l.includes(PLUGIN_BINDINGS_START));
+          endLineIdx = modifiedLines.findIndex((l, i) => i > startLineIdx && l.includes(PLUGIN_BINDINGS_END));
+        }
+      }
+    }
+  }
 
   // Rebuild: keep everything up to and including the start marker line,
   // insert the binding block (or blank line), then the end marker line onward
@@ -550,7 +841,7 @@ function rebuildWranglerPluginBindings(plugins) {
   const after = modifiedLines.slice(endLineIdx).join('\n');
 
   const injected = block
-    ? `\n\n${block}\n\n${indent}`
+    ? `\n\n${block}\n\n`
     : '\n';
 
   const newRaw = before + injected + after;

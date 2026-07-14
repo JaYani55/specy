@@ -46,6 +46,8 @@ const createDefaultBlock = (type: ContentBlock['type'], prefix: string): Content
       return { id, type: 'video', src: '', provider: 'youtube' };
     case 'form':
       return { id, type: 'form', form_id: '', form_slug: '', form_name: '' };
+    case 'audio':
+      return { id, type: 'audio', src: '' };
   }
 };
 
@@ -113,7 +115,7 @@ export const ObjectContentBlocksEditor: React.FC<ObjectContentBlocksEditorProps>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56">
-          {(['text', 'heading', 'image', 'quote', 'list', 'video', 'form'] as ContentBlock['type'][]).map((type) => (
+          {(['text', 'heading', 'image', 'quote', 'list', 'video', 'form', 'audio'] as ContentBlock['type'][]).map((type) => (
             <DropdownMenuItem key={type} onClick={() => addBlock(type)}>
               {type === 'text' && '📝 '}
               {type === 'heading' && '📋 '}
@@ -122,6 +124,7 @@ export const ObjectContentBlocksEditor: React.FC<ObjectContentBlocksEditorProps>
               {type === 'list' && '📄 '}
               {type === 'video' && '🎥 '}
               {type === 'form' && '🧾 '}
+              {type === 'audio' && '🎵 '}
               {type.charAt(0).toUpperCase() + type.slice(1)} Block
             </DropdownMenuItem>
           ))}

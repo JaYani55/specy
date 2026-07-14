@@ -83,6 +83,14 @@ export const AddContentBlock: React.FC<AddContentBlockProps> = ({ onAdd, prefix 
     });
   };
 
+  const addAudioBlock = () => {
+    onAdd({
+      id: generateBlockId(),
+      type: 'audio',
+      src: '',
+    });
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -112,6 +120,9 @@ export const AddContentBlock: React.FC<AddContentBlockProps> = ({ onAdd, prefix 
         </DropdownMenuItem>
         <DropdownMenuItem onClick={addFormBlock}>
           🧾 Formular
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={addAudioBlock}>
+          🎵 Audio
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

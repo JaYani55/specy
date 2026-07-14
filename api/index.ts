@@ -16,7 +16,9 @@ import objectsRoute from './routes/objects';
 import specsRoute from './routes/specs';
 import knowledgeBase from './routes/knowledgeBase';
 import { mountPluginRoutes } from './plugin-routes';
+import { getRegisteredApiPluginHooks } from './plugin-hooks';
 import { agentLogger } from './middleware/agentLogger';
+import { QUEUE_MESSAGE_HOOK, type QueueMessageHookContext } from './lib/queueHooks';
 
 import { formsWithMeta, handleFormReminders } from './routes/forms';
 import { objectsWithMeta } from './routes/objects';
@@ -201,6 +203,25 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const { handleFormReminders } = await import('./routes/forms');
     ctx.waitUntil(handleFormReminders(env));
+  },
+  async queue(batch: { readonly queue: string; readonly messages: readonly { readonly id: string; readonly timestamp: Date; readonly body: unknown; readonly attempts: number }[]; ackAll(): void; retryAll(): void }, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log(`[queue] Received batch on "${batch.queue}" with ${batch.messages.length} message(s)`);
+    const hooks = getRegisteredApiPluginHooks().filter((h) => h.target === QUEUE_MESSAGE_HOOK);
+    console.log(`[queue] Found ${hooks.length} registered hook(s) for target "${QUEUE_MESSAGE_HOOK}"`);
+    for (const message of batch.messages) {
+      console.log(`[queue] Dispatching message id=${message.id} attempts=${message.attempts} body=${JSON.stringify(message.body)}`);
+      for (const hook of hooks) {
+        console.log(`[queue] Invoking hook "${hook.key}" (kind=${hook.kind})`);
+        const context: QueueMessageHookContext = { message: message.body, env, ctx };
+        ctx.waitUntil(
+          Promise.resolve(hook.handler(context))
+            .then(() => console.log(`[queue] Hook "${hook.key}" completed for message ${message.id}`))
+            .catch((err: unknown) => console.error(`[queue] Hook "${hook.key}" FAILED for message ${message.id}:`, err))
+        );
+      }
+    }
+    batch.ackAll();
+    console.log(`[queue] Batch on "${batch.queue}" acknowledged`);
   },
 };
 

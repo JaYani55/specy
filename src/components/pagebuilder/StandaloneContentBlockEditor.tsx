@@ -31,6 +31,7 @@ const BLOCK_LABELS: Record<string, string> = {
   list: 'List Block',
   video: 'Video Block',
   form: 'Forms Block',
+  audio: 'Audio Block',
 };
 
 const BLOCK_ICONS: Record<string, string> = {
@@ -41,6 +42,7 @@ const BLOCK_ICONS: Record<string, string> = {
   list: '📄',
   video: '🎥',
   form: '🧾',
+  audio: '🎵',
 };
 
 interface StandaloneContentBlockEditorProps {
@@ -391,6 +393,54 @@ export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditor
               <div className="font-medium text-foreground">Share</div>
               <div>{block.share_slug ? `/${block.share_slug}` : '—'}</div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── audio ────────────────────────────────────────────── */}
+      {block.type === 'audio' && (
+        <div className="space-y-3">
+          <div>
+            <Label className="text-sm mb-1.5 block">Audio-Datei</Label>
+            <ImageUploader
+              value={block.src}
+              onChange={(src) => patch({ src })}
+            />
+          </div>
+
+          {block.src && (
+            <div className="rounded-lg border overflow-hidden bg-muted/30 p-3">
+              <audio
+                controls
+                preload="metadata"
+                className="w-full"
+                src={block.src}
+              >
+                Ihr Browser unterstützt kein Audio-Playback.
+              </audio>
+              <div className="mt-2 flex items-center gap-2 border-t pt-2">
+                <span className="text-xs text-muted-foreground truncate flex-1" title={block.src}>
+                  {block.src}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+                  onClick={() => { void navigator.clipboard.writeText(block.src); }}
+                  title="URL kopieren"
+                >
+                  📋
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <Label className="text-sm">Beschriftung</Label>
+            <Input
+              value={block.caption ?? ''}
+              onChange={(e) => patch({ caption: e.target.value })}
+              placeholder="Beschriftung (optional)"
+            />
           </div>
         </div>
       )}
