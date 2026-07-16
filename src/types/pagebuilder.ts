@@ -69,6 +69,8 @@ export interface AudioBlock extends BaseBlock {
   src: string;
   caption?: string;
   contentType?: string;
+  /** R2 object key for JWT-authenticated blob-fetch playback (preferred over signed src URL) */
+  objectKey?: string;
 }
 
 // Page Builder Data Interfaces

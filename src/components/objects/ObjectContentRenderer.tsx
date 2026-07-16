@@ -3,6 +3,7 @@ import type { ContentBlock } from '@/types/pagebuilder';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { MarkdownContent } from '@/components/forms/MarkdownContent';
+import { MediaAudioPlayer } from '@/components/media/MediaAudioPlayer';
 import { buildFormSharePath } from '@/utils/sharePaths';
 
 interface ObjectContentRendererProps {
@@ -98,19 +99,12 @@ export const ObjectContentRenderer: React.FC<ObjectContentRendererProps> = ({ bl
 
         if (block.type === 'audio') {
           return (
-            <figure key={block.id} className="space-y-3 overflow-hidden rounded-2xl border bg-muted/20 p-4">
-              <audio
-                controls
-                preload="metadata"
-                className="w-full"
-                src={block.src}
-              >
-                Ihr Browser unterstützt kein Audio-Playback.
-              </audio>
-              {block.caption ? (
-                <figcaption className="text-sm text-muted-foreground">{block.caption}</figcaption>
-              ) : null}
-            </figure>
+            <MediaAudioPlayer
+              key={block.id}
+              objectKey={block.objectKey}
+              caption={block.caption}
+              className="space-y-3 overflow-hidden rounded-2xl border bg-muted/20 p-4"
+            />
           );
         }
 
