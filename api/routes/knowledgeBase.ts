@@ -35,7 +35,7 @@ knowledgeBase.post('/sync', async (c) => {
     sourceRecordId,
     tenantId: tenantId ?? null,
     handled: false,
-    result: null as any,
+    result: null as unknown,
     error: null as string | null,
   };
 

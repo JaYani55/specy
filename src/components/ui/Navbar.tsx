@@ -60,6 +60,23 @@ const Navbar = () => {
     setOpenPluginMenuKey(null);
   }, [location.pathname]);
 
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.classList.add('mobile-menu-open');
+    } else {
+      document.body.classList.remove('mobile-menu-open');
+    }
+    return () => {
+      document.body.classList.remove('mobile-menu-open');
+    };
+  }, [mobileMenuOpen]);
+
   const openPluginMenu = pluginMainTree.find((item) => item.key === openPluginMenuKey && item.children.length);
 
   const togglePluginMenu = (itemKey: string) => {
@@ -76,7 +93,7 @@ const Navbar = () => {
             </Link>
           </div>
 
-          <div className="hidden md:flex items-center space-x-1">
+          <div className="hidden lg:flex items-center space-x-1">
             {menuItems.map((item) => (
               <Link
                 key={item.href}
@@ -143,11 +160,11 @@ const Navbar = () => {
             ))}
           </div>
 
-          <div className="flex items-center gap-2 md:gap-6">
+          <div className="flex items-center gap-2 lg:gap-6">
             {/* Info */}
             <Link
               to="/Info"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200 border transition-colors"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/70 border transition-colors"
               aria-label={language === "en" ? "Info" : "Info"}
             >
               <HelpCircle className="h-4 w-4" />
@@ -160,17 +177,17 @@ const Navbar = () => {
               className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium transition-colors border ${
                 location.pathname === '/settings'
                   ? 'bg-primary text-primary-foreground border-primary'
-                  : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/70'
               }`}
               aria-label={language === "en" ? "Preferences" : "Einstellungen"}
             >
               <SlidersHorizontal className="h-4 w-4" />
-              <span className="font-semibold hidden md:inline">{language === "en" ? "Preferences" : "Einstellungen"}</span>
+              <span className="font-semibold hidden lg:inline">{language === "en" ? "Preferences" : "Einstellungen"}</span>
             </Link>
 
             <button
               onClick={toggleTheme}
-              className="p-2 text-gray-500 hover:text-gray-900 focus:outline-none"
+              className="p-2 text-muted-foreground hover:text-foreground focus:outline-none"
               aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             >
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
@@ -180,14 +197,14 @@ const Navbar = () => {
               <Button
                 onClick={logout}
                 variant="ghost"
-                className="hidden md:flex px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="hidden lg:flex px-3 py-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               >
                 {language === "en" ? "Logout" : "Abmelden"}
               </Button>
             )}
 
             <button
-              className="md:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none"
+              className="lg:hidden p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent focus:outline-none"
               onClick={toggleMobileMenu}
               aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             >
@@ -197,7 +214,7 @@ const Navbar = () => {
         </div>
 
         {openPluginMenu ? (
-          <div className="hidden md:block border-t py-3">
+          <div className="hidden lg:block border-t py-3">
             <div className="flex flex-wrap items-center gap-2">
               <Link
                 to={openPluginMenu.path}
@@ -225,19 +242,19 @@ const Navbar = () => {
         ) : null}
 
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 space-y-2 pb-4 animate-in fade-in slide-in-from-top border-t">
+          <div className="lg:hidden py-2 sm:py-4 space-y-1 sm:space-y-2 pb-4 animate-in fade-in slide-in-from-top border-t max-h-[calc(100dvh-4rem)] overflow-y-auto">
             {menuItems.map((item) => (
               <Link
                 key={item.href}
                 to={item.href}
-                className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
+                className={`flex items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium ${
                   location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
                     ? "bg-primary text-primary-foreground"
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 }`}
                 onClick={() => setMobileMenuOpen(false)}
               >
-                <item.icon className="h-5 w-5 mr-2" />
+                <item.icon className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
                 <span>{item.label}</span>
               </Link>
             ))}
@@ -249,61 +266,61 @@ const Navbar = () => {
                   <Link
                     key={item.key}
                     to={item.path}
-                    className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
+                    className={`flex items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium ${
                       isActive
                         ? "bg-primary text-primary-foreground"
-                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                     }`}
                     onClick={() => setMobileMenuOpen(false)}
                   >
-                    <item.icon className="h-5 w-5 mr-2" />
+                    <item.icon className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
                     <span>{item.label}</span>
                   </Link>
                 );
               }
 
               return (
-                <div key={item.key} className="rounded-md border border-gray-200/80 overflow-hidden">
+                <div key={item.key} className="rounded-md border border-border overflow-hidden">
                   <button
                     type="button"
-                    className={`flex w-full items-center px-3 py-3 text-base font-medium ${
+                    className={`flex w-full items-center px-3 py-2.5 sm:py-3 text-sm sm:text-base font-medium ${
                       isActive
                         ? "bg-primary text-primary-foreground"
-                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                     }`}
                     aria-expanded={openPluginMenuKey === item.key}
                     onClick={() => togglePluginMenu(item.key)}
                   >
-                    <item.icon className="h-5 w-5 mr-2" />
+                    <item.icon className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
                     <span className="flex-1 text-left">{item.label}</span>
-                    <ChevronDown className={`h-5 w-5 transition-transform${openPluginMenuKey === item.key ? ' rotate-180' : ''}`} />
+                    <ChevronDown className={`h-4 w-4 sm:h-5 sm:w-5 transition-transform${openPluginMenuKey === item.key ? ' rotate-180' : ''}`} />
                   </button>
                   {openPluginMenuKey === item.key ? (
-                    <div className="border-t bg-gray-50/70">
+                    <div className="border-t bg-muted/30">
                       <Link
                         to={item.path}
-                        className={`flex items-center px-4 py-3 text-sm font-medium ${
+                        className={`flex items-center px-4 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-medium ${
                           location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
                             ? "bg-primary/10 text-primary"
-                            : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                         }`}
                         onClick={() => setMobileMenuOpen(false)}
                       >
-                        <item.icon className="h-4 w-4 mr-2" />
+                        <item.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-2 sm:mr-3" />
                         <span>{item.label}</span>
                       </Link>
                       {item.children.map((child) => (
                         <Link
                           key={child.key}
                           to={child.path}
-                          className={`flex items-center px-4 py-3 text-sm font-medium ${
+                          className={`flex items-center px-4 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-medium ${
                             location.pathname === child.path || location.pathname.startsWith(`${child.path}/`)
                               ? "bg-primary/10 text-primary"
-                              : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                           }`}
                           onClick={() => setMobileMenuOpen(false)}
                         >
-                          <child.icon className="h-4 w-4 mr-2" />
+                          <child.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-2 sm:mr-3" />
                           <span>{child.label}</span>
                         </Link>
                       ))}
@@ -318,13 +335,13 @@ const Navbar = () => {
                 href={item.external_url ?? '#'}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center px-3 py-3 rounded-md text-base font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="flex items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {item.icon_url ? (
-                  <img src={item.icon_url} alt="" className="h-5 w-5 mr-2 rounded-sm object-contain" />
+                  <img src={item.icon_url} alt="" className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3 rounded-sm object-contain" />
                 ) : (
-                  <Globe className="h-5 w-5 mr-2" />
+                  <Globe className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
                 )}
                 <span>{item.name}</span>
               </a>
@@ -336,23 +353,35 @@ const Navbar = () => {
                   logout();
                   setMobileMenuOpen(false);
                 }}
-                className="flex w-full items-center px-3 py-3 rounded-md text-base font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="flex w-full items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               >
-                <LogOut className="h-5 w-5 mr-2" />
+                <LogOut className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
                 <span>{language === "en" ? "Logout" : "Abmelden"}</span>
               </button>
             )}
             <Link
               to="/settings"
-              className={`flex items-center px-3 py-3 rounded-md text-base font-medium ${
+              className={`flex items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium ${
                 location.pathname === '/settings'
                   ? 'bg-primary text-primary-foreground'
-                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
               onClick={() => setMobileMenuOpen(false)}
             >
-              <SlidersHorizontal className="h-5 w-5 mr-2" />
+              <SlidersHorizontal className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
               <span>{language === "en" ? "Preferences" : "Einstellungen"}</span>
+            </Link>
+            <Link
+              to="/Info"
+              className={`flex items-center px-3 py-2.5 sm:py-3 rounded-md text-sm sm:text-base font-medium ${
+                location.pathname === '/Info'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
+              <span>{language === "en" ? "Info" : "Info"}</span>
             </Link>
           </div>
         )}

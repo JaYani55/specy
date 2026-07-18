@@ -58,7 +58,7 @@ export interface KnowledgeBaseSyncInvokeHookContext {
   sourceRecordId: string;
   tenantId?: string | null;
   handled: boolean;
-  result?: any;
+  result?: unknown;
   error?: string | null;
 }
 

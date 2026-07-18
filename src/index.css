@@ -331,6 +331,47 @@
   }
 }
 
+/* Mobile and tablet responsive improvements */
+@media (max-width: 1023px) {
+  /* Reduce container padding on mobile/tablet */
+  .container {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  
+  /* Ensure buttons have adequate touch targets */
+  button, 
+  a[role="button"],
+  [role="button"],
+  .nav-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Safe area padding for notched phones */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Prevent body scroll when mobile menu is open */
+body.mobile-menu-open {
+  overflow: hidden;
+}
+
+/* Improved scrollbar for mobile */
+@media (pointer: coarse) {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 2px;
+  }
+}
+
 /* High contrast mode support */
 @media (prefers-contrast: high) {
   :root {

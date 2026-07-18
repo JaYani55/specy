@@ -478,4 +478,26 @@ export async function createObjectInternal(
   return data as ObjectRow;
 }
 
+/**
+ * Programmatic hard-delete of an object by share_slug.
+ * Uses the admin client (bypasses RLS) — callers are responsible for authorization.
+ * Returns true if an object was deleted, false if no matching object was found.
+ */
+export async function deleteObjectInternal(
+  env: Env,
+  shareSlug: string,
+): Promise<boolean> {
+  const admin = await createSupabaseAdminClient(env);
+  const { error, count } = await admin
+    .from('objects')
+    .delete()
+    .eq('share_slug', shareSlug);
+
+  if (error) {
+    throw new Error(`Failed to delete object: ${error.message}`);
+  }
+
+  return (count ?? 0) > 0;
+}
+
 export default objects;

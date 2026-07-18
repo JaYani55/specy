@@ -62,10 +62,10 @@ const Layout = () => {
           Skip to main content
         </a>
 
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+        <header className="flex h-14 sm:h-16 shrink-0 items-center gap-1 sm:gap-2 border-b px-2 sm:px-4">
           <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <div className="flex flex-1 items-center justify-between">
+          <Separator orientation="vertical" className="mr-1 sm:mr-2 h-4" />
+          <div className="flex flex-1 items-center justify-between min-w-0">
              <Breadcrumb />
           </div>
         </header>
@@ -73,7 +73,7 @@ const Layout = () => {
         <main 
             id="main-content" 
             role="main" 
-            className="flex-1 container mx-auto px-4 py-6"
+            className="flex-1 container mx-auto px-3 sm:px-4 py-4 sm:py-6"
         >
             <Outlet />
         </main>
