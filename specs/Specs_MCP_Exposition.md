@@ -107,8 +107,10 @@ The MCP server is exposed at `/mcp`.
 Built-in tools remain available:
 
 - `start_here`
-- `login`
-- `new_schema`
+- `create_schema` _(authenticated)
+- `start_schema_registration`
+- `create_page`
+- `new_schema` _(authenticated compatibility alias)
 - `list_available_tools`
 - `get_spec_definition`
 - `list_schemas`
@@ -118,8 +120,9 @@ Built-in tools remain available:
 
 Dynamic MCP registration now works as follows:
 
-- every published public MCP entry is registered as a direct MCP tool for anonymous callers
-- every published closed MCP entry is also registered when the caller provides a valid Supabase JWT
+- public GET/discovery metadata remains available without authentication
+- MCP POST initialization requires OAuth and returns `401` with `WWW-Authenticate` when no bearer token is present
+- authenticated callers receive mutation tools and published closed MCP entries
 
 This means the tool list is caller-dependent by design.
 
@@ -142,22 +145,23 @@ In other words:
 
 ## 6. Auth Model For Closed MCP Entries
 
-Closed MCP entries use the same Supabase JWT model as protected API endpoints.
+**Updated 2026-08-01:** programmatic MCP authentication now uses OAuth 2.1 (Authorization Code + PKCE) with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed; it now returns OAuth flow instructions. See [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md) for the full model. The visibility rules below are unchanged — only the token acquisition path changed.
 
 Requirements:
 
-- the request must send `Authorization: Bearer <supabase-jwt>`
-- the JWT must resolve to a valid Supabase user session
+- the request must send `Authorization: Bearer <oauth-access-token>`
+- the token must be a valid Supabase-issued access token (password session or OAuth 2.1 — both are validated via `auth.getClaims()`)
+- OAuth clients discover the authorization server via `/.well-known/oauth-protected-resource` (RFC 9728); 401 responses include a `WWW-Authenticate` challenge pointing there
 
 If the token is missing:
 
-- closed MCP entries are omitted from `tools/list`
-- closed MCP entries are omitted from `list_available_tools`
-- direct calls to a closed MCP tool are not possible because the tool is not registered for that caller
+- MCP initialization returns `401` with `WWW-Authenticate` and protected-resource metadata
+- clients should complete OAuth and reconnect before calling `tools/list`
+- mutation tools such as `create_schema`, `start_schema_registration`, `register_frontend`, and `create_page` are not exposed
 
 If the token is invalid or expired:
 
-- the MCP endpoint responds with `401 Invalid or expired session`
+- the MCP endpoint responds with `401 Invalid or expired session` and a `WWW-Authenticate: Bearer resource_metadata="..."` header
 
 ## 7. Operator Workflow
 
@@ -173,12 +177,13 @@ Recommended workflow for a custom MCP entry:
 Recommended workflow for schema-driven frontend generation:
 
 1. Call `start_here` to get the current Specy workflow and auth model.
-2. Call `login` if the workflow requires authenticated tools such as `new_schema` or closed MCP entries.
+2. Let the MCP client complete OAuth 2.1 automatically after the Worker returns its `WWW-Authenticate` challenge. Do not copy authorization codes or JWTs into chat.
 3. Use `list_schemas` and `get_schema_spec` to inspect existing patterns.
-4. Call `new_schema` to create a pending, unassigned schema from the generated schema JSON.
-5. Have the user review the schema in the CMS and click Register to generate the registration code.
-6. Build the frontend against the created schema and call `register_frontend` with the code.
-7. Call `check_health` to verify the registered frontend is reachable.
+4. Call `create_schema` to create the schema for the authenticated tenant.
+5. Call `start_schema_registration` to generate the registration code programmatically.
+6. Build the frontend against the created schema and call `register_frontend` with the returned code.
+7. Call `create_page` to create page content validated against the schema.
+8. Call `check_health` to verify the registered frontend is reachable.
 
 ## 8. Summary
 

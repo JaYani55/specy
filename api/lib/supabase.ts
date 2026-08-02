@@ -93,6 +93,7 @@ export interface Env {
 
   // ── App URLs ───────────────────────────────────────────────────────────────
   APP_URL?: string;
+  PUBLIC_WORKER_URL?: string;
 
   // ── Fallback vars for local `wrangler dev` (set in .dev.vars) ──────────────
   SUPABASE_URL: string;
@@ -132,6 +133,9 @@ export interface Env {
   // ── Local Dev Fallbacks ──────────────────────────────────────────────────
   // These allow using plain vars in .dev.vars when Secrets Store is not used
   SUPABASE_SECRET_KEY?: string;
+
+  // ── OAuth 2.1 client credentials ───────────────────────────────────────
+  CONSOLE_PLURACON_CLIENT_ID?: string;
 }
 
 /**

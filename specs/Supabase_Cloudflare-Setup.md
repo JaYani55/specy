@@ -24,9 +24,10 @@ Complete reference for deploying service-cms on Cloudflare Workers with Supabase
 7. [Database Migrations](#7-database-migrations)
 8. [Supabase Auth Hook](#8-supabase-auth-hook)
 9. [First Super-Admin User](#9-first-super-admin-user)
-10. [Manual Setup (without wizard)](#10-manual-setup-without-wizard)
-11. [Re-running Setup](#11-re-running-setup)
-12. [Troubleshooting](#12-troubleshooting)
+10. [OAuth 2.1 Server for MCP Agents](#10-oauth-21-server-for-mcp-agents)
+11. [Manual Setup (without wizard)](#11-manual-setup-without-wizard)
+12. [Re-running Setup](#12-re-running-setup)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -366,7 +367,39 @@ SELECT '<USER_UUID>', id FROM public.roles WHERE name = 'super-admin';
 
 ---
 
-## 10. Manual Setup (without wizard)
+## 10. OAuth 2.1 Server for MCP Agents
+
+Programmatic MCP clients (Cursor, Claude Desktop, autonomous agents) authenticate via OAuth 2.1 with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed on 2026-08-01. Full model: [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md).
+
+### Dashboard configuration (manual, per environment)
+
+1. **Authentication → OAuth Server**: enable the OAuth 2.1 server.
+2. Enable **Dynamic Client Registration** (RFC 7591) so MCP clients can self-register. Verify the authorization-server metadata includes a `registration_endpoint`; otherwise MCP clients may prompt for a manual client ID.
+3. Set the **consent/authorization path** to `/oauth/consent` and configure the site's public URL to the canonical console domain.
+4. Keep the **Custom Access Token Hook** registered — since migration `Auth/Access_hook_oauth_claims.sql` it also injects `is_agent` and `tenant_id` into every token.
+
+### Worker-side pieces (already in code, no setup needed)
+
+- `GET /.well-known/oauth-protected-resource` (RFC 9728) advertises the authorization server to MCP clients.
+- 401 responses on `/mcp` and `/api/*` include a `WWW-Authenticate: Bearer resource_metadata="..."` challenge.
+- The consent screen lives at `/oauth/consent` in the deployed SPA.
+- `GET /.well-known/oauth-protected-resource` advertises the exact `/mcp` resource URL.
+
+### Public Worker URL
+
+Open `/admin/connections` as a `super-admin` and configure **Public Worker URL** when the deployment is served through a custom domain such as `https://console.example.com`.
+
+The value is persisted in `system_config` as `core.public_url` and overrides the current `*.workers.dev` request origin. It is used for OAuth resource metadata, MCP discovery links, callbacks, and generated absolute API URLs. If it is left unset, the Worker origin is used automatically.
+
+### Provisioning an agent account
+
+1. Create a dedicated Supabase user (Authentication → Users, email confirmed).
+2. Assign the `agent` role (plus any content roles the agent needs) via the account administration UI.
+3. The agent discovers endpoints via the well-known URLs and completes Authorization Code + PKCE; the user approves once in the consent screen.
+
+---
+
+## 11. Manual Setup (without wizard)
 
 If you prefer to configure everything manually, follow these steps in order.
 

@@ -10,6 +10,8 @@ import { LoadingState } from "./components/ui/LoadingState";
 
 // Import your pages
 import Login from "./pages/Login";
+import OAuthConsent from "./pages/OAuthConsent";
+import OAuthCallback from "./pages/OAuthCallback";
 import Events from "./pages/Events";
 import Calendar from "./pages/Calendar";
 import EventList from "./pages/List";
@@ -133,6 +135,8 @@ const AppContent = () => {
       <DocumentLanguageUpdater />
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
+        <Route path="/oauth/callback" element={<OAuthCallback />} />
         <Route path="/" element={<RootRoute />} />
         
         {/* Wrap all protected routes with Layout */}

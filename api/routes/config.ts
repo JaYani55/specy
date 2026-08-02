@@ -4,7 +4,7 @@ import type { Env } from '../lib/supabase';
 import { buildMailSecretName, buildS3SecretName, getMailSecretNamespace, getManagedSecretMetadata, getS3SourceSecretNamespace, upsertManagedSecret } from '../lib/managedSecrets';
 import { invalidateLoggingConfigCache } from '../middleware/agentLogger';
 import { createSupabaseAdminClient } from '../lib/supabase';
-import { getBrandingConfig, getExtraMediaSources, getLoggingConfig, getMailConfig, getMediaSourceMounts, getStorageConfig, upsertBrandingConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertMediaSourceMounts, upsertStorageConfig, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
+import { getBrandingConfig, getExtraMediaSources, getLoggingConfig, getMailConfig, getMediaSourceMounts, getPublicUrlConfig, getStorageConfig, upsertBrandingConfig, upsertExtraMediaSources, upsertLoggingConfig, upsertMailConfig, upsertMediaSourceMounts, upsertPublicUrlConfig, upsertStorageConfig, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
 
 const config = new Hono<{ Bindings: Env }>();
 
@@ -37,6 +37,25 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(value: string): boolean {
   return EMAIL_PATTERN.test(value);
 }
+
+config.get('/public-url', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+  return c.json({ publicUrl: (await getPublicUrlConfig(c.env, new URL(c.req.url).origin)).publicUrl });
+});
+
+config.put('/public-url', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json<{ publicUrl?: string }>().catch(() => null);
+  if (!body?.publicUrl) return c.json({ error: 'Missing publicUrl' }, 400);
+  try {
+    await upsertPublicUrlConfig(c.env, body.publicUrl);
+    return c.json({ success: true, publicUrl: (await getPublicUrlConfig(c.env, new URL(c.req.url).origin)).publicUrl });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Invalid public URL' }, 400);
+  }
+});
 
 async function parseUpstreamFunctionBody(response: Response): Promise<string | null> {
   const bodyText = await response.text().catch(() => '');

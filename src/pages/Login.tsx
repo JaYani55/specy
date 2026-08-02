@@ -15,8 +15,13 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const { language } = useTheme();
+
+  // OAuth consent flow passes the target URL via location.state.returnTo
+  // (React Router strips unknown query params on navigate()).
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,9 +36,9 @@ const Login = () => {
     
     try {
       await login(email, password);
-      
+
       // Only navigate if login was successful
-      navigate("/", { replace: true });
+      navigate(returnTo ?? "/", { replace: true });
     } catch (err: unknown) {
       console.error("Login error:", err);
       const errorObj = err as { name?: string; message?: string };

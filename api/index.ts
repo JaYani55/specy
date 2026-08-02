@@ -19,6 +19,7 @@ import { mountPluginRoutes } from './plugin-routes';
 import { getRegisteredApiPluginHooks } from './plugin-hooks';
 import { agentLogger } from './middleware/agentLogger';
 import { QUEUE_MESSAGE_HOOK, type QueueMessageHookContext } from './lib/queueHooks';
+import { getPublicUrlConfig } from './lib/systemConfig';
 
 import { formsWithMeta, handleFormReminders } from './routes/forms';
 import { objectsWithMeta } from './routes/objects';
@@ -31,8 +32,8 @@ app.get('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = url.pathname;
 
-  // Skip API, MCP and well-known paths
-  if (path.startsWith('/api/') || path.startsWith('/mcp') || path.startsWith('/.well-known/')) {
+  // Skip API, MCP, well-known paths, and OAuth callback
+  if (path.startsWith('/api/') || path.startsWith('/mcp') || path.startsWith('/.well-known/') || path.startsWith('/oauth/')) {
     return next();
   }
 
@@ -98,7 +99,8 @@ app.get('*', async (c, next) => {
 app.use('*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id'],
+  exposeHeaders: ['Mcp-Session-Id', 'WWW-Authenticate'],
 }));
 
 // Root — single entry point for agents, links to discovery + MCP
@@ -143,6 +145,9 @@ app.get('/.well-known/mcp.json', (c) => {
       schemas_url: `${baseUrl}/api/schemas`,
     },
     tools: [
+      'create_schema',
+      'start_schema_registration',
+      'create_page',
       'list_available_tools',
       'get_spec_definition',
       'list_schemas',
@@ -152,13 +157,55 @@ app.get('/.well-known/mcp.json', (c) => {
       'list_objects',
       'get_object',
     ],
+    authentication: {
+      required: true,
+      mode: 'OAuth 2.1 Authorization Code + PKCE managed by the MCP client',
+      protected_resource_metadata: `${baseUrl}/.well-known/oauth-protected-resource`,
+    },
   });
+});
+
+// RFC 9728 — OAuth 2.0 Protected Resource Metadata.
+// MCP clients discover the authorization server (Supabase Auth OAuth 2.1) here
+// after receiving a 401 with a WWW-Authenticate resource_metadata challenge.
+app.get('/.well-known/oauth-protected-resource', (c) => {
+  const requestOrigin = new URL(c.req.url).origin;
+  const supabaseUrl = (c.env.SUPABASE_URL ?? '').replace(/\/+$/, '');
+  return getPublicUrlConfig(c.env, requestOrigin).then(({ publicUrl }) => c.json({
+    // RFC 9728 requires an exact match with the protected resource URL used
+    // by MCP clients. The protected resource is /mcp, not the site origin.
+    resource: `${publicUrl}/mcp`,
+    authorization_servers: supabaseUrl ? [`${supabaseUrl}/auth/v1`] : [],
+    authorization_server_metadata: supabaseUrl
+      ? `${supabaseUrl}/.well-known/oauth-authorization-server/auth/v1`
+      : null,
+    bearer_methods_supported: ['header'],
+    resource_documentation: `${publicUrl}/.well-known/mcp.json`,
+  }));
 });
 
 // Logging middleware — logs ALL API and MCP requests (skips /api/schemas/logs internally)
 app.use('/api/*', agentLogger);
 app.use('/mcp', agentLogger);
 app.use('/mcp/*', agentLogger);
+
+// OAuth callback — displays the authorization code to the user
+app.get('/oauth/callback', (c) => {
+  const code = c.req.query('code');
+  const state = c.req.query('state');
+  const error = c.req.query('error');
+  const errorDescription = c.req.query('error_description');
+
+  if (error) {
+    return c.html(`<!DOCTYPE html><html><head><title>Authorization Failed</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fafafa}.card{max-width:480px;padding:2rem;border:1px solid #27272a;border-radius:12px;text-align:center}.code{font-family:monospace;background:#18181b;padding:1rem;border-radius:8px;word-break:break-all;margin:1rem 0;font-size:0.9rem;color:#a3e635}.error{color:#f87171}</style></head><body><div class="card"><h2>Authorization Failed</h2><p class="error">${errorDescription || error}</p><p>Close this window and try again.</p></div></body></html>`);
+  }
+
+  if (!code) {
+    return c.html(`<!DOCTYPE html><html><head><title>No Authorization Code</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fafafa}.card{max-width:480px;padding:2rem;border:1px solid #27272a;border-radius:12px;text-align:center}</style></head><body><div class="card"><h2>No Authorization Code</h2><p>The authorization server did not return a code. Close this window and try again.</p></div></body></html>`);
+  }
+
+  return c.html(`<!DOCTYPE html><html><head><title>Authorization Code</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fafafa}.card{max-width:480px;padding:2rem;border:1px solid #27272a;border-radius:12px;text-align:center}.code{font-family:monospace;background:#18181b;padding:1rem;border-radius:8px;word-break:break-all;margin:1rem 0;font-size:0.9rem;color:#a3e635}.state{font-family:monospace;background:#18181b;padding:0.75rem;border-radius:8px;word-break:break-all;margin:0.5rem 0;font-size:0.75rem;color:#71717a}p{color:#a1a1aa;font-size:0.9rem}</style></head><body><div class="card"><h2>✅ Authorization Complete</h2><p>Copy the authorization code below and paste it back to your agent:</p><div class="code">${code}</div>${state ? `<p>State (also needed):</p><div class="state">${state}</div>` : ''}<p>Close this window after copying.</p></div></body></html>`);
+});
 
 // Mount routes (logs first — more specific path before wildcard schemas)
 app.route('/api/schemas/logs', logs);

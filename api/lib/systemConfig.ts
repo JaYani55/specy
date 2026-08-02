@@ -494,3 +494,27 @@ export async function getDefaultMediaSourceMount(env: Env): Promise<MediaSourceM
   const mounts = await getMediaSourceMounts(env);
   return mounts.find((mount) => mount.isDefault) ?? mounts[0] ?? null;
 }
+
+export interface PublicUrlConfigValue {
+  publicUrl: string;
+}
+
+export async function getPublicUrlConfig(env: Env, requestOrigin?: string): Promise<PublicUrlConfigValue> {
+  const configured = await getConfigValue(env, CORE_NAMESPACE, 'public_url');
+  return { publicUrl: configured || requestOrigin || '' };
+}
+
+export async function upsertPublicUrlConfig(env: Env, publicUrl: string): Promise<void> {
+  const normalized = publicUrl.trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^\s/]+(?:\/[^\s]*)?$/i.test(normalized)) {
+    throw new Error('Public Worker URL must be an absolute HTTPS URL.');
+  }
+
+  const admin = await createSupabaseAdminClient(env);
+  const { error } = await admin.from('system_config').upsert({
+    namespace: CORE_NAMESPACE,
+    key: 'public_url',
+    value: normalized,
+  }, { onConflict: 'namespace,key' });
+  if (error) throw new Error(error.message);
+}

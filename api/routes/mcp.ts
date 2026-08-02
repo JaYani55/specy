@@ -16,7 +16,7 @@ import {
   normalizeSchemaIntegrationRequirements,
   validateSlugStructure,
 } from '../lib/schemaRouting';
-import { getOptionalAuthSession, getRolesFromToken } from '../lib/auth';
+import { getOptionalAuthSession, unauthorizedWithChallenge } from '../lib/auth';
 import {
   getDiscoverableSpecBySlug,
   listRegistryMcpSpecs,
@@ -24,12 +24,15 @@ import {
 } from '../lib/specRegistry';
 import { registerPluginMcpTools } from '../lib/mcpHooks';
 import type { VerifiedAuthSession } from '../lib/auth';
+import { getPublicUrlConfig } from '../lib/systemConfig';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
 const BUILT_IN_MCP_TOOLS = [
   'start_here',
-  'login',
+  'create_schema',
+  'start_schema_registration',
+  'create_page',
   'new_schema',
   'list_available_tools',
   'get_spec_definition',
@@ -40,6 +43,15 @@ const BUILT_IN_MCP_TOOLS = [
   'list_objects',
   'get_object',
 ] as const;
+
+function generateRegistrationCode(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
 
 interface SchemaListRow {
   slug: string;
@@ -109,6 +121,8 @@ async function createMcpServerWithTools(
   });
 
   const authToken = authSession?.token ?? null;
+  const supabaseUrl = (env.SUPABASE_URL ?? '').replace(/\/+$/, '');
+  const isAuthenticated = Boolean(authSession?.token);
 
   const supabase = await createSupabaseClient(env, authToken ?? undefined);
 
@@ -121,46 +135,85 @@ async function createMcpServerWithTools(
         type: 'text' as const,
         text: JSON.stringify({
           service: 'specy',
+          workflow_version: '2026-08-01-autonomous-schema-pages-v1',
           purpose: 'Specy is a CMS and MCP server for schema-driven website generation and frontend registration workflows.',
           workflow: [
             '1. Call start_here to understand the system and available workflow tools.',
             '2. Call list_schemas or get_schema_spec to inspect existing schema patterns and requirements.',
-            '3. If you need a private MCP entry or creation tools, call login with dedicated agent credentials to obtain a Supabase JWT.',
-            '4. Design a compliant page schema from the user request and create it with new_schema. This creates an unassigned pending schema without a registration code.',
-            '5. Ask the user to review the schema in the CMS and click Register to start the registration process and generate a registration code.',
-            '6. Call get_schema_spec for the created schema, build the frontend, then call register_frontend with the generated registration code and ISR settings.',
-            '7. Optionally call check_health to confirm the registered frontend is reachable.',
+            '3. BEFORE attempting any schema, page, registration, or closed-content operation, authenticate this MCP connection. If create_schema, new_schema, start_schema_registration, create_page, or register_frontend are absent from tools/list, the connection is anonymous and you must stop the workflow and ask the MCP client to complete OAuth 2.1 in the browser.',
+            '4. After OAuth completes, reconnect or refresh the MCP session and call tools/list again. Do not continue until the authenticated tools are visible.',
+            '5. Authenticated tools include create_schema, start_schema_registration, register_frontend, and create_page. Use them to complete the requested workflow.',
+            '6. Call create_schema with the blog schema definition. This creates the schema for the authenticated tenant.',
+            '7. Call start_schema_registration to generate a registration code without asking the user to use the CMS.',
+            '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
+            '9. Call create_page to create blog content, then optionally call check_health.',
           ],
-          auth_model: {
-            public_tools: ['start_here', 'list_schemas', 'get_schema_spec', 'register_frontend', 'check_health', 'login'],
-            authenticated_tools: ['new_schema', 'closed MCP entries'],
-            closed_tool_access: 'Use Authorization: Bearer <supabase-jwt> on subsequent MCP requests after login.',
+          how_to_authenticate: {
+            mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
+            required_before_private_tools: true,
+            note: 'Authentication is mandatory before schema creation, page creation, frontend registration, or closed MCP access. The MCP client should follow the 401 WWW-Authenticate challenge, discover Supabase OAuth metadata, open the browser, handle consent, store the token, refresh it, and reconnect automatically.',
+            expected_client_behavior: [
+              '1. Connect to /mcp.',
+              '2. On 401, discover /.well-known/oauth-protected-resource and the Supabase authorization server.',
+              '3. Open the authorization URL in the browser and let the user approve.',
+              '4. Capture the callback in the MCP client, exchange the code, store/refresh the token, and reconnect.',
+              '5. Re-run tools/list after authentication.',
+              '6. Confirm that create_schema, start_schema_registration, register_frontend, and create_page are now present before proceeding.',
+            ],
+            anonymous_tools: ['start_here', 'list_schemas', 'get_schema_spec', 'list_objects', 'get_object', 'check_health', 'list_available_tools', 'get_spec_definition'],
+            authenticated_tools: ['create_schema', 'new_schema', 'start_schema_registration', 'register_frontend', 'create_page', 'closed MCP registry tools'],
+            stop_condition: 'If the authenticated_tools are not returned by tools/list, do not claim that schema creation or registration is unavailable and do not proceed with a local-only implementation. Report that OAuth has not completed for this MCP connection.',
+            legacy_tools: 'No manual OAuth tools are exposed on the normal MCP surface. VS Code, Cursor, Claude Desktop, and standards-compliant MCP clients must use the HTTP 401 challenge and manage OAuth themselves.',
           },
           important_notes: [
+            'CRITICAL: The normal MCP surface has no manual authorization-code tools. Let the MCP client manage OAuth automatically.',
+            'CRITICAL: An anonymous tools/list is not sufficient for schema work. Authenticate first, then call tools/list again and verify the private tools are present.',
             'new_schema intentionally creates schemas in pending state with no registration code.',
             'The user must explicitly start registration in the frontend to generate a registration code.',
-            'Published public MCP entries are visible without auth; published closed entries require a valid Supabase JWT.',
+            'Published public MCP entries are visible without auth; published closed entries require a valid OAuth 2.1 bearer token.',
+            'Password-based login was removed; normal MCP clients use client-managed OAuth through the HTTP challenge.',
           ],
         }, null, 2),
       }],
     }),
   );
 
-  server.tool(
-    'login',
-    'Sign in with Specy user credentials and return a Supabase JWT that can be used on subsequent MCP requests for authenticated tools.',
-    {
-      email: z.string().email().describe('Account email address'),
-      password: z.string().min(1).describe('Account password'),
-    },
-    async ({ email, password }) => {
-      const authClient = await createSupabaseClient(env);
-      const { data, error } = await authClient.auth.signInWithPassword({ email, password });
+  if (isAuthenticated) {
+    const createSchemaHandler = await buildNewSchemaHandler(env, baseUrl, authToken);
+    server.tool(
+      'create_schema',
+      'Create a new page schema for the current authenticated tenant. The schema is immediately ready for frontend registration. Call start_schema_registration next; do not ask the user to click anything in the CMS.',
+      newSchemaToolSchema,
+      createSchemaHandler,
+    );
+    server.tool(
+      'new_schema',
+      'Compatibility alias for create_schema. Creates a new page schema for the current authenticated tenant.',
+      newSchemaToolSchema,
+      createSchemaHandler,
+    );
 
-      if (error || !data.session || !data.user) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Login failed.' }, null, 2) }],
-        };
+    server.tool(
+      'start_schema_registration',
+      'Generate a one-time frontend registration code for a schema. This replaces the manual CMS Start Registration action.',
+      {
+      slug: z.string().min(1).describe('Schema slug'),
+      },
+      async ({ slug }) => {
+      if (!authToken) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Authentication required. Use the MCP client OAuth flow first.' }, null, 2) }] };
+      }
+
+      const registrationCode = generateRegistrationCode();
+      const { data, error } = await supabase
+        .from('page_schemas')
+        .update({ registration_code: registrationCode, registration_status: 'waiting' })
+        .eq('slug', slug)
+        .select('id, slug, name, registration_status, registration_code, integration_requirements, slug_structure')
+        .single();
+
+      if (error || !data) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || `Schema "${slug}" not found.` }, null, 2) }] };
       }
 
       return {
@@ -168,31 +221,92 @@ async function createMcpServerWithTools(
           type: 'text' as const,
           text: JSON.stringify({
             success: true,
-            message: 'Login successful. Use the returned access_token as Authorization: Bearer <token> on future MCP requests.',
-            session: {
-              access_token: data.session.access_token,
-              refresh_token: data.session.refresh_token,
-              token_type: data.session.token_type,
-              expires_at: data.session.expires_at,
-              expires_in: data.session.expires_in,
+            schema: data,
+            registration: {
+              code: registrationCode,
+              endpoint: `${baseUrl}/api/schemas/${data.slug}/register`,
+              request: {
+                slug: data.slug,
+                code: registrationCode,
+                frontend_url: 'https://your-frontend.example',
+                revalidation_endpoint: '/api/revalidate',
+                revalidation_secret: 'generate-a-secret',
+                slug_structure: data.slug_structure || '/:slug',
+              },
             },
-            user: {
-              id: data.user.id,
-              email: data.user.email,
-              roles: getRolesFromToken(data.session.access_token),
-            },
+            next_step: 'Build the frontend, then call register_frontend with this code and the deployed frontend URL.',
           }, null, 2),
         }],
       };
-    },
-  );
+      },
+    );
 
-  server.tool(
-    'new_schema',
-    'Create a new unassigned pending schema from an agent-produced schema definition. Requires a valid Supabase JWT on the MCP request.',
-    newSchemaToolSchema,
-    await buildNewSchemaHandler(env, baseUrl, authToken),
-  );
+    server.tool(
+      'create_page',
+      'Create a draft page validated against a registered or unregistered page schema. Requires a valid OAuth bearer token.',
+      {
+      schema_slug: z.string().min(1).describe('Schema slug'),
+      name: z.string().min(1).describe('Page display name'),
+      slug: z.string().optional().describe('Optional URL slug; generated from name when omitted'),
+      content: z.record(z.string(), z.unknown()).describe('Page content matching the schema definition'),
+      status: z.enum(['draft', 'published']).optional().describe('Page status; defaults to draft'),
+      tenant_id: z.string().uuid().optional().describe('Optional tenant override for a tenant the caller belongs to'),
+      },
+      async ({ schema_slug, name, slug, content, status, tenant_id }) => {
+      if (!authToken) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Authentication required. Use the MCP client OAuth flow first.' }, null, 2) }] };
+      }
+
+      const { data: schema, error: schemaError } = await supabase
+        .from('page_schemas')
+        .select('id, slug, frontend_url, slug_structure')
+        .eq('slug', schema_slug)
+        .single();
+      if (schemaError || !schema) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: schemaError?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
+      }
+
+      const requestedSlug = (slug || name)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'page';
+
+      const { data: existing } = await supabase.from('pages').select('id').eq('slug', requestedSlug).limit(1);
+      const uniqueSlug = existing && existing.length > 0 ? `${requestedSlug}-${Date.now().toString(36)}` : requestedSlug;
+
+      const { data: page, error: pageError } = await supabase
+        .from('pages')
+        .insert({
+          name,
+          slug: uniqueSlug,
+          content,
+          status: status || 'draft',
+          schema_id: schema.id,
+          tenant_id: tenant_id || null,
+        })
+        .select('id, slug, name, status, schema_id, tenant_id, frontend_url, domain_url, updated_at, published_at')
+        .single();
+
+      if (pageError || !page) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: pageError?.message || 'Failed to create page.' }, null, 2) }] };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            success: true,
+            page,
+            preview_url: schema.frontend_url ? `${schema.frontend_url}${(schema.slug_structure || '/:slug').replace(':slug', page.slug)}` : null,
+            cms_url: `${baseUrl}/pages/schema/${schema.slug}/edit/${page.id}`,
+          }, null, 2),
+        }],
+      };
+      },
+    );
+  }
 
   // ── Tool: list_schemas ──────────────────────────────────────────────────
   server.tool(
@@ -464,7 +578,7 @@ async function createMcpServerWithTools(
   );
 
   // ── Tool: register_frontend ─────────────────────────────────────────────
-  server.tool(
+  if (isAuthenticated) server.tool(
     'register_frontend',
     'Register a deployed frontend with a schema. Requires the registration code from the CMS and the frontend domain URL.',
     {
@@ -667,7 +781,12 @@ async function buildNewSchemaHandler(
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            error: 'Authentication required. Call login first and resend the MCP request with Authorization: Bearer <access_token>.',
+            error: 'Authentication required. create_schema only works with a valid OAuth 2.1 bearer token.',
+            how_to_authenticate: {
+              mode: 'MCP client-managed OAuth 2.1',
+              note: 'Do not call authorize or ask the user to copy a code. The MCP client must handle the 401 challenge, open the browser, complete PKCE and consent, store the token, reconnect, and retry create_schema.',
+              retry: 'After OAuth completes, reconnect to /mcp or retry this request with Authorization: Bearer <access_token>.',
+            },
           }, null, 2),
         }],
       };
@@ -718,10 +837,19 @@ async function buildNewSchemaHandler(
 }
 
 mcpRoute.all('/', async (c) => {
-  const baseUrl = new URL(c.req.url).origin;
+  const { publicUrl: baseUrl } = await getPublicUrlConfig(c.env, new URL(c.req.url).origin);
   const authSession = await getOptionalAuthSession(c);
   if (authSession instanceof Response) {
     return authSession;
+  }
+
+  // MCP clients must initiate OAuth through the standard protected-resource
+  // challenge. Do not create an anonymous POST session: doing so exposes only
+  // public tools and leaves clients unable to discover that authentication is
+  // required for schema/page mutations. Public REST/discovery endpoints remain
+  // available without authentication.
+  if (!authSession && c.req.method === 'POST') {
+    return unauthorizedWithChallenge(c, 'Authentication required for MCP. Follow the OAuth 2.1 protected-resource challenge.');
   }
 
   const includeClosed = Boolean(authSession?.token);
@@ -729,8 +857,12 @@ mcpRoute.all('/', async (c) => {
   // Browsers/REST clients hitting GET /mcp without SSE headers
   if (c.req.method === 'GET' && !c.req.header('accept')?.includes('text/event-stream')) {
     const exposedSpecs = await listRegistryMcpSpecs(c.env, { includeClosed });
+    const publicBuiltInTools = BUILT_IN_MCP_TOOLS.filter((tool) => ![
+      'create_schema', 'new_schema', 'start_schema_registration', 'create_page', 'register_frontend',
+    ].includes(tool));
     const toolNames = Array.from(new Set([
-      ...BUILT_IN_MCP_TOOLS,
+      ...publicBuiltInTools,
+      ...(authSession ? ['create_schema', 'start_schema_registration', 'create_page', 'register_frontend'] : []),
       ...exposedSpecs.map((spec) => spec.slug),
     ]));
 
@@ -742,8 +874,12 @@ mcpRoute.all('/', async (c) => {
       transport: 'Streamable HTTP',
       endpoint: `${baseUrl}/mcp`,
       discovery_url: `${baseUrl}/.well-known/mcp.json`,
+      oauth: {
+        flow: 'OAuth 2.1 Authorization Code + PKCE',
+        resource_metadata_url: `${baseUrl}/.well-known/oauth-protected-resource`,
+      },
       status: 'active',
-      description: 'This is the Specy MCP endpoint. Published public MCP entries are visible without auth. Closed MCP entries require a valid Supabase JWT in the Authorization header.',
+      description: 'This is the Specy MCP endpoint. Published public MCP entries are visible without auth. Closed MCP entries require a valid OAuth 2.1 bearer token in the Authorization header (obtain one via the authorization server advertised in the resource metadata).',
       methods: {
         post: 'Send JSON-RPC MCP requests to this endpoint.',
         get: 'Open an optional SSE stream or fetch this discovery payload.',

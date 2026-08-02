@@ -994,6 +994,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202606050001_poll_extensions.sql',
     '202606050002_poll_participant_config.sql',
     'Auth/Access_hook.sql',
+    'Auth/Access_hook_oauth_claims.sql',
     // storage.sql is generated from storage.default.sql at runtime using the
     // user-chosen bucket name — only applies when STORAGE_PROVIDER = 'supabase'.
     ...(storageProvider === 'supabase' ? ['storage.sql'] : []),

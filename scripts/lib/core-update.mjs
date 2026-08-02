@@ -56,6 +56,7 @@ export const MIGRATION_ORDER = [
   '202605310001_markdown_objects.sql',
   '202605310002_markdown_object_share_scope.sql',
   'Auth/Access_hook.sql',
+  'Auth/Access_hook_oauth_claims.sql',
 ];
 
 function sha256(value) {

@@ -77,6 +77,8 @@ import {
   type MailConfigSettings,
   type MailSecretStatus,
   type MediaMount,
+  getPublicWorkerUrl,
+  updatePublicWorkerUrl,
 } from '@/services/connectionsService';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -165,6 +167,8 @@ const VerwaltungConnections: React.FC = () => {
   const [cfSecrets, setCfSecrets] = useState<CfSecret[]>([]);
   const [envStatusMap, setEnvStatusMap] = useState<Record<string, boolean>>({});
   const [apiError, setApiError] = useState<string | null>(null);
+  const [publicWorkerUrl, setPublicWorkerUrl] = useState('');
+  const [publicWorkerUrlSaving, setPublicWorkerUrlSaving] = useState(false);
   const [mailConfig, setMailConfig] = useState<MailConfigState>({
     provider: '',
     fromName: '',
@@ -292,6 +296,22 @@ const VerwaltungConnections: React.FC = () => {
     loadMediaStatus();
     loadMediaMounts();
   }, [loadSecrets, loadMailConfig, loadMediaStatus, loadMediaMounts]);
+
+  useEffect(() => {
+    void getPublicWorkerUrl().then(setPublicWorkerUrl).catch(() => undefined);
+  }, []);
+
+  const savePublicWorkerUrl = async () => {
+    setPublicWorkerUrlSaving(true);
+    try {
+      setPublicWorkerUrl(await updatePublicWorkerUrl(publicWorkerUrl));
+      toast.success('Public Worker URL saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save public Worker URL');
+    } finally {
+      setPublicWorkerUrlSaving(false);
+    }
+  };
 
   // Build merged list: manifest entry + CF secrets store status + env-var status
   const secretsWithStatus: SecretWithStatus[] = SECRETS_MANIFEST.map((def) => ({
@@ -576,8 +596,8 @@ const VerwaltungConnections: React.FC = () => {
 
   // Plugin admin connection sections
   const pluginAdminSections = useMemo<PluginAdminConnectionSection[]>(
-    () => getPluginAdminConnectionSections(permissions.roles),
-    [permissions.roles],
+    () => getPluginAdminConnectionSections(permissions.userRoles),
+    [permissions.userRoles],
   );
 
   // ── Summary stats ───────────────────────────────────────────────────────
@@ -641,6 +661,35 @@ const VerwaltungConnections: React.FC = () => {
             </AlertDescription>
           </Alert>
         )}
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Server className="h-4 w-4" />
+              Public Worker URL
+            </CardTitle>
+            <CardDescription>
+              The canonical public URL used in OAuth discovery, MCP metadata, callbacks, and generated API links. Defaults to the current Worker origin when empty.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              value={publicWorkerUrl}
+              onChange={(event) => setPublicWorkerUrl(event.target.value)}
+              placeholder="https://your-worker.example.com"
+              disabled={publicWorkerUrlSaving}
+            />
+            <div className="flex gap-2">
+              <Button onClick={() => void savePublicWorkerUrl()} disabled={publicWorkerUrlSaving || !publicWorkerUrl.trim()}>
+                {publicWorkerUrlSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Worker URL
+              </Button>
+              <Button variant="outline" onClick={() => void getPublicWorkerUrl().then(setPublicWorkerUrl)} disabled={publicWorkerUrlSaving}>
+                Reload
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* ── Status summary ── */}
         {!apiError && (

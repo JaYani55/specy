@@ -91,6 +91,24 @@ export interface StorageConfigSettings {
   r2PublicUrl: string;
 }
 
+export async function getPublicWorkerUrl(): Promise<string> {
+  const res = await fetch(`${API_URL}/api/config/public-url`, { headers: await createAuthenticatedHeaders() });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { publicUrl: string };
+  return data.publicUrl;
+}
+
+export async function updatePublicWorkerUrl(publicUrl: string): Promise<string> {
+  const res = await fetch(`${API_URL}/api/config/public-url`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ publicUrl }),
+  });
+  const data = await res.json().catch(() => ({})) as { publicUrl?: string; error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data.publicUrl ?? publicUrl;
+}
+
 export interface MailConfigSettings {
   provider: 'smtp' | 'resend' | '';
   fromName: string;

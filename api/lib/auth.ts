@@ -6,6 +6,8 @@ export type AppRole = 'user' | 'admin' | 'super-admin';
 interface JwtPayload {
   sub?: unknown;
   user_roles?: unknown;
+  is_agent?: unknown;
+  tenant_id?: unknown;
   [key: string]: unknown;
 }
 
@@ -13,6 +15,8 @@ export interface VerifiedAuthSession {
   token: string;
   roles: string[];
   userId: string | null;
+  isAgent: boolean;
+  tenantId: string | null;
   claims: JwtPayload;
 }
 
@@ -70,12 +74,35 @@ export async function verifyAuthSession(env: Env, token: string): Promise<Verifi
     return null;
   }
 
+  const claims = data.claims as JwtPayload;
+  const roles = normalizeRoles(claims.user_roles);
+
   return {
     token,
-    roles: normalizeRoles(data.claims.user_roles),
-    userId: normalizeUserId(data.claims.sub),
-    claims: data.claims as JwtPayload,
+    roles,
+    userId: normalizeUserId(claims.sub),
+    // is_agent is injected by custom_access_token_hook; fall back to the role
+    // list so legacy tokens minted before the OAuth claims migration still work.
+    isAgent: claims.is_agent === true || roles.includes('agent'),
+    tenantId: normalizeUserId(claims.tenant_id),
+    claims,
   };
+}
+
+/**
+ * Build a 401 response carrying an RFC 9728 WWW-Authenticate challenge so MCP
+ * clients can discover the OAuth 2.1 authorization server and start the
+ * Authorization Code + PKCE flow.
+ */
+export function unauthorizedWithChallenge(
+  c: Context<{ Bindings: Env }>,
+  message: string,
+): Response {
+  const baseUrl = new URL(c.req.url).origin;
+  const resourceMetadata = `${baseUrl}/.well-known/oauth-protected-resource`;
+  return c.json({ error: message }, 401, {
+    'WWW-Authenticate': `Bearer resource_metadata="${resourceMetadata}"`,
+  });
 }
 
 export async function requireAppRole(
@@ -84,13 +111,13 @@ export async function requireAppRole(
 ): Promise<VerifiedAuthSession | Response> {
   const token = parseBearerToken(c.req.header('Authorization'));
   if (!token) {
-    return c.json({ error: 'Authentication required.' }, 401);
+    return unauthorizedWithChallenge(c, 'Authentication required.');
   }
 
   const auth = await verifyAuthSession(c.env, token);
 
   if (!auth) {
-    return c.json({ error: 'Invalid or expired session.' }, 401);
+    return unauthorizedWithChallenge(c, 'Invalid or expired session.');
   }
 
   if (!hasRequiredRole(auth.roles, requiredRole)) {
@@ -106,13 +133,13 @@ export async function requireAnyJwtRole(
 ): Promise<VerifiedAuthSession | Response> {
   const token = parseBearerToken(c.req.header('Authorization'));
   if (!token) {
-    return c.json({ error: 'Authentication required.' }, 401);
+    return unauthorizedWithChallenge(c, 'Authentication required.');
   }
 
   const auth = await verifyAuthSession(c.env, token);
 
   if (!auth) {
-    return c.json({ error: 'Invalid or expired session.' }, 401);
+    return unauthorizedWithChallenge(c, 'Invalid or expired session.');
   }
 
   if (!hasAnyJwtRole(auth.roles, requiredRoles)) {
@@ -127,13 +154,13 @@ export async function requireAuthSession(
 ): Promise<VerifiedAuthSession | Response> {
   const token = parseBearerToken(c.req.header('Authorization'));
   if (!token) {
-    return c.json({ error: 'Authentication required.' }, 401);
+    return unauthorizedWithChallenge(c, 'Authentication required.');
   }
 
   const auth = await verifyAuthSession(c.env, token);
 
   if (!auth) {
-    return c.json({ error: 'Invalid or expired session.' }, 401);
+    return unauthorizedWithChallenge(c, 'Invalid or expired session.');
   }
 
   return auth;
@@ -150,7 +177,7 @@ export async function getOptionalAuthSession(
   const auth = await verifyAuthSession(c.env, token);
 
   if (!auth) {
-    return c.json({ error: 'Invalid or expired session.' }, 401);
+    return unauthorizedWithChallenge(c, 'Invalid or expired session.');
   }
 
   return auth;

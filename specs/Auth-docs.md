@@ -42,6 +42,8 @@ Roles are encoded into the JWT as a custom claim named `user_roles`. This claim 
 
 This means every authenticated request carries the user's roles in the JWT itself — no database lookup is needed for authorization.
 
+**Extended claim contract (2026-08-01):** `migrations/Auth/Access_hook_oauth_claims.sql` extends the hook to also inject `is_agent` (true when the user holds the exact-match `agent` role) and `tenant_id` (the user's default tenant). These claims are minted into all Supabase-issued tokens, including OAuth 2.1 access tokens for MCP agents. See [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md).
+
 ### SQL Helper: `current_user_roles()`
 
 Throughout the database (migrations, RLS policies), the helper function `public.current_user_roles()` reads the `user_roles` array from the JWT's `request.jwt.claims`:
@@ -235,12 +237,16 @@ Because roles flow from `public.user_roles` → Supabase Auth Hook → JWT `user
 
 ## 8. Summary: Authorisation Decision Tree
 
+**Token acquisition paths:** dashboard users sign in with email/password (Supabase password grant). Programmatic MCP clients use OAuth 2.1 Authorization Code + PKCE against the Supabase authorization server, discovered via `GET /.well-known/oauth-protected-resource` (RFC 9728) — see [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md). Both token types are validated identically below. All 401 responses include a `WWW-Authenticate` challenge.
+
 ```
 Request arrives
-  ├─ No token → 401 (Authentication required)
+  ├─ MCP POST without token → 401 + WWW-Authenticate → MCP client starts OAuth
+  ├─ Public GET/discovery → public metadata/tools where explicitly supported
   └─ Has token
-       ├─ Token invalid/expired → 401 (Invalid or expired session)
-       └─ Token valid
+       ├─ Token invalid/expired → 401 (Invalid or expired session) + WWW-Authenticate
+        └─ Token valid
+          ├─ MCP tools/list after OAuth → mutation and closed tools become visible
             ├─ Route uses requireAnyJwtRole(['support', 'super-admin'])
             │    └─ Check user_roles claim for match → 403 if none
             ├─ Route uses requireAppRole(c, 'admin')
