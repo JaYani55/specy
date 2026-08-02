@@ -46,7 +46,7 @@ import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeB
 import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
 import { ImageUploader } from './ImageUploader';
 import { JsonImporter } from './JsonImporter';
-import { buildSchemaPageUrl, getExpectedSlugStructure } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -862,9 +862,11 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
 
   // ── Build preview URL from schema config
   const previewUrl =
-    savedSlug && schema.frontend_url
-      ? buildSchemaPageUrl(schema.frontend_url, getExpectedSlugStructure(schema), savedSlug)
+    savedSlug && schema.frontend_url && getDetailPageTarget(schema)
+      ? buildSchemaPageUrl(schema.frontend_url, getDetailPageTarget(schema)?.host_path || getExpectedSlugStructure(schema), savedSlug)
       : null;
+
+  const detailTarget = getDetailPageTarget(schema);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
@@ -917,9 +919,13 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
                   className="font-mono text-sm"
                 />
               </div>
-              {schema.frontend_url ? (
+              {schema.frontend_url && detailTarget ? (
                 <p className="text-xs text-muted-foreground">
-                  <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, getExpectedSlugStructure(schema), pageSlug || 'example-slug')}</span>
+                  <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, detailTarget.host_path, pageSlug || 'example-slug')}</span>
+                </p>
+              ) : schema.frontend_url && schema.frontend_targets?.some((target) => target.kind === 'collection-slot' && target.enabled) ? (
+                <p className="text-xs text-muted-foreground">
+                  Wird über einen registrierten Sammlungsslot im Frontend angezeigt; für diesen Eintrag gibt es keine Detailvorschau.
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">

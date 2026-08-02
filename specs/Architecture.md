@@ -92,6 +92,52 @@ To run the application, only the standard Supabase credentials are required. Sea
 | `VITE_SUPABASE_URL` | The URL of your Supabase project (e.g., `https://xyz.supabase.co`). |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | The publishable key for your Supabase project. |
 
+### Secrets and encryption
+
+Specy uses separate storage mechanisms for public configuration, runtime secrets, and encrypted application-managed secrets. Sensitive values must never be committed to the repository, placed in the browser bundle, or written to `wrangler.jsonc`.
+
+#### Cloudflare Worker secrets
+
+The following values are stored as encrypted Cloudflare Worker secrets and are available only to server-side Worker code:
+
+| Secret | Purpose |
+| :--- | :--- |
+| `SUPABASE_PUBLISHABLE_KEY` | Publishable Supabase key used by Worker-side client requests. |
+| `CF_API_TOKEN` | Used by the connections/configuration surface for permitted Cloudflare operations. |
+| `SECRETS_ENCRYPTION_KEY` | Root key used to encrypt and decrypt values stored in `managed_secrets`. |
+
+`SECRETS_ENCRYPTION_KEY` is generated during `npm run setup` with cryptographically secure random bytes. The setup wizard displays the generated value once and instructs the operator to copy it into a secure password manager or secrets vault before storing it with:
+
+```text
+npx wrangler secret put SECRETS_ENCRYPTION_KEY
+```
+
+The same key must be retained for the lifetime of the installation. If it is lost or replaced, existing encrypted values cannot be decrypted. This affects revalidation secrets, mail credentials, S3 credentials, and any other records in `public.managed_secrets`.
+
+#### Cloudflare Secrets Store
+
+The Supabase server-side secret is stored in the Cloudflare Secrets Store and bound to the Worker through `SS_SUPABASE_SECRET_KEY`:
+
+| Secret | Storage | Purpose |
+| :--- | :--- | :--- |
+| `SUPABASE_SECRET_KEY` | Cloudflare Secrets Store | Server-side Supabase access that bypasses RLS. Never expose to clients. |
+
+The Secrets Store binding is configured in the generated, git-ignored `wrangler.jsonc`. The committed `wrangler.default.jsonc` contains only placeholders and binding metadata.
+
+#### Application-managed secrets
+
+Secrets such as frontend revalidation tokens, SMTP passwords, Resend API keys, and S3 access keys are stored in `public.managed_secrets` as AES-GCM encrypted payloads. The encryption key is derived from `SECRETS_ENCRYPTION_KEY` using SHA-256 and is used only inside Worker/server-side code.
+
+The application stores metadata and encrypted values, but never returns plaintext secrets through public API responses. Secret-management endpoints are authenticated and excluded from agent request logging to prevent secret-adjacent payload capture.
+
+#### Local development
+
+For local Wrangler development, the setup wizard writes `.dev.vars` with local-only secret values. `.dev.vars`, `.env`, and generated `wrangler.jsonc` files are git-ignored and must not be committed. Vite receives only the `VITE_` values required for the browser; server-only secrets remain in Worker bindings or local development variables.
+
+#### Rotation policy
+
+Application-managed secrets can be rotated through the authenticated connections/secret-management UI. Rotate individual managed values without changing `SECRETS_ENCRYPTION_KEY`. Rotate the encryption key only with a planned migration that decrypts and re-encrypts every `managed_secrets` row; changing it directly makes existing ciphertext unreadable.
+
 ---
 
 ## 4. Database Schema & Migrations

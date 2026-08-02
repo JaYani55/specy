@@ -55,6 +55,12 @@ export const MIGRATION_ORDER = [
   'objects.sql',
   '202605310001_markdown_objects.sql',
   '202605310002_markdown_object_share_scope.sql',
+  '202606050001_poll_extensions.sql',
+  '202606050002_poll_participant_config.sql',
+  '202606200001_page_schema_visibility_fix.sql',
+  '202608020001_schema_frontend_targets.sql',
+  '202608020002_schema_frontend_target_rpc.sql',
+  '202608020003_schema_frontend_target_precedence.sql',
   'Auth/Access_hook.sql',
   'Auth/Access_hook_oauth_claims.sql',
 ];

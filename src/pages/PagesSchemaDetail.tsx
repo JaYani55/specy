@@ -47,7 +47,7 @@ import type { SchemaSpecBundle } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
-import { buildSchemaPageUrl, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
 
 const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   draft: 'secondary',
@@ -333,8 +333,8 @@ const PagesSchemaDetail: React.FC = () => {
               </div>
               <Separator orientation="vertical" className="h-4" />
               <div>
-                <span className="font-medium">{language === 'en' ? 'Slug Pattern' : 'Slug-Muster'}:</span>{' '}
-                <code className="bg-muted px-1 rounded text-xs">{getExpectedSlugStructure(schema)}</code>
+                <span className="font-medium">{language === 'en' ? 'Frontend targets' : 'Frontend-Ziele'}:</span>{' '}
+                <code className="bg-muted px-1 rounded text-xs">{schema.frontend_targets?.length || 0}</code>
               </div>
               {schema.revalidation_endpoint && (
                 <>
@@ -508,6 +508,14 @@ const PagesSchemaDetail: React.FC = () => {
             <span className="font-medium">{language === 'en' ? 'Canonical URL' : 'Kanonische URL'}:</span>{' '}
             <span className="text-muted-foreground">{integrationRequirements.canonical_frontend_url || 'Not fixed'}</span>
           </div>
+          <div className="md:col-span-2">
+            <span className="font-medium">{language === 'en' ? 'Target routes' : 'Zielrouten'}:</span>{' '}
+            <span className="text-muted-foreground">
+              {schema.frontend_targets?.length
+                ? schema.frontend_targets.map((target) => `${target.target_key}: ${target.host_path}`).join(' · ')
+                : getExpectedSlugStructure(schema)}
+            </span>
+          </div>
           <div>
             <span className="font-medium">{language === 'en' ? 'Route base path' : 'Routen-Basispfad'}:</span>{' '}
             <span className="text-muted-foreground">{integrationRequirements.route_base_path || '/'}</span>
@@ -602,14 +610,14 @@ const PagesSchemaDetail: React.FC = () => {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        {schema.frontend_url && page.status === 'published' && (
+                        {schema.frontend_url && getDetailPageTarget(schema) && page.status === 'published' && (
                           <Button
                             variant="ghost"
                             size="icon"
                             asChild
                           >
                             <a
-                              href={buildSchemaPageUrl(schema.frontend_url, getExpectedSlugStructure(schema), page.slug)}
+                              href={buildSchemaPageUrl(schema.frontend_url, getDetailPageTarget(schema)?.host_path || getExpectedSlugStructure(schema), page.slug)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >

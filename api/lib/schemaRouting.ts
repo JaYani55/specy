@@ -1,5 +1,13 @@
 const SLUG_TOKEN = ':slug';
 
+export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
+
+export interface FrontendTargetValidationResult {
+  ok: boolean;
+  normalized?: string;
+  error?: string;
+}
+
 export interface SchemaIntegrationRequirementsRecord {
   canonical_frontend_url?: string | null;
   required_slug_structure?: string | null;
@@ -143,4 +151,48 @@ export const isFrontendUrlAllowed = (
   }
 
   return { ok: true, normalized: frontendUrl };
+};
+
+const PLACEMENT_KEY_PATTERN = /^[a-z][a-z0-9_.-]{0,99}$/;
+
+/** Validate a server path used by a collection target, never a URL fragment. */
+export const validateCollectionHostPath = (value: string): FrontendTargetValidationResult => {
+  const normalized = normalizeSchemaSlugStructure(value);
+
+  if (normalized !== '/' && normalized.endsWith('/')) {
+    return { ok: false, error: 'collection host_path must not have a trailing slash' };
+  }
+  if (normalized.includes(SLUG_TOKEN)) {
+    return { ok: false, error: 'collection host_path must not include the :slug token' };
+  }
+  if (/\s|[?#\\]|\.\./.test(normalized) || normalized.startsWith('//')) {
+    return { ok: false, error: 'collection host_path must be a normalized server path without fragments or traversal' };
+  }
+
+  return { ok: true, normalized };
+};
+
+export const validateFrontendTarget = (
+  target: {
+    kind: SchemaFrontendTargetKind;
+    host_path: string;
+    placement_key?: string | null;
+  },
+  requirements?: SchemaIntegrationRequirementsRecord | null,
+): FrontendTargetValidationResult => {
+  if (target.kind === 'detail-page') {
+    return validateSlugStructure(target.host_path, requirements);
+  }
+
+  const pathResult = validateCollectionHostPath(target.host_path);
+  if (!pathResult.ok) return pathResult;
+
+  if (!target.placement_key || !PLACEMENT_KEY_PATTERN.test(target.placement_key)) {
+    return {
+      ok: false,
+      error: 'collection-slot placement_key must be a semantic identifier such as home.posts',
+    };
+  }
+
+  return pathResult;
 };

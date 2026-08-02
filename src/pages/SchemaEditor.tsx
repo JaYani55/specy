@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Loader2, Eye, Save, ChevronDown, ChevronUp, FileJson, AlertTriangle, CheckCircle2, Info, Upload } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Loader2, Eye, Save, ChevronDown, ChevronUp, FileJson, AlertTriangle, CheckCircle2, Info, Upload, Layers } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ import {
   updateSchema,
   getSchema,
   startSchemaRegistration,
+  saveSchemaFrontendTargets,
 } from '@/services/pageService';
 import { getSchemaSpecBundle, getSpecs, updateSchemaSpecAttachments } from '@/services/specService';
 import {
@@ -27,9 +28,12 @@ import {
   type PageSchemaTemplate,
   type SchemaTemplateDefinition,
   type SchemaIntegrationRequirements,
+  type SchemaFrontendTargetInput,
+  type SchemaFrontendTargetKind,
 } from '@/types/pagebuilder';
 import type { SchemaSpecBundle, SpecRecord } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { toast } from 'sonner';
 import { SCHEMA_TEMPLATES, type SchemaTemplate } from '@/config/schemaTemplates';
@@ -391,19 +395,8 @@ const fieldsToJsonSchema = (fields: EditorSchemaFieldDefinition[]): Record<strin
     }
 
     if ((field.type === 'array' || field.type === 'CodeBlock[]') && field.items) {
-      entry.items = {
-        type: field.items.type,
-        description: field.items.description || undefined,
-        placeholder: field.items.placeholder || undefined,
-        meta_description: field.items.meta_description || undefined,
-        required: field.items.required || undefined,
-        ...(field.items.enum && field.items.enum.length > 0
-          ? { enum: field.items.enum }
-          : {}),
-        ...(field.items.type === 'object' && field.items.properties
-          ? { properties: fieldsToJsonSchema(field.items.properties) }
-          : {}),
-      };
+      const [items] = Object.entries(fieldsToJsonSchema([field.items]));
+      entry.items = items?.[1] ?? { type: field.items.type };
     }
 
     result[field.name] = entry;
@@ -622,6 +615,7 @@ const SchemaEditor: React.FC = () => {
   const { schemaSlug } = useParams<{ schemaSlug: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { loading: authLoading, user } = useAuth();
   const isEditing = !!schemaSlug && schemaSlug !== 'new';
 
   const [name, setName] = useState('');
@@ -646,6 +640,7 @@ const SchemaEditor: React.FC = () => {
   const [selectedAdditionalSpecIds, setSelectedAdditionalSpecIds] = useState<string[]>([]);
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
   const [isSavingSpecAssignments, setIsSavingSpecAssignments] = useState(false);
+  const [frontendTargets, setFrontendTargets] = useState<SchemaFrontendTargetInput[]>([]);
 
   useEffect(() => {
     const loadTenantOptions = async () => {
@@ -675,6 +670,16 @@ const SchemaEditor: React.FC = () => {
           setLlmInstructions(data.llm_instructions || '');
           setTenantId(data.tenant_id ?? '');
           setIntegrationRequirements(normalizeSchemaIntegrationRequirements(data.integration_requirements));
+          setFrontendTargets((data.frontend_targets ?? []).map((target) => ({
+            target_key: target.target_key,
+            kind: target.kind,
+            host_path: target.host_path,
+            placement_key: target.placement_key,
+            supports_preview: target.supports_preview,
+            is_primary: target.is_primary,
+            sort_order: target.sort_order,
+            enabled: target.enabled,
+          })));
           setFields(jsonSchemaToFields(data.schema as Record<string, unknown>));
         })
         .catch((err) => {
@@ -686,13 +691,17 @@ const SchemaEditor: React.FC = () => {
   }, [isEditing, schemaSlug, navigate]);
 
   useEffect(() => {
+    if (authLoading || !user) {
+      return;
+    }
+
     getSchemaTemplates()
       .then((templates) => setAvailableTemplates(mergeTemplates(SCHEMA_TEMPLATES, templates.map(toStoredTemplateDefinition))))
       .catch(() => setAvailableTemplates(SCHEMA_TEMPLATES));
-  }, []);
+  }, [authLoading, user]);
 
   useEffect(() => {
-    if (!isEditing || !schemaSlug) {
+    if (!isEditing || !schemaSlug || authLoading || !user) {
       return;
     }
 
@@ -716,7 +725,7 @@ const SchemaEditor: React.FC = () => {
     };
 
     void loadSpecsData();
-  }, [isEditing, schemaSlug]);
+  }, [authLoading, isEditing, schemaSlug, user]);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -734,10 +743,12 @@ const SchemaEditor: React.FC = () => {
     }
 
     const normalizedIntegrationRequirements = normalizeSchemaIntegrationRequirements(integrationRequirements);
-    if (normalizedIntegrationRequirements.required_slug_structure && !normalizedIntegrationRequirements.required_slug_structure.includes(':slug')) {
+    if (normalizedIntegrationRequirements.required_slug_structure
+      && normalizedIntegrationRequirements.required_slug_structure !== '/'
+      && !normalizedIntegrationRequirements.required_slug_structure.includes(':slug')) {
       toast.error(language === 'en'
-        ? 'Required slug structure must contain :slug'
-        : 'Die erforderliche Slug-Struktur muss :slug enthalten');
+        ? 'Required detail route must contain :slug, or use / for a collection slot'
+        : 'Eine Detailroute muss :slug enthalten oder / für einen Sammlungsslot verwenden');
       return;
     }
 
@@ -765,6 +776,7 @@ const SchemaEditor: React.FC = () => {
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
         });
+        await saveSchemaFrontendTargets(existingSchema.slug, frontendTargets);
         toast.success(language === 'en' ? 'Schema updated' : 'Schema aktualisiert');
         navigate(`/pages/schema/${existingSchema.slug}`);
       } else {
@@ -776,6 +788,7 @@ const SchemaEditor: React.FC = () => {
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
         });
+        await saveSchemaFrontendTargets(newSchema.slug, frontendTargets);
         toast.success(language === 'en' ? 'Schema created' : 'Schema erstellt');
         navigate(`/pages/schema/${newSchema.slug}`);
       }
@@ -1031,8 +1044,8 @@ const SchemaEditor: React.FC = () => {
           </CardTitle>
           <CardDescription>
             {language === 'en'
-              ? 'Define the exact route shape, domain policy, and page discovery expectations before registration starts.'
-              : 'Definiere die exakte Routenform, Domain-Richtlinie und Erwartungen an die Seitenermittlung, bevor die Registrierung beginnt.'}
+              ? 'Define the frontend target, domain policy, and page discovery expectations before registration starts. A schema may render in a collection slot without a :slug route.'
+              : 'Definiere das Frontend-Ziel, die Domain-Richtlinie und Erwartungen an die Seitenermittlung. Ein Schema kann ohne :slug-Route in einem Sammlungsslot dargestellt werden.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1072,8 +1085,8 @@ const SchemaEditor: React.FC = () => {
               />
               <p className="text-xs text-muted-foreground">
                 {language === 'en'
-                  ? 'The frontend must register with this exact route pattern. Include :slug exactly once.'
-                  : 'Das Frontend muss sich mit genau diesem Routenmuster registrieren. :slug muss genau einmal enthalten sein.'}
+                  ? 'Use a detail route such as /posts/:slug, or use / when content is rendered as a collection slot on an existing page.'
+                  : 'Verwende eine Detailroute wie /posts/:slug oder /, wenn Inhalte als Sammlungsslot auf einer bestehenden Seite dargestellt werden.'}
               </p>
             </div>
 
@@ -1199,6 +1212,88 @@ const SchemaEditor: React.FC = () => {
                 : 'Beispiel: Nicht registrieren, bevor https://service-cms.com/docs den Status 200 liefert.'}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Frontend Targets */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Layers className="h-5 w-5" />
+            <span>{language === 'en' ? 'Frontend Targets' : 'Frontend-Ziele'}</span>
+          </CardTitle>
+          <CardDescription>
+            {language === 'en'
+              ? 'Define collection slots and optional detail routes. These settings are separate from the schema JSON and page content.'
+              : 'Definiere Sammlungsslots und optionale Detailrouten. Diese Einstellungen sind vom Schema-JSON und Seiteninhalt getrennt.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {frontendTargets.map((target, index) => (
+            <div key={`${target.target_key}-${index}`} className="rounded-lg border p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <Input
+                  value={target.target_key}
+                  placeholder="home.posts"
+                  onChange={(event) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, target_key: event.target.value } : item))}
+                />
+                <Select
+                  value={target.kind}
+                  onValueChange={(value) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? {
+                    ...item,
+                    kind: value as SchemaFrontendTargetKind,
+                    placement_key: value === 'collection-slot' ? (item.placement_key || item.target_key) : null,
+                    supports_preview: value === 'detail-page',
+                  } : item))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="collection-slot">{language === 'en' ? 'Collection slot' : 'Sammlungsslot'}</SelectItem>
+                    <SelectItem value="detail-page">{language === 'en' ? 'Detail page' : 'Detailseite'}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={target.host_path}
+                  placeholder={target.kind === 'detail-page' ? '/posts/:slug' : '/'}
+                  onChange={(event) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, host_path: event.target.value } : item))}
+                />
+                <Button type="button" variant="outline" onClick={() => setFrontendTargets((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  {language === 'en' ? 'Remove' : 'Entfernen'}
+                </Button>
+              </div>
+              {target.kind === 'collection-slot' && (
+                <Input
+                  value={target.placement_key || ''}
+                  placeholder="home.posts"
+                  onChange={(event) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, placement_key: event.target.value } : item))}
+                />
+              )}
+              <div className="flex items-center gap-4 text-sm">
+                <label className="flex items-center gap-2">
+                  <Checkbox checked={target.is_primary !== false} onCheckedChange={(checked) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, is_primary: Boolean(checked) } : item))} />
+                  {language === 'en' ? 'Primary target' : 'Primäres Ziel'}
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox checked={target.enabled !== false} onCheckedChange={(checked) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: Boolean(checked) } : item))} />
+                  {language === 'en' ? 'Enabled' : 'Aktiv'}
+                </label>
+              </div>
+            </div>
+          ))}
+          <Button type="button" variant="outline" onClick={() => setFrontendTargets((current) => [...current, {
+            target_key: current.length === 0 ? 'home.content' : `target-${current.length + 1}`,
+            kind: 'collection-slot',
+            host_path: '/',
+            placement_key: 'home.content',
+            supports_preview: false,
+            is_primary: current.length === 0,
+            sort_order: current.length,
+            enabled: true,
+          }])}>
+            <Plus className="h-4 w-4 mr-2" />
+            {language === 'en' ? 'Add frontend target' : 'Frontend-Ziel hinzufügen'}
+          </Button>
         </CardContent>
       </Card>
 

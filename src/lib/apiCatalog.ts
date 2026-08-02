@@ -155,6 +155,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
       { name: 'revalidation_endpoint', in: 'body', required: false, type: 'string', description: 'Relative revalidation endpoint path.' },
       { name: 'revalidation_secret', in: 'body', required: false, type: 'string', description: 'Shared secret for outbound ISR calls. Stored server-side; not persisted in plaintext on page_schemas.' },
       { name: 'slug_structure', in: 'body', required: false, type: 'string', description: 'Frontend URL pattern. Must include :slug and match any schema-level route constraints.' },
+      { name: 'targets', in: 'body', required: false, type: 'array', description: 'Frontend collection-slot and optional detail-page targets. Collection targets use a server host_path plus semantic placement_key; fragments are not accepted.' },
     ],
     requestExample: `{
   "code": "3f6f7a31-...",
@@ -181,7 +182,32 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
       },
     ],
     sideEffects: ['Updates page_schemas.registration_status and clears registration_code.', 'Stores revalidation secrets in the managed secret system when provided.'],
-    tables: ['page_schemas', 'managed_secrets'],
+    tables: ['page_schemas', 'schema_frontend_targets', 'managed_secrets'],
+  },
+  {
+    id: 'schema-frontend-targets',
+    tag: 'Schemas',
+    method: 'PUT',
+    path: '/api/schemas/:slug/frontend-targets',
+    summary: 'Replace frontend targets for a schema',
+    description: 'Authenticated, validated replacement of collection-slot and optional detail-page target metadata. The replacement is performed atomically in the database and never modifies schema or page content JSON.',
+    auth: 'bearer-required',
+    mountsAt: '/api/schemas',
+    sourceFile: 'api/routes/schemas.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug.' },
+      { name: 'targets', in: 'body', required: true, type: 'array', description: 'Target definitions with target_key, kind, host_path, and collection placement_key where applicable.' },
+    ],
+    requestExample: `{
+  "targets": [
+    { "target_key": "home.posts", "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts", "is_primary": true },
+    { "target_key": "posts.detail", "kind": "detail-page", "host_path": "/posts/:slug", "supports_preview": true }
+  ]
+}`,
+    responseExamples: [{ status: 200, description: 'Targets replaced successfully.', example: '{ "success": true, "targets": [ ... ] }' }],
+    sideEffects: ['Replaces enabled and disabled target metadata for the schema.', 'Does not change page_schemas.schema or pages.content.'],
+    tables: ['schema_frontend_targets', 'page_schemas'],
   },
   {
     id: 'schema-revalidate',

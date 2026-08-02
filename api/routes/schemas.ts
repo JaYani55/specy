@@ -11,13 +11,19 @@ import {
   getRevalidationSecretNamespace,
 } from '../lib/managedSecrets';
 import {
-  buildSchemaPagePath,
-  isFrontendUrlAllowed,
   normalizeSchemaIntegrationRequirements,
   type SchemaIntegrationRequirementsRecord,
-  validateSlugStructure,
 } from '../lib/schemaRouting';
+import {
+  buildTargetRevalidationPath,
+  completeSchemaRegistration,
+  getSchemaFrontendTargets,
+  validateSchemaFrontendTargetInputs,
+  type SchemaRegistrationPayload,
+  type SchemaFrontendTargetInput,
+} from '../lib/schemaRegistration';
 import { getSchemaSpecBundle } from '../lib/specRegistry';
+import { getPublicWorkerUrl } from '../lib/systemConfig';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
@@ -33,14 +39,6 @@ interface SchemaRow {
   integration_requirements: SchemaIntegrationRequirementsRecord | null;
   created_at: string;
   updated_at: string;
-}
-
-interface SchemaRegistrationPayload {
-  code: string;
-  frontend_url: string;
-  revalidation_endpoint?: string;
-  revalidation_secret?: string;
-  slug_structure?: string;
 }
 
 interface SchemaSecretStatusRow {
@@ -63,15 +61,6 @@ interface PublishedSchemaPageRow {
   content: Record<string, unknown>;
   domain_url: string | null;
   updated_at: string;
-}
-
-function normalizeRevalidationEndpoint(value?: string | null): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 }
 
 function buildSpecSections(
@@ -111,6 +100,7 @@ function buildSpecSections(
       is_main: boolean;
     }>;
   },
+  targets: Array<{ target_key: string; kind: 'collection-slot' | 'detail-page'; host_path: string; placement_key: string | null }> = [],
 ): string[] {
   const requirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
   const expectedSlugStructure = requirements.required_slug_structure || schema.slug_structure || '/:slug';
@@ -138,7 +128,9 @@ function buildSpecSections(
   lines.push(
     '--- REQUIREMENTS ---',
     '',
-    `- Public route shape: ${expectedSlugStructure}`,
+    targets.length > 0
+      ? '- Frontend targets: content may be rendered in collection slots and/or optional detail pages.'
+      : `- Legacy public route shape: ${expectedSlugStructure}`,
     `- Route ownership: ${requirements.route_ownership}`,
     `- Canonical frontend URL: ${requirements.canonical_frontend_url || 'Not fixed by schema'}`,
     `- Temporary frontend URLs allowed: ${requirements.allow_temporary_frontend_urls ? 'Yes' : 'No'}`,
@@ -146,6 +138,14 @@ function buildSpecSections(
     `- Published pages API: ${pagesUrl}`,
     '',
   );
+
+  if (targets.length > 0) {
+    lines.push('Target contract:', ...targets.map((target) =>
+      target.kind === 'collection-slot'
+        ? `- ${target.target_key}: collection-slot at ${target.host_path}, placement key ${target.placement_key || '(missing)'}`
+        : `- ${target.target_key}: detail-page at ${target.host_path}`,
+    ), '');
+  }
 
   if (requirements.schema_identification_hint) {
     lines.push(`- Schema identification hint: ${requirements.schema_identification_hint}`);
@@ -242,7 +242,8 @@ function buildSpecSections(
   lines.push(
     '--- REVALIDATION ---',
     '',
-    '- The CMS derives the full route path from slug_structure and the stored page slug.',
+    '- The CMS derives collection paths from target host_path and detail paths from the target host_path with :slug replaced.',
+    '- A collection-slot revalidates its host path (for example /); URL fragments such as #posts are frontend-only and are never sent.',
     '- Your revalidation endpoint should accept Authorization: Bearer <secret>.',
     '- The CMS sends ?path=<full-route-path> and ?slug=<bare-page-slug>.',
     '- Use the full path as the primary invalidation target.',
@@ -279,7 +280,14 @@ function buildSpecSections(
         frontend_url: requirements.canonical_frontend_url || 'https://your-frontend.com',
         revalidation_endpoint: '/api/revalidate',
         revalidation_secret: 'your-shared-secret',
-        slug_structure: expectedSlugStructure,
+        ...(targets.length > 0
+          ? { targets: targets.map((target) => ({
+            target_key: target.target_key,
+            kind: target.kind,
+            host_path: target.host_path,
+            ...(target.kind === 'collection-slot' ? { placement_key: target.placement_key } : {}),
+          })) }
+          : { slug_structure: expectedSlugStructure }),
       }, null, 2),
       '',
     );
@@ -488,98 +496,6 @@ async function migrateLegacyRevalidationSecret(env: Env, schema: SchemaSecretSta
   };
 }
 
-async function completeSchemaRegistration(env: Env, slug: string, body: SchemaRegistrationPayload) {
-  const supabase = await createSupabaseClient(env);
-  const admin = await createSupabaseAdminClient(env);
-
-  const { data: schema, error } = await supabase
-    .from('page_schemas')
-    .select('id, slug, registration_code, registration_status, revalidation_secret_name, slug_structure, integration_requirements')
-    .eq('slug', slug)
-    .single();
-
-  if (error || !schema) {
-    return { status: 404 as const, body: { error: `Schema "${slug}" not found` } };
-  }
-
-  if (schema.registration_status !== 'waiting') {
-    return { status: 400 as const, body: { error: 'Schema is not awaiting registration' } };
-  }
-
-  if (schema.registration_code !== body.code) {
-    return { status: 403 as const, body: { error: 'Invalid registration code' } };
-  }
-
-  const validatedFrontendUrl = validateOutboundHttpUrl(body.frontend_url);
-  if (!validatedFrontendUrl.ok) {
-    return { status: 400 as const, body: { error: validatedFrontendUrl.error } };
-  }
-
-  const frontendPolicy = isFrontendUrlAllowed(validatedFrontendUrl.url.origin, schema.integration_requirements);
-  if (!frontendPolicy.ok) {
-    return { status: 400 as const, body: { error: frontendPolicy.error } };
-  }
-
-  const normalizedRequirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
-  const slugStructureCandidate = body.slug_structure?.trim()
-    || normalizedRequirements.required_slug_structure
-    || schema.slug_structure
-    || '/:slug';
-  const slugStructureValidation = validateSlugStructure(slugStructureCandidate, schema.integration_requirements);
-  if (!slugStructureValidation.ok) {
-    return { status: 400 as const, body: { error: slugStructureValidation.error } };
-  }
-
-  const revalidationEndpoint = normalizeRevalidationEndpoint(body.revalidation_endpoint);
-
-  const revalidationSecretName = body.revalidation_secret?.trim()
-    ? (schema.revalidation_secret_name || buildRevalidationSecretName(schema.id))
-    : schema.revalidation_secret_name;
-
-  if (body.revalidation_secret?.trim() && revalidationSecretName) {
-    await upsertManagedSecret(env, {
-      name: revalidationSecretName,
-      namespace: getRevalidationSecretNamespace(),
-      value: body.revalidation_secret.trim(),
-      metadata: {
-        schema_id: schema.id,
-        schema_slug: schema.slug,
-        frontend_url: validatedFrontendUrl.url.origin,
-      },
-    });
-  }
-
-  const { error: updateError } = await admin
-    .from('page_schemas')
-    .update({
-      registration_status: 'registered',
-      registration_code: null,
-      frontend_url: validatedFrontendUrl.url.origin,
-      revalidation_endpoint: revalidationEndpoint,
-      revalidation_secret: null,
-      revalidation_secret_name: revalidationSecretName ?? null,
-      slug_structure: slugStructureValidation.normalized,
-    })
-    .eq('id', schema.id);
-
-  if (updateError) {
-    return { status: 500 as const, body: { error: 'Failed to complete registration' } };
-  }
-
-  return {
-    status: 200 as const,
-    body: {
-      success: true,
-      message: 'Schema registration completed successfully',
-      schema: {
-        slug,
-        frontend_url: validatedFrontendUrl.url.origin,
-        slug_structure: slugStructureValidation.normalized,
-      },
-    },
-  };
-}
-
 async function getSchemaSecretStatus(
   env: Env,
   slug: string,
@@ -652,7 +568,7 @@ schemas.get('/', async (c) => {
     return c.json({ error: 'Failed to fetch schemas' }, 500);
   }
 
-  const baseUrl = new URL(c.req.url).origin;
+  const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
 
   return c.json({
     service: 'specy-api',
@@ -799,7 +715,9 @@ schemas.get('/:slug/spec.txt', async (c) => {
     .eq('schema_id', schema.id);
 
   const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
-  const lines = buildSpecSections(schema, count ?? 0, new URL(c.req.url).origin, specBundle);
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
+  const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
+  const lines = buildSpecSections(schema, count ?? 0, baseUrl, specBundle, targets);
   lines.push(
     '--- CODE BLOCK FIELD TYPE ---',
     '',
@@ -840,6 +758,7 @@ schemas.get('/:slug/spec', async (c) => {
     .eq('schema_id', schema.id);
 
   const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
 
   return c.json({
     schema,
@@ -847,8 +766,9 @@ schemas.get('/:slug/spec', async (c) => {
     main_spec: specBundle.main_spec,
     attached_specs: specBundle.attached_specs,
     integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
-    spec_text_url: `${new URL(c.req.url).origin}/api/schemas/${slug}/spec.txt`,
-    pages_url: `${new URL(c.req.url).origin}/api/schemas/${slug}/pages`,
+    targets,
+    spec_text_url: `${await getPublicWorkerUrl(c.env, new URL(c.req.url).origin)}/api/schemas/${slug}/spec.txt`,
+    pages_url: `${await getPublicWorkerUrl(c.env, new URL(c.req.url).origin)}/api/schemas/${slug}/pages`,
   });
 });
 
@@ -859,12 +779,16 @@ schemas.get('/:slug/pages', async (c) => {
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
-    .select('id, slug, name, slug_structure, integration_requirements')
+    .select('id, slug, name, registration_status, slug_structure, integration_requirements')
     .eq('slug', slug)
     .single();
 
   if (schemaError || !schema) {
     return c.json({ error: `Schema "${slug}" not found` }, 404);
+  }
+
+  if ((schema as { registration_status?: string }).registration_status !== 'registered') {
+    return c.json({ error: `Schema "${slug}" is not publicly registered` }, 404);
   }
 
   const { data, error } = await supabase
@@ -878,15 +802,48 @@ schemas.get('/:slug/pages', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
+
   return c.json({
     schema: {
       slug: schema.slug,
       name: schema.name,
       slug_structure: schema.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
+      targets,
     },
     pages: (data ?? []) as PublishedSchemaPageRow[],
   });
+});
+
+schemas.get('/:slug/pages/:pageSlug', async (c) => {
+  const slug = c.req.param('slug');
+  const pageSlug = c.req.param('pageSlug');
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const { data: schema, error: schemaError } = await supabase
+    .from('page_schemas')
+    .select('id, slug, name, registration_status')
+    .eq('slug', slug)
+    .single();
+
+  if (schemaError || !schema || schema.registration_status !== 'registered') {
+    return c.json({ error: `Schema "${slug}" not found` }, 404);
+  }
+
+  const { data: page, error } = await supabase
+    .from('pages')
+    .select('id, slug, name, status, content, domain_url, updated_at')
+    .eq('schema_id', schema.id)
+    .eq('slug', pageSlug)
+    .eq('status', 'published')
+    .maybeSingle();
+
+  if (error) return c.json({ error: error.message }, 500);
+  if (!page) return c.json({ error: 'Published page not found' }, 404);
+
+  return c.json({ schema: { slug: schema.slug, name: schema.name }, page });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback
@@ -907,6 +864,47 @@ schemas.post('/:slug/register', async (c) => {
 
   const result = await completeSchemaRegistration(c.env, slug, body);
   return c.json(result.body, result.status);
+});
+
+// PUT /api/schemas/:slug/frontend-targets — replace target metadata atomically
+schemas.put('/:slug/frontend-targets', async (c) => {
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+
+  const slug = c.req.param('slug');
+  let body: { targets?: SchemaFrontendTargetInput[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!Array.isArray(body.targets)) {
+    return c.json({ error: 'targets must be an array' }, 400);
+  }
+
+  const client = await createSupabaseClient(c.env, auth.token);
+  const { data: schema, error: schemaError } = await client
+    .from('page_schemas')
+    .select('id, slug, tenant_id, integration_requirements')
+    .eq('slug', slug)
+    .single();
+
+  if (schemaError || !schema) return c.json({ error: `Schema "${slug}" not found` }, 404);
+
+  const validation = validateSchemaFrontendTargetInputs(body.targets, schema.integration_requirements);
+  if (!validation.ok) return c.json({ error: validation.error }, 400);
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const { error: rpcError } = await admin.rpc('replace_schema_frontend_targets', {
+    target_schema_id: schema.id,
+    target_targets: validation.targets,
+  });
+
+  if (rpcError) return c.json({ error: rpcError.message }, 500);
+
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, auth.token);
+  return c.json({ success: true, schema: { slug: schema.slug }, targets });
 });
 
 schemas.get('/:slug/revalidation-secret/status', async (c) => {
@@ -1140,6 +1138,8 @@ schemas.post('/:slug/revalidate', async (c) => {
     revalidation_secret: schema.revalidation_secret,
     revalidation_secret_name: schema.revalidation_secret_name,
     registration_status: schema.registration_status,
+    slug_structure: schema.slug_structure,
+    integration_requirements: schema.integration_requirements,
   } as SchemaSecretStatusRow;
 
   try {
@@ -1158,7 +1158,16 @@ schemas.post('/:slug/revalidate', async (c) => {
     return c.json({ error: 'Frontend revalidation not configured' }, 400);
   }
 
-  const routePath = buildSchemaPagePath(resolvedSchema.slug_structure || '/:slug', body.page_slug);
+  const targetRows = await getSchemaFrontendTargets(c.env, schema.id);
+  const targets = targetRows.length > 0
+    ? targetRows
+    : [{ target_key: 'default', kind: 'detail-page' as const, host_path: resolvedSchema.slug_structure || '/:slug' }];
+  const routePaths = targets.map((target) => ({
+    target_key: target.target_key,
+    kind: target.kind,
+    path: buildTargetRevalidationPath(target, body.page_slug),
+  }));
+  const routePath = routePaths[0]?.path || '/';
 
   // Build revalidation URL
   const revalidateUrl = new URL(resolvedSchema.revalidation_endpoint, resolvedSchema.frontend_url);
@@ -1221,6 +1230,7 @@ schemas.post('/:slug/revalidate', async (c) => {
       status: response.status,
       path: routePath,
       slug: body.page_slug,
+      targets: routePaths,
       message: response.ok
         ? 'Revalidation triggered successfully'
         : `Revalidation request failed${upstreamMessage ? `: ${upstreamMessage}` : ''}`,

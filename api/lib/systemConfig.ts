@@ -4,7 +4,7 @@ const CORE_NAMESPACE = 'core';
 const MAIL_NAMESPACE = 'mail';
 const LOGGING_NAMESPACE = 'logging';
 
-type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url' | 'media.extra_sources' | 'media.source_mounts';
+type CoreConfigKey = 'storage.provider' | 'storage.bucket' | 'storage.r2_public_url' | 'media.extra_sources' | 'media.source_mounts' | 'public_url';
 type BrandingConfigKey = 'branding.logo_mode' | 'branding.logo_url' | 'branding.logo_scale';
 type MailConfigKey =
   | 'provider'
@@ -517,4 +517,9 @@ export async function upsertPublicUrlConfig(env: Env, publicUrl: string): Promis
     value: normalized,
   }, { onConflict: 'namespace,key' });
   if (error) throw new Error(error.message);
+}
+
+export async function getPublicWorkerUrl(env: Env, requestOrigin?: string): Promise<string> {
+  const { publicUrl } = await getPublicUrlConfig(env, requestOrigin);
+  return publicUrl.replace(/\/+$/, '');
 }

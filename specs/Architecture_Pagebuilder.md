@@ -12,6 +12,15 @@ This architecture enables:
 - **Reversible registration**: Domains can be disconnected at any time via the Unhook flow
 - **Reusable form references inside content**: Pages can embed published forms through a dedicated `form` content block
 
+### Frontend target model
+
+Schema content and frontend placement are separate contracts. The schema JSON and each `pages.content` value remain arbitrary, case-sensitive JSONB. A registered schema may publish its entries through one or more frontend targets:
+
+- **`collection-slot`** — renders the schema's published collection inside an existing route, for example `host_path: "/"` and `placement_key: "home.posts"`.
+- **`detail-page`** — optionally renders an individual entry at a route template such as `/posts/:slug`.
+
+The browser URL `https://site.example/#posts` is not a server route. The fragment is client-side navigation only. Specy stores and invalidates `/`, while the frontend maps the semantic placement key to its own component or anchor. Specy never accepts CSS selectors, DOM queries, HTML, or fragments as placement metadata.
+
 ---
 
 ## System Architecture
@@ -102,6 +111,24 @@ This architecture enables:
 | `domain_url` | `text` | The frontend domain this page belongs to |
 | `updated_at` | `timestamptz` | Auto-updated via trigger |
 | `published_at` | `timestamptz` | Nullable |
+
+### `schema_frontend_targets`
+
+Target metadata is stored separately from `page_schemas.schema` and `pages.content`:
+
+| Column | Type | Details |
+|---|---|---|
+| `schema_id` | `uuid` | Parent schema |
+| `target_key` | `varchar` | Stable semantic key, unique per schema |
+| `kind` | `varchar` | `collection-slot` or `detail-page` |
+| `host_path` | `text` | Server path such as `/` or `/posts/:slug`; never a fragment |
+| `placement_key` | `varchar` | Required for collection slots; semantic frontend contract |
+| `supports_preview` | `boolean` | Whether an individual entry preview is meaningful |
+| `is_primary`, `sort_order`, `enabled` | — | Operational target state |
+
+Target updates are validated and replaced atomically by `PUT /api/schemas/:slug/frontend-targets`. They do not rewrite the schema definition or existing page JSON.
+
+**PageSchema.slug_structure** is the schema-level route template. It remains the legacy compatibility field; target-aware registration stores the complete frontend placement contract separately in `schema_frontend_targets`.
 
 ### `forms`
 
@@ -225,7 +252,7 @@ Returns the full schema index with registration status, spec URLs, and register 
 Returns the LLM-ready plaintext specification for a schema. Includes field definitions (including `meta_description`), content block types, LLM instructions, and a registration payload example. Content-Type: `text/plain`.
 
 ### `POST /api/schemas/:slug/register`
-Completes frontend registration. Validates the one-time `registration_code`. Stores `frontend_url`, `revalidation_endpoint`, `revalidation_secret`, and `slug_structure`. Returns `403` on invalid/expired code.
+Completes frontend registration. Validates the one-time `registration_code`, frontend origin, and target definitions. Stores the frontend connection and `targets`; legacy `slug_structure` requests remain supported and map to a primary `detail-page` target. A root requirement `/` maps to a collection slot rather than being forced into `/:slug`. Returns `403` on invalid code.
 
 Request body:
 ```json
@@ -234,15 +261,27 @@ Request body:
   "frontend_url": "https://your-site.com",
   "revalidation_endpoint": "/api/revalidate",
   "revalidation_secret": "<shared_secret>",
-  "slug_structure": "/:slug"
+  "targets": [
+    { "target_key": "home.posts", "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" },
+    { "target_key": "posts.detail", "kind": "detail-page", "host_path": "/posts/:slug" }
+  ]
 }
 ```
+
+### `PUT /api/schemas/:slug/frontend-targets`
+Authenticated schema editors can atomically replace target metadata. The endpoint validates target keys, server paths, semantic placement keys, primary-target rules, and detail-route cardinality. It never changes `page_schemas.schema` or `pages.content`.
+
+### `GET /api/schemas/:slug/pages`
+Returns published pages through the schema-scoped Worker API after registration. The response includes enabled target metadata and returns `content` as stored JSONB without field filtering or key normalization.
+
+### `GET /api/schemas/:slug/pages/:pageSlug`
+Returns one published page belonging to the resolved schema for optional detail-page rendering.
 
 ### `GET /api/schemas/:slug/health`
 Server-side domain health check. Returns `{ status: 'online' | 'offline', latency_ms }`.
 
 ### `POST /api/schemas/:slug/revalidate`
-Triggers ISR revalidation on the registered frontend. The CMS calls this automatically after a page is saved when the schema is registered.
+Triggers target-aware ISR revalidation on the registered frontend. Collection targets invalidate their `host_path`, while detail targets replace `:slug` with the page slug. Fragments such as `#posts` are never sent to the frontend server.
 
 ### `/mcp`
 MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT.
@@ -272,8 +311,8 @@ These endpoints resolve forms by `share_slug` for the direct ServiceCMS share-pa
 2. Staff clicks "Start Registration" → status='waiting', registration_code generated
 3. CMS shows "Waiting for Frontend" screen, polls every 10s
 4. LLM Agent / Developer fetches spec.txt, builds frontend template
-5. Frontend POSTs to /register with code + frontend_url + revalidation config + slug_structure
-   → status='registered', frontend_url/revalidation fields stored
+5. Frontend POSTs to /register with code + frontend_url + revalidation config + targets
+  → status='registered', frontend connection and target metadata stored
 6. CMS detects change → shows domain in TLD-grouped Pages view with health ping
 7. Abort: clicking abort resets code=null, status='pending' → old code invalidated
 ```
@@ -293,9 +332,9 @@ Implemented via `unhookSchema(id)` in `pageService.ts` (Supabase direct update).
 
 ---
 
-## Slug Structure & Preview URLs
+## Frontend Targets, Slug Structures & Preview URLs
 
-`slug_structure` is a URL pattern stored per schema upon registration. The `:slug` token is replaced with the page's URL slug to form the preview URL.
+Legacy `slug_structure` remains a compatibility projection for a primary detail target. New registrations should use explicit targets. A `detail-page` target is a URL pattern where `:slug` is replaced with the page slug; a `collection-slot` target has a concrete host path and no per-entry preview.
 
 | slug_structure | page slug | result URL |
 |---|---|---|
@@ -303,14 +342,14 @@ Implemented via `unhookSchema(id)` in `pageService.ts` (Supabase direct update).
 | `/blog/:slug` | `my-post` | `https://site.com/blog/my-post` |
 | `/products/:slug` | `widget` | `https://site.com/products/widget` |
 
-The CMS Page Builder constructs the preview URL as:
+For a detail target, the CMS Page Builder constructs the preview URL as:
 ```
 {frontend_url} + slug_structure.replace(':slug', pageSlug)
 ```
 
-The preview link appears in `SchemaPageBuilderForm` after saving, and only when `frontend_url` is set on the schema (i.e. the schema is registered).
+The preview link appears only when the schema is registered and has an enabled detail target. Collection-only schemas show their host path and placement key instead of a misleading entry URL.
 
-The CMS sends revalidation calls with the bare slug (e.g. `my-post`), not the full URL path. Frontend revalidation handlers should prepend the route prefix if needed.
+The CMS sends the full server path in `path` and retains the bare slug in `slug` for compatibility. Frontends must not prepend an additional slash. For a root collection, `path` is `/`; `#posts` is never an invalidation path.
 
 ---
 

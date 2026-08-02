@@ -1,0 +1,53 @@
+{
+  "Content": [
+    { "id": "content-1", "type": "heading", "content": "A durable introduction", "level": "heading1" },
+    { "id": "content-2", "type": "text", "content": "The primary article body remains opaque JSON." },
+    { "id": "content-3", "type": "image", "src": "https://cdn.example/article.png", "alt": "Article illustration" },
+    { "id": "content-4", "type": "quote", "text": "Keep content portable.", "author": "Ada" },
+    { "id": "content-5", "type": "list", "style": "unordered", "items": ["One", "Two"] },
+    { "id": "content-6", "type": "video", "src": "https://youtube.com/watch?v=example", "provider": "youtube" }
+  ],
+  "Code Block": [
+    {
+      "id": "code-1",
+      "label": "React Hook",
+      "language": "typescript",
+      "pattern": "functional",
+      "frameworks": ["react", "nextjs"],
+      "code": "export function useExample() { return true; }",
+      "customMetadata": "preserve this"
+    }
+  ],
+  "author": {
+    "author-name": "Dr. Anna Müller",
+    "author-picture": "https://cdn.example/anna.png"
+  },
+  "hero": {
+    "title": "A durable article",
+    "image": "https://cdn.example/hero.png",
+    "stats": [{ "label": "Reading time", "value": "5 min" }],
+    "description": [{ "id": "hero-1", "type": "text", "content": "An introduction." }]
+  },
+  "cards": [{
+    "title": "Key idea",
+    "description": "A concise takeaway.",
+    "items": ["First", "Second"],
+    "content": [{ "id": "card-1", "type": "text", "content": "Card content." }]
+  }],
+  "features": [{
+    "title": "Main section",
+    "reverse": false,
+    "alignment": "left",
+    "description": [{ "id": "feature-1", "type": "text", "content": "Feature content." }]
+  }],
+  "faq": [{
+    "question": "How long does it take?",
+    "answer": [{ "id": "faq-1", "type": "text", "content": "It depends." }]
+  }],
+  "cta": {
+    "title": "Ready to get started?",
+    "description": "Take the next step.",
+    "primaryButton": "Book now"
+  },
+  "legacy-render-hint": "must survive API delivery"
+}

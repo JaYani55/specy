@@ -89,7 +89,8 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
   Registration code: ${schema.registration_code}
 
   Non-negotiable constraints:
-  - Public route shape must be ${expectedSlugStructure}
+  - Frontend target model: a schema may expose a collection slot, an optional detail page, or both.
+  ${expectedSlugStructure === '/' ? '- This schema is collection-oriented and uses the host path /; it does not require a :slug route.' : `- Legacy/detail route shape: ${expectedSlugStructure}`}
   - Route ownership policy: ${integrationRequirements.route_ownership}
   - Page discovery mode: ${integrationRequirements.page_discovery_mode}
   - Canonical frontend URL: ${integrationRequirements.canonical_frontend_url || 'Not fixed by schema'}
@@ -118,16 +119,16 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
      if (isNext) {
       prompt += `
   4. Implement ISR in Next.js App Router.
-      - Use the route structure that matches ${expectedSlugStructure}.
-    - Expose POST /api/revalidate?path=<page_slug>
+      - Implement a collection host route and/or detail route only for the registered targets.
+    - Expose POST /api/revalidate?path=<full-server-path>
     - Read Authorization: Bearer <secret> for authentication
       - Revalidate the full route path from the incoming path query parameter.
   `;
      } else {
       prompt += `
   4. Implement revalidation / cache invalidation in SvelteKit.
-      - Use the route structure that matches ${expectedSlugStructure}.
-    - Expose POST /api/revalidate/<page_slug> or POST /api/revalidate?path=<page_slug>.
+      - Implement a collection host route and/or detail route only for the registered targets.
+    - Expose POST /api/revalidate?path=<full-server-path>.
     - Read Authorization: Bearer <secret> for authentication.
       - Invalidate the full route path from the incoming path query parameter.
   `;
@@ -143,10 +144,12 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
       "frontend_url": "${integrationRequirements.canonical_frontend_url || 'https://your-site.com'}",
       "revalidation_endpoint": "/api/revalidate",
       "revalidation_secret": "your-secret",
-      "slug_structure": "${expectedSlugStructure}"
+      "targets": [
+        ${expectedSlugStructure === '/' ? '{ "target_key": "home.content", "kind": "collection-slot", "host_path": "/", "placement_key": "home.content" }' : `{ "target_key": "default", "kind": "detail-page", "host_path": "${expectedSlugStructure}" }`}
+      ]
     }
 
-  6. Treat examples as illustrative only. The registered slug_structure must match the actual deployed route shape above.
+  6. Treat examples as illustrative only. Register targets that match the actual deployed frontend. A placement_key is a semantic component contract, not a CSS selector or DOM query. Do not register #posts; fragments are client-side only and server invalidation must target /.
 
   7. Do not register the frontend until the final deployed domain is healthy.
     ${integrationRequirements.allow_temporary_frontend_urls

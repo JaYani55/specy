@@ -131,6 +131,48 @@ export type SchemaRouteOwnership = 'isolated' | 'shared-layout-only' | 'may-modi
 
 export type SchemaPageDiscoveryMode = 'schema-scoped-api' | 'supabase-by-schema' | 'infer-content-shape';
 
+export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
+
+/**
+ * Describes where a registered frontend consumes a schema's published pages.
+ * This is deliberately separate from the schema JSON and page content JSON.
+ */
+export interface SchemaFrontendTarget {
+  id: string;
+  schema_id: string;
+  tenant_id?: string | null;
+  target_key: string;
+  kind: SchemaFrontendTargetKind;
+  host_path: string;
+  placement_key: string | null;
+  supports_preview: boolean;
+  is_primary: boolean;
+  sort_order: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SchemaFrontendTargetInput {
+  target_key: string;
+  kind: SchemaFrontendTargetKind;
+  host_path: string;
+  placement_key?: string | null;
+  supports_preview?: boolean;
+  is_primary?: boolean;
+  sort_order?: number;
+  enabled?: boolean;
+}
+
+export interface SchemaFrontendTargetRevalidationResult {
+  target_key: string;
+  kind: SchemaFrontendTargetKind;
+  path: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
 export interface SchemaIntegrationRequirements {
   canonical_frontend_url: string | null;
   required_slug_structure: string | null;
@@ -173,6 +215,7 @@ export interface PageSchema {
   owner_user_id?: string | null;
   created_at: string;
   updated_at: string;
+  frontend_targets?: SchemaFrontendTarget[];
 }
 
 export interface PageSchemaTemplate {

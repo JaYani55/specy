@@ -185,6 +185,34 @@ Recommended workflow for schema-driven frontend generation:
 7. Call `create_page` to create page content validated against the schema.
 8. Call `check_health` to verify the registered frontend is reachable.
 
+### Target-aware schema registration
+
+`register_frontend` accepts the legacy `slug_structure` field for existing agents, but new integrations should submit `targets`:
+
+```json
+{
+   "targets": [
+      {
+         "target_key": "home.posts",
+         "kind": "collection-slot",
+         "host_path": "/",
+         "placement_key": "home.posts",
+         "is_primary": true
+      },
+      {
+         "target_key": "posts.detail",
+         "kind": "detail-page",
+         "host_path": "/posts/:slug",
+         "supports_preview": true
+      }
+   ]
+}
+```
+
+Collection slots are suitable when a schema is rendered inside an existing landing page. A URL such as `/#posts` is a browser fragment and must not be registered. The frontend maps `placement_key` to its own component; Specy only stores and revalidates the server path `/`.
+
+Published content is read through `GET /api/schemas/:slug/pages` and optional detail content through `GET /api/schemas/:slug/pages/:pageSlug`. The response preserves stored schema/page JSON, including arbitrary field casing and nested content blocks.
+
 ## 8. Summary
 
 The MCP registry now follows a simple rule set:

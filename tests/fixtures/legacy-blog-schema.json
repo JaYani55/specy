@@ -1,0 +1,43 @@
+{
+  "cta": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string", "meta_description": "Headline of the CTA block." },
+      "description": { "type": "string", "meta_description": "Supporting copy beneath the CTA title." },
+      "primaryButton": { "type": "string", "meta_description": "Short imperative action label." }
+    },
+    "description": "Call-to-action at the end of the post"
+  },
+  "hero": {
+    "type": "object",
+    "properties": {
+      "image": { "type": "media", "description": "Featured hero image" },
+      "stats": { "type": "array", "items": { "type": "object", "properties": { "label": { "type": "string" }, "value": { "type": "string" } } } },
+      "title": { "type": "string", "description": "Blog post title / headline" },
+      "description": { "type": "ContentBlock[]", "description": "Introduction / lead paragraph" }
+    }
+  },
+  "author": {
+    "type": "object",
+    "properties": {
+      "author-name": { "type": "string" },
+      "author-picture": { "type": "media" }
+    }
+  },
+  "Content": { "type": "ContentBlock[]", "required": true },
+  "Code Block": {
+    "type": "CodeBlock[]",
+    "items": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "required": true },
+        "language": { "type": "string", "required": true },
+        "frameworks": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "cards": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "items": { "type": "string[]" }, "content": { "type": "ContentBlock[]" } } } },
+  "features": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "description": { "type": "ContentBlock[]" }, "reverse": { "type": "boolean" } } } },
+  "faq": { "type": "array", "items": { "type": "object", "properties": { "question": { "type": "string" }, "answer": { "type": "ContentBlock[]" } } } },
+  "subtitle": { "type": "string" }
+}

@@ -7,6 +7,8 @@ import {
   type PageBuilderData,
   type TLDGroup,
   type SchemaIntegrationRequirements,
+  type SchemaFrontendTarget,
+  type SchemaFrontendTargetInput,
 } from '@/types/pagebuilder';
 
 import { API_URL } from '@/lib/apiUrl';
@@ -128,9 +130,20 @@ export const getSchemaTemplates = async (): Promise<PageSchemaTemplate[]> => {
     return [];
   }
 
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (!sessionData.session?.access_token) {
+    // SchemaEditor can mount during auth hydration. Do not issue an
+    // unauthenticated request to the protected template endpoint.
+    return [];
+  }
+
   const response = await fetch(`${API_URL}/api/schemas/templates`, {
     headers: { Accept: 'application/json' },
   });
+
+  if (response.status === 401 || response.status === 403) {
+    return [];
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Failed to load schema templates' })) as { error?: string };
@@ -216,7 +229,42 @@ export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_c
     .select('*', { count: 'exact', head: true })
     .eq('schema_id', data.id);
 
-  return { ...(data as PageSchema), page_count: count ?? 0 };
+  let frontendTargets: SchemaFrontendTarget[] = [];
+  if (API_URL) {
+    try {
+      const response = await fetch(`${API_URL}/api/schemas/${data.slug}/spec`, {
+        headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+      });
+      if (response.ok) {
+        const contract = await response.json() as { targets?: SchemaFrontendTarget[] };
+        frontendTargets = contract.targets ?? [];
+      }
+    } catch {
+      // Target metadata is additive; legacy schema loading remains functional.
+    }
+  }
+
+  return { ...(data as PageSchema), frontend_targets: frontendTargets, page_count: count ?? 0 };
+};
+
+export const saveSchemaFrontendTargets = async (
+  schemaId: string,
+  targets: SchemaFrontendTargetInput[],
+): Promise<SchemaFrontendTarget[]> => {
+  if (!API_URL) throw new Error('API URL not configured');
+
+  const response = await fetch(`${API_URL}/api/schemas/${schemaId}/frontend-targets`, {
+    method: 'PUT',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
+    body: JSON.stringify({ targets }),
+  });
+
+  const body = await response.json().catch(() => ({})) as { error?: string; targets?: SchemaFrontendTarget[] };
+  if (!response.ok) throw new Error(body.error ?? 'Failed to save frontend targets');
+  return body.targets ?? [];
 };
 
 export const createSchema = async (input: {

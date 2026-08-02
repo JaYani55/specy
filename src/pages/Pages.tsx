@@ -110,17 +110,14 @@ LLM instructions, frontend info, and registration payload example.
 
 
 ════════════════════════════════════════════════════
-  2. DATA MODEL  (pages table via Supabase)
+  2. DATA MODEL  (schema-scoped Specy API)
 ════════════════════════════════════════════════════
 
-Fetch pages matching the schema:
-  GET https://<SUPABASE_URL>/rest/v1/pages
-    ?schema_id=eq.<schema_uuid>
-    &select=id,slug,name,status,content,domain_url,updated_at
-    &status=eq.published
+Fetch pages through the schema-scoped Worker API:
+  GET ${API_URL}/api/schemas/{slug}/pages
 
-  Authorization: Bearer <SUPABASE_PUBLISHABLE_KEY>
-  apikey: <SUPABASE_PUBLISHABLE_KEY>
+Do not query the Supabase pages table directly from the public frontend.
+The endpoint returns only published pages after the schema is registered.
 
 Page shape:
   {
@@ -167,7 +164,7 @@ Each ContentBlock has { id, type } + type-specific fields:
 
 ── File: app/api/revalidate/route.ts ──
   // The CMS calls this endpoint via POST when content is saved.
-  // It sends: POST /api/revalidate?path=<page_slug>
+  // It sends: POST /api/revalidate?path=<full-server-path>&slug=<page_slug>
   //           Authorization: Bearer <secret>
 
   import { revalidatePath } from 'next/cache';
@@ -176,7 +173,7 @@ Each ContentBlock has { id, type } + type-specific fields:
   export async function POST(req: NextRequest) {
     const authHeader = req.headers.get('authorization');
     const secret = authHeader?.replace(/^Bearer\\s+/i, '') ?? null;
-    const path   = req.nextUrl.searchParams.get('path');   // page_slug from CMS
+    const path   = req.nextUrl.searchParams.get('path');   // full server path from CMS
 
     if (secret !== process.env.REVALIDATION_SECRET) {
       return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
@@ -185,7 +182,7 @@ Each ContentBlock has { id, type } + type-specific fields:
       return NextResponse.json({ error: 'Missing path' }, { status: 400 });
     }
 
-    revalidatePath(\`/\${path}\`);
+    revalidatePath(path);
     return NextResponse.json({ revalidated: true, path });
   }`;
     } else {
@@ -213,15 +210,15 @@ Each ContentBlock has { id, type } + type-specific fields:
     return { page };
   };
 
-── File: src/routes/api/revalidate/[slug]/+server.ts ──
+── File: src/routes/api/revalidate/+server.ts ──
   // The CMS calls this endpoint via POST when content is saved.
-  // It sends: POST /api/revalidate/<page_slug>
+  // It sends: POST /api/revalidate?path=<full-server-path>&slug=<page_slug>
   //           Authorization: Bearer <secret>
 
   import { json, error } from '@sveltejs/kit';
   import type { RequestHandler } from './$types';
 
-  export const POST: RequestHandler = async ({ params, request, platform }) => {
+  export const POST: RequestHandler = async ({ request, platform }) => {
     const authHeader = request.headers.get('authorization');
     const secret = authHeader?.replace(/^Bearer\\s+/i, '') ?? null;
 
@@ -230,11 +227,13 @@ Each ContentBlock has { id, type } + type-specific fields:
     }
 
     // Vercel: use unstable_expireRoute / purge tag
-    // Cloudflare: platform.env.CACHE.delete(params.slug)
+    const path = new URL(request.url).searchParams.get('path');
+    if (!path || !path.startsWith('/')) throw error(400, 'Missing path');
+    // Cloudflare: platform.env.CACHE.delete(path)
     // Netlify:    fetch('/__netlify/builder/revalidate', { method: 'POST', ... })
     // Generic:    rely on s-maxage + stale-while-revalidate above
 
-    return json({ revalidated: true, slug: params.slug });
+    return json({ revalidated: true, path });
   };`;
     }
 
@@ -257,24 +256,27 @@ Once deployed, call the CMS registration endpoint from your frontend
     "frontend_url": "https://your-site.com",
     "revalidation_endpoint": "/api/revalidate",
     "revalidation_secret": "<shared_secret>", // stored by the CMS, not persisted in plaintext
-    "slug_structure": "/docs/:slug"          // must match the real deployed route
+    "targets": [
+      { "target_key": "home.posts", "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" },
+      { "target_key": "posts.detail", "kind": "detail-page", "host_path": "/posts/:slug" }
+    ]
   }
 
 Success response (200):
   {
     "success": true,
     "message": "Schema registration completed successfully",
-    "schema": { "slug": "...", "frontend_url": "...", "slug_structure": "/docs/:slug" }
+    "schema": { "slug": "...", "frontend_url": "...", "targets": [/* enabled targets */] }
   }
 
 After registration the CMS will:
   • Set schema status → "registered"
   • Show the domain in the Pages dashboard with a health ping
-  • Call POST {frontend_url}{revalidation_endpoint}?path={full_route_path}&slug={page_slug}
+  • Call POST {frontend_url}{revalidation_endpoint}?path={full_server_path}&slug={page_slug}
     with Authorization: Bearer {shared_secret}
     whenever content for this schema is published or updated`;
 
-    // ── Section: slug_structure ───────────────────────────────────────────
+    // ── Section: frontend targets ─────────────────────────────────────────
     prompt += `
 
 
@@ -282,8 +284,9 @@ After registration the CMS will:
   4.5 SLUG STRUCTURE & PREVIEW URLS
 ════════════════════════════════════════════════════
 
-The "slug_structure" field controls how the CMS builds preview URLs for pages.
-It is a path pattern where ":slug" is replaced with the page's URL slug.
+Frontend targets describe where schema content is rendered. A collection-slot
+uses a concrete host path and semantic placement_key. A detail-page target
+uses a path pattern where ":slug" is replaced by the page slug.
 
 Examples:
   "/:slug"              → https://your-site.com/my-page
@@ -291,13 +294,15 @@ Examples:
   "/products/:slug"     → https://your-site.com/products/my-product
   "/de/produkte/:slug"  → https://your-site.com/de/produkte/my-product
 
-── How to choose the right slug_structure ──
-1. Look at your ${isNext ? 'Next.js' : 'SvelteKit'} file-system routing:
+── How to choose a target ──
+1. For content rendered inside an existing landing page, use for example:
+  { "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" }
+  The frontend may link to /#posts, but the fragment is client-side only.
+2. For an optional detail route, inspect your ${isNext ? 'Next.js' : 'SvelteKit'} file-system routing:
    - ${isNext ? 'app/[slug]/page.tsx' : 'src/routes/[slug]/+page.svelte'} → use "/:slug"
    - ${isNext ? 'app/blog/[slug]/page.tsx' : 'src/routes/blog/[slug]/+page.svelte'} → use "/blog/:slug"
-2. Include the slug_structure in your registration POST body (see step 4).
-3. The CMS Page Builder will then show a live "Vorschau ansehen" button
-   after saving, pointing to: {frontend_url}{slug_structure with :slug replaced}
+3. Include the targets in your registration POST body (see step 4).
+4. The CMS Page Builder shows an entry preview only when a detail-page target exists.
 
 If the schema defines a fixed route segment like "/docs", keep the frontend isolated there and do not repurpose unrelated dynamic routes.
 
@@ -311,10 +316,11 @@ ${isNext ? `  • Add a ?draft=true query param and check it in your page compon
 
 ── Revalidation path format ──
 The CMS calls your revalidation endpoint with:
-  POST {revalidation_endpoint}?path={full_route_path}&slug={page_slug}
+  POST {revalidation_endpoint}?path={full_server_path}&slug={page_slug}
   Authorization: Bearer {secret}
 
-Here "path" is the full derived route path (e.g. "/blog/my-page").
+Here "path" is the full server path (e.g. "/blog/my-page" or "/" for a collection slot).
+Fragments such as "#posts" are never sent to the CMS or used for invalidation.
 The optional "slug" query parameter still carries the bare page slug for compatibility.`;
 
     // ── Section: health ───────────────────────────────────────────────────

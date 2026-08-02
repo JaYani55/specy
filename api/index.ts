@@ -105,8 +105,7 @@ app.use('*', cors({
 
 // Root — single entry point for agents, links to discovery + MCP
 app.get('/', (c) => {
-  const baseUrl = new URL(c.req.url).origin;
-  return c.json({
+  return getPublicUrlConfig(c.env, new URL(c.req.url).origin).then(({ publicUrl }) => c.json({
     service: 'specy-api',
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -119,12 +118,11 @@ app.get('/', (c) => {
       mcp_discovery: `${baseUrl}/.well-known/mcp.json`,
     },
     description: 'Start at /api/specs for unified agent-readable tool discovery, /api/schemas for schema-centric discovery, or connect via /mcp for MCP tool integration.',
-  });
+  }));
 });
 
 app.get('/.well-known/mcp.json', (c) => {
-  const baseUrl = new URL(c.req.url).origin;
-  return c.json({
+  return getPublicUrlConfig(c.env, new URL(c.req.url).origin).then(({ publicUrl: baseUrl }) => c.json({
     name: 'specy',
     description: 'Specy MCP server exposed over Streamable HTTP for schema discovery, spec discovery, and frontend registration workflows.',
     version: '1.0.0',
@@ -162,7 +160,7 @@ app.get('/.well-known/mcp.json', (c) => {
       mode: 'OAuth 2.1 Authorization Code + PKCE managed by the MCP client',
       protected_resource_metadata: `${baseUrl}/.well-known/oauth-protected-resource`,
     },
-  });
+  }));
 });
 
 // RFC 9728 — OAuth 2.0 Protected Resource Metadata.

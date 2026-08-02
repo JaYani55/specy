@@ -2,6 +2,7 @@ import {
   DEFAULT_SCHEMA_INTEGRATION_REQUIREMENTS,
   type PageSchema,
   type SchemaIntegrationRequirements,
+  type SchemaFrontendTarget,
 } from '@/types/pagebuilder';
 
 const SLUG_TOKEN = ':slug';
@@ -80,3 +81,18 @@ export const buildSchemaPageUrl = (
   slugStructure: string,
   pageSlug: string,
 ): string => `${frontendUrl.replace(/\/$/, '')}${buildSchemaPagePath(slugStructure, pageSlug)}`;
+
+export const getDetailPageTarget = (
+  schema: Pick<PageSchema, 'slug_structure' | 'integration_requirements' | 'frontend_targets'>,
+): SchemaFrontendTarget | null => {
+  const target = schema.frontend_targets?.find((candidate) =>
+    candidate.enabled && candidate.kind === 'detail-page',
+  );
+  return target ?? null;
+};
+
+export const getCollectionSlotTargets = (
+  schema: Pick<PageSchema, 'frontend_targets'>,
+): SchemaFrontendTarget[] => (schema.frontend_targets ?? []).filter((target) =>
+  target.enabled && target.kind === 'collection-slot',
+);

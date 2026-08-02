@@ -796,6 +796,10 @@ Affected tables:
 
 - `pages`
 - `page_schemas`
+
+Frontend target metadata is stored in `schema_frontend_targets` and inherits the parent schema's `tenant_id`. Database trigger validation rejects mismatched tenant assignments. Target rows are managed through the authenticated schema API and are not exposed as an anonymous table surface.
+
+Registered published content is delivered through the schema-scoped Worker endpoints. The public response is limited to the resolved schema's published pages and preserves the stored JSON payload without exposing tenant or ownership metadata. A frontend collection slot at `/` is therefore a public publish target, while `#posts` remains a client-side fragment owned by that frontend.
 - `page_schema_templates`
 - `page_schema_specs`
 - `llm_specs`

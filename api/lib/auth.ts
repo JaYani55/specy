@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { createSupabaseClient, type Env } from './supabase';
+import { getPublicUrlConfig } from './systemConfig';
 
 export type AppRole = 'user' | 'admin' | 'super-admin';
 
@@ -98,11 +99,10 @@ export function unauthorizedWithChallenge(
   c: Context<{ Bindings: Env }>,
   message: string,
 ): Response {
-  const baseUrl = new URL(c.req.url).origin;
-  const resourceMetadata = `${baseUrl}/.well-known/oauth-protected-resource`;
-  return c.json({ error: message }, 401, {
-    'WWW-Authenticate': `Bearer resource_metadata="${resourceMetadata}"`,
-  });
+  const requestOrigin = new URL(c.req.url).origin;
+  return getPublicUrlConfig(c.env, requestOrigin).then(({ publicUrl }) => c.json({ error: message }, 401, {
+    'WWW-Authenticate': `Bearer resource_metadata="${publicUrl}/.well-known/oauth-protected-resource"`,
+  }));
 }
 
 export async function requireAppRole(

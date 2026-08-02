@@ -25,6 +25,8 @@ import {
 import { registerPluginMcpTools } from '../lib/mcpHooks';
 import type { VerifiedAuthSession } from '../lib/auth';
 import { getPublicUrlConfig } from '../lib/systemConfig';
+import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../lib/schemaRegistration';
+import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -417,6 +419,8 @@ async function createMcpServerWithTools(
         .select('*', { count: 'exact', head: true })
         .eq('schema_id', schema.id);
 
+      const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);
+
       const lines: string[] = [
         '='.repeat(60),
         `SCHEMA SPECIFICATION: ${schema.name}`,
@@ -435,6 +439,15 @@ async function createMcpServerWithTools(
       }
 
       lines.push(
+        '--- FRONTEND TARGETS ---',
+        '',
+        ...(targets.length > 0
+          ? targets.map((target) => target.kind === 'collection-slot'
+            ? `- ${target.target_key}: collection-slot at ${target.host_path}, placement key ${target.placement_key || '(missing)'}`
+            : `- ${target.target_key}: detail-page at ${target.host_path}`)
+          : ['No target registry entries yet; legacy slug_structure applies.']),
+        'Collection fragments such as #posts are frontend-local and must not be registered or revalidated.',
+        '',
         '--- SCHEMA DEFINITION ---',
         '',
         JSON.stringify(schema.schema, null, 2),
@@ -476,7 +489,14 @@ async function createMcpServerWithTools(
             frontend_url: normalizeSchemaIntegrationRequirements(schema.integration_requirements).canonical_frontend_url || 'https://your-frontend.com',
             revalidation_endpoint: '/api/revalidate',
             revalidation_secret: 'your-shared-secret',
-            slug_structure: normalizeSchemaIntegrationRequirements(schema.integration_requirements).required_slug_structure || schema.slug_structure || '/:slug',
+            ...(targets.length > 0
+              ? { targets: targets.map((target) => ({
+                target_key: target.target_key,
+                kind: target.kind,
+                host_path: target.host_path,
+                ...(target.kind === 'collection-slot' ? { placement_key: target.placement_key } : {}),
+              })) }
+              : { slug_structure: normalizeSchemaIntegrationRequirements(schema.integration_requirements).required_slug_structure || schema.slug_structure || '/:slug' }),
           }, null, 2),
           '',
         );
@@ -588,88 +608,29 @@ async function createMcpServerWithTools(
       revalidation_endpoint: z.string().optional().describe('Path for ISR revalidation (e.g. /api/revalidate)'),
       revalidation_secret: z.string().optional().describe('Shared secret for revalidation requests'),
       slug_structure: z.string().optional().describe('URL pattern for pages (default: /:slug)'),
+      targets: z.array(z.object({
+        target_key: z.string(),
+        kind: z.enum(['collection-slot', 'detail-page']),
+        host_path: z.string(),
+        placement_key: z.string().nullable().optional(),
+        supports_preview: z.boolean().optional(),
+        is_primary: z.boolean().optional(),
+        sort_order: z.number().int().optional(),
+        enabled: z.boolean().optional(),
+      })).optional().describe('Frontend collection-slot and optional detail-page targets'),
     },
-    async ({ slug, code, frontend_url, revalidation_endpoint, revalidation_secret, slug_structure }) => {
-      const { data: schema, error } = await supabase
-        .from('page_schemas')
-        .select('id, slug, registration_code, registration_status, revalidation_secret_name, slug_structure, integration_requirements')
-        .eq('slug', slug)
-        .single();
-
-      if (error || !schema) {
-        return { content: [{ type: 'text' as const, text: `Schema "${slug}" not found.` }] };
-      }
-
-      if (schema.registration_status !== 'waiting') {
-        return { content: [{ type: 'text' as const, text: 'Schema is not awaiting registration.' }] };
-      }
-
-      if (schema.registration_code !== code) {
-        return { content: [{ type: 'text' as const, text: 'Invalid registration code.' }] };
-      }
-
-      const validatedFrontendUrl = validateOutboundHttpUrl(frontend_url);
-      if (!validatedFrontendUrl.ok) {
-        return { content: [{ type: 'text' as const, text: validatedFrontendUrl.error }] };
-      }
-
-      const frontendPolicy = isFrontendUrlAllowed(validatedFrontendUrl.url.origin, schema.integration_requirements);
-      if (!frontendPolicy.ok) {
-        return { content: [{ type: 'text' as const, text: frontendPolicy.error || 'frontend_url rejected by schema policy.' }] };
-      }
-
-      const slugStructureValidation = validateSlugStructure(
-        slug_structure || normalizeSchemaIntegrationRequirements(schema.integration_requirements).required_slug_structure || schema.slug_structure || '/:slug',
-        schema.integration_requirements,
-      );
-      if (!slugStructureValidation.ok) {
-        return { content: [{ type: 'text' as const, text: slugStructureValidation.error || 'Invalid slug_structure.' }] };
-      }
-
-      const secretName = revalidation_secret?.trim()
-        ? (schema.revalidation_secret_name || buildRevalidationSecretName(schema.id))
-        : schema.revalidation_secret_name;
-
-      if (revalidation_secret?.trim() && secretName) {
-        await upsertManagedSecret(env, {
-          name: secretName,
-          namespace: getRevalidationSecretNamespace(),
-          value: revalidation_secret.trim(),
-          metadata: {
-            schema_id: schema.id,
-            schema_slug: schema.slug,
-            frontend_url: validatedFrontendUrl.url.origin,
-          },
-        });
-      }
-
-      const admin = await createSupabaseAdminClient(env);
-      const { error: updateError } = await admin
-        .from('page_schemas')
-        .update({
-          registration_status: 'registered',
-          registration_code: null,
-          frontend_url: validatedFrontendUrl.url.origin,
-          revalidation_endpoint: revalidation_endpoint?.trim() ? (revalidation_endpoint.startsWith('/') ? revalidation_endpoint : `/${revalidation_endpoint}`) : null,
-          revalidation_secret: null,
-          revalidation_secret_name: secretName ?? null,
-          slug_structure: slugStructureValidation.normalized,
-        })
-        .eq('id', schema.id);
-
-      if (updateError) {
-        return { content: [{ type: 'text' as const, text: `Registration failed: ${updateError.message}` }] };
-      }
+    async ({ slug, code, frontend_url, revalidation_endpoint, revalidation_secret, slug_structure, targets }) => {
+      const result = await completeSchemaRegistration(env, slug, {
+        code,
+        frontend_url,
+        revalidation_endpoint,
+        revalidation_secret,
+        slug_structure,
+        targets: targets as SchemaFrontendTargetInput[] | undefined,
+      }, authToken ?? undefined);
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            success: true,
-            message: 'Frontend registered successfully',
-            schema: { slug, frontend_url: validatedFrontendUrl.url.origin, slug_structure: slugStructureValidation.normalized },
-          }, null, 2),
-        }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ status: result.status, ...result.body }, null, 2) }],
       };
     },
   );

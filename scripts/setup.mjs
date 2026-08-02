@@ -421,15 +421,46 @@ async function stepSupabaseSecrets(storeId) {
     ws.stop(pc.yellow('Skipped — run manually: npx wrangler secret put SUPABASE_PUBLISHABLE_KEY'));
   }
 
-  // ── Store SECRETS_ENCRYPTION_KEY as Worker secret ─────────────────────
+  // ── Generate and store SECRETS_ENCRYPTION_KEY as Worker secret ─────────
+  const generateEncryptionKey = bailOnCancel(
+    await confirm({
+      message: 'Generate a random SECRETS_ENCRYPTION_KEY now?',
+      initialValue: true,
+    }),
+  );
+
+  if (!generateEncryptionKey) {
+    cancel('SECRETS_ENCRYPTION_KEY is required to encrypt managed secrets. Re-run setup and generate one to continue.');
+    process.exit(1);
+  }
+
+  const encryptionKey = generateWorkerSecret();
+  note(
+    [
+      pc.yellow(pc.bold('IMPORTANT — copy and store this encryption key securely.')),
+      pc.yellow('You will need the same key to decrypt existing managed secrets.'),
+      '',
+      pc.bold(encryptionKey),
+      '',
+      pc.dim('Do not commit this key or share it publicly. Changing it later makes existing managed secrets unreadable.'),
+    ].join('\n'),
+    'SECRETS_ENCRYPTION_KEY',
+  );
+
+  bailOnCancel(
+    await confirm({
+      message: 'Have you copied SECRETS_ENCRYPTION_KEY to a secure password manager or secrets vault?',
+      initialValue: true,
+    }),
+  );
+
   const ek = spinner();
   ek.start(`Storing ${pc.yellow('SECRETS_ENCRYPTION_KEY')} as Worker secret…`);
-  const encryptionKey = generateWorkerSecret();
   const ekOk = putWorkerSecret('SECRETS_ENCRYPTION_KEY', encryptionKey);
   if (ekOk) {
     ek.stop(pc.green('SECRETS_ENCRYPTION_KEY stored as Worker secret ✓'));
   } else {
-    ek.stop(pc.yellow('Skipped — run manually: npx wrangler secret put SECRETS_ENCRYPTION_KEY'));
+    ek.stop(pc.yellow('Could not store automatically — run manually: npx wrangler secret put SECRETS_ENCRYPTION_KEY'));
   }
 
   // ── Store SUPABASE_SECRET_KEY in Secrets Store ──────────────────────────
@@ -993,6 +1024,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202605310002_markdown_object_share_scope.sql',
     '202606050001_poll_extensions.sql',
     '202606050002_poll_participant_config.sql',
+    '202608020001_schema_frontend_targets.sql',
+    '202608020002_schema_frontend_target_rpc.sql',
+    '202608020003_schema_frontend_target_precedence.sql',
     'Auth/Access_hook.sql',
     'Auth/Access_hook_oauth_claims.sql',
     // storage.sql is generated from storage.default.sql at runtime using the

@@ -8,6 +8,7 @@ import {
   listDiscoverableSpecs,
   type LlmSpecStatus,
 } from '../lib/specRegistry';
+import { getPublicWorkerUrl } from '../lib/systemConfig';
 
 const specs = new Hono<{ Bindings: Env }>();
 
@@ -24,7 +25,7 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 specs.get('/', async (c) => {
-  const baseUrl = new URL(c.req.url).origin;
+  const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
   const authHeader = c.req.header('Authorization');
 
   if (!authHeader) {
@@ -64,7 +65,10 @@ specs.get('/', async (c) => {
 
 specs.get('/schema/:schemaSlug', async (c) => {
   const schemaSlug = c.req.param('schemaSlug');
-  const supabase = await createSupabaseClient(c.env);
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+
+  const supabase = await createSupabaseClient(c.env, auth.token);
   const { data: schema, error } = await supabase
     .from('page_schemas')
     .select('id, slug, name, registration_status, frontend_url')
@@ -75,7 +79,7 @@ specs.get('/schema/:schemaSlug', async (c) => {
     return c.json({ error: `Schema "${schemaSlug}" not found` }, 404);
   }
 
-  const bundle = await getSchemaSpecBundle(c.env, { id: schema.id }, { publicOnly: true });
+  const bundle = await getSchemaSpecBundle(c.env, { id: schema.id }, { token: auth.token, publicOnly: false });
   return c.json({ schema, ...bundle });
 });
 
