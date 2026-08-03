@@ -132,6 +132,7 @@ export type SchemaRouteOwnership = 'isolated' | 'shared-layout-only' | 'may-modi
 export type SchemaPageDiscoveryMode = 'schema-scoped-api' | 'supabase-by-schema' | 'infer-content-shape';
 
 export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
+export type SchemaContentScope = 'page-collection' | 'single-page';
 
 /**
  * Describes where a registered frontend consumes a schema's published pages.
@@ -174,6 +175,8 @@ export interface SchemaFrontendTargetRevalidationResult {
 }
 
 export interface SchemaIntegrationRequirements {
+  content_scope?: SchemaContentScope | null;
+  page_target?: SchemaPageTarget | null;
   canonical_frontend_url: string | null;
   required_slug_structure: string | null;
   route_base_path: string | null;
@@ -182,6 +185,14 @@ export interface SchemaIntegrationRequirements {
   page_discovery_mode: SchemaPageDiscoveryMode;
   schema_identification_hint: string | null;
   registration_notes: string | null;
+}
+
+export interface SchemaPageTarget {
+  target_key: string;
+  host_path: string;
+  page_slug?: string | null;
+  is_primary?: boolean;
+  enabled?: boolean;
 }
 
 export const DEFAULT_SCHEMA_INTEGRATION_REQUIREMENTS: SchemaIntegrationRequirements = {
@@ -216,6 +227,8 @@ export interface PageSchema {
   created_at: string;
   updated_at: string;
   frontend_targets?: SchemaFrontendTarget[];
+  content_scope?: SchemaContentScope;
+  page_target?: SchemaPageTarget | null;
 }
 
 export interface PageSchemaTemplate {

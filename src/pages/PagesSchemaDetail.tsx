@@ -163,8 +163,8 @@ const PagesSchemaDetail: React.FC = () => {
             : `ISR für /${currentPage.slug} ausgelöst`);
         } else {
           toast.warning(language === 'en'
-            ? `ISR revalidation failed: ${rev.message}`
-            : `ISR-Revalidierung fehlgeschlagen: ${rev.message}`);
+            ? `ISR revalidation failed: ${rev.message || 'Unknown error'}`
+            : `ISR-Revalidierung fehlgeschlagen: ${rev.message || 'Unbekannter Fehler'}`);
         }
         } catch {
           toast.warning(language === 'en'

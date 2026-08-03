@@ -11,6 +11,8 @@ import {
   type SchemaIntegrationRequirementsRecord,
   validateFrontendTarget,
   validateSlugStructure,
+  type SchemaContentScope,
+  validateCollectionHostPath,
 } from './schemaRouting';
 
 export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
@@ -26,6 +28,19 @@ export interface SchemaFrontendTargetInput {
   enabled?: boolean;
 }
 
+export interface SchemaPageTargetInput {
+  target_key: string;
+  host_path: string;
+  page_slug?: string | null;
+  is_primary?: boolean;
+  enabled?: boolean;
+}
+
+export interface SchemaContentContractInput {
+  content_scope: SchemaContentScope;
+  page_target?: SchemaPageTargetInput | null;
+}
+
 export interface SchemaRegistrationPayload {
   code: string;
   frontend_url: string;
@@ -34,6 +49,33 @@ export interface SchemaRegistrationPayload {
   /** Legacy detail-route field. Kept for existing agents and clients. */
   slug_structure?: string;
   targets?: SchemaFrontendTargetInput[];
+}
+
+export function validateSchemaContentContract(
+  contract: SchemaContentContractInput | null | undefined,
+): { ok: true; contract: SchemaContentContractInput } | { ok: false; error: string } {
+  if (!contract) {
+    return { ok: true, contract: { content_scope: 'page-collection' } };
+  }
+  if (contract.content_scope === 'page-collection') {
+    return { ok: true, contract };
+  }
+  if (contract.content_scope !== 'single-page') {
+    return { ok: false, error: 'content_scope must be page-collection or single-page' };
+  }
+  const target = contract.page_target;
+  if (!target || !target.target_key || !target.host_path) {
+    return { ok: false, error: 'single-page schemas require page_target.target_key and page_target.host_path' };
+  }
+  if (!validateTargetKey(target.target_key)) {
+    return { ok: false, error: `Invalid page_target.target_key: ${target.target_key}` };
+  }
+  const path = validateCollectionHostPath(target.host_path);
+  if (!path.ok) return { ok: false, error: path.error || 'Invalid page_target.host_path' };
+  return {
+    ok: true,
+    contract: { ...contract, page_target: { ...target, host_path: path.normalized, is_primary: true, enabled: true } },
+  };
 }
 
 function normalizeRevalidationEndpoint(value?: string | null): string | null {
@@ -132,6 +174,16 @@ export async function completeSchemaRegistration(
   body: SchemaRegistrationPayload,
   token?: string,
 ) {
+  if (!body.revalidation_secret?.trim()) {
+    return {
+      status: 400 as const,
+      body: {
+        error: 'Missing required field: revalidation_secret',
+        instruction: 'Generate a strong random secret and configure the same value in the frontend revalidation endpoint before registering.',
+      },
+    };
+  }
+
   // MCP registration is authenticated and must retain the caller's RLS
   // context. The public REST callback is code-authenticated, so it uses the
   // service client for lookup when no bearer token is available.
@@ -231,8 +283,15 @@ export async function completeSchemaRegistration(
   };
 }
 
-export async function getSchemaFrontendTargets(env: Env, schemaId: string, token?: string) {
-  const client = await createSupabaseClient(env, token);
+export async function getSchemaFrontendTargets(
+  env: Env,
+  schemaId: string,
+  token?: string,
+  options?: { publicRead?: boolean },
+) {
+  const client = options?.publicRead
+    ? await createSupabaseAdminClient(env)
+    : await createSupabaseClient(env, token);
   const { data, error } = await client
     .from('schema_frontend_targets')
     .select('id, schema_id, tenant_id, target_key, kind, host_path, placement_key, supports_preview, is_primary, sort_order, enabled, created_at, updated_at')

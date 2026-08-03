@@ -698,12 +698,32 @@ export const triggerRevalidation = async (schemaSlug: string, pageSlug: string):
   }
 
   try {
+    const headers = await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    });
     const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/revalidate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ page_slug: pageSlug }),
     });
-    return await response.json();
+    const payload = await response.json().catch(() => null) as {
+      success?: boolean;
+      message?: string;
+      error?: string;
+    } | null;
+
+    if (!response.ok) {
+      return {
+        success: false,
+        message: payload?.message || payload?.error || `Revalidation request failed (${response.status})`,
+      };
+    }
+
+    return {
+      success: payload?.success === true,
+      message: payload?.message || (payload?.success ? 'Revalidation triggered successfully' : 'Revalidation request failed'),
+    };
   } catch {
     return { success: false, message: 'Failed to reach API' };
   }

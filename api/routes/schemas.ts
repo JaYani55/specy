@@ -37,6 +37,8 @@ interface SchemaRow {
   frontend_url: string | null;
   slug_structure: string | null;
   integration_requirements: SchemaIntegrationRequirementsRecord | null;
+  content_scope?: 'page-collection' | 'single-page' | null;
+  page_target?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -560,7 +562,7 @@ schemas.get('/', async (c) => {
 
   const { data, error } = await supabase
     .from('page_schemas')
-    .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, created_at, updated_at')
+    .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
     .order('is_default', { ascending: false })
     .order('name', { ascending: true });
 
@@ -583,6 +585,8 @@ schemas.get('/', async (c) => {
       frontend_url: s.frontend_url,
       slug_structure: s.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
+      content_scope: s.content_scope || 'page-collection',
+      page_target: s.page_target || null,
       spec_url: `${baseUrl}/api/schemas/${s.slug}/spec.txt`,
       spec_json_url: `${baseUrl}/api/schemas/${s.slug}/spec`,
       pages_url: `${baseUrl}/api/schemas/${s.slug}/pages`,
@@ -774,8 +778,10 @@ schemas.get('/:slug/spec', async (c) => {
 
 schemas.get('/:slug/pages', async (c) => {
   const slug = c.req.param('slug');
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Public delivery must work for tenant-owned schemas without requiring the
+  // frontend to have a CMS user JWT. Use the server client for this read path;
+  // the query still restricts returned pages to published content below.
+  const supabase = await createSupabaseAdminClient(c.env);
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
@@ -802,7 +808,7 @@ schemas.get('/:slug/pages', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
-  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, undefined, { publicRead: true });
 
   return c.json({
     schema: {
@@ -819,8 +825,9 @@ schemas.get('/:slug/pages', async (c) => {
 schemas.get('/:slug/pages/:pageSlug', async (c) => {
   const slug = c.req.param('slug');
   const pageSlug = c.req.param('pageSlug');
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // As with the collection endpoint, public detail delivery must not depend
+  // on the visitor having an authenticated CMS session.
+  const supabase = await createSupabaseAdminClient(c.env);
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
@@ -1107,7 +1114,8 @@ schemas.post('/:slug/unhook', async (c) => {
 // POST /api/schemas/:slug/revalidate — Trigger ISR on the registered frontend
 schemas.post('/:slug/revalidate', async (c) => {
   const slug = c.req.param('slug');
-  const supabase = await createSupabaseClient(c.env);
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
 
   let body: { page_slug: string };
   try {
@@ -1183,6 +1191,15 @@ schemas.post('/:slug/revalidate', async (c) => {
     revalidateUrl.searchParams.set('secret', resolvedSchema.revalidation_secret);
   }
 
+  if (!secretValue) {
+    return c.json({
+      success: false,
+      status: 400,
+      message: 'Revalidation secret is not configured for this schema',
+      schema: slug,
+    }, 400);
+  }
+
   const buildHeaders = (secret: string | null): Record<string, string> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) {
@@ -1231,6 +1248,7 @@ schemas.post('/:slug/revalidate', async (c) => {
       path: routePath,
       slug: body.page_slug,
       targets: routePaths,
+      endpoint: `${revalidateUrl.origin}${revalidateUrl.pathname}`,
       message: response.ok
         ? 'Revalidation triggered successfully'
         : `Revalidation request failed${upstreamMessage ? `: ${upstreamMessage}` : ''}`,

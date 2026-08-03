@@ -255,7 +255,7 @@ Once deployed, call the CMS registration endpoint from your frontend
     "code": "<registration_code>",          // shown in CMS
     "frontend_url": "https://your-site.com",
     "revalidation_endpoint": "/api/revalidate",
-    "revalidation_secret": "<shared_secret>", // stored by the CMS, not persisted in plaintext
+    "revalidation_secret": "<REQUIRED_STRONG_RANDOM_SECRET>", // required; stored encrypted by the CMS
     "targets": [
       { "target_key": "home.posts", "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" },
       { "target_key": "posts.detail", "kind": "detail-page", "host_path": "/posts/:slug" }

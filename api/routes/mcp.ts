@@ -26,6 +26,7 @@ import { registerPluginMcpTools } from '../lib/mcpHooks';
 import type { VerifiedAuthSession } from '../lib/auth';
 import { getPublicUrlConfig } from '../lib/systemConfig';
 import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../lib/schemaRegistration';
+import { validateSchemaContentContract, type SchemaContentContractInput } from '../lib/schemaRegistration';
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
@@ -64,6 +65,8 @@ interface SchemaListRow {
   frontend_url: string | null;
   slug_structure?: string | null;
   integration_requirements?: Record<string, unknown> | null;
+  content_scope?: 'page-collection' | 'single-page' | null;
+  page_target?: Record<string, unknown> | null;
 }
 
 function buildSpecToolDescription(spec: DiscoverableSpecSummary): string {
@@ -100,6 +103,12 @@ const newSchemaToolSchema = {
   schema: z.record(z.string(), z.unknown()).describe('Schema JSON definition to save in page_schemas.schema'),
   llm_instructions: z.string().optional().describe('Optional LLM instructions for builders and agents'),
   integration_requirements: z.object({
+    content_scope: z.enum(['page-collection', 'single-page']).optional().describe('Whether this schema creates many page records or edits one existing page surface.'),
+    page_target: z.object({
+      target_key: z.string(),
+      host_path: z.string(),
+      page_slug: z.string().nullable().optional(),
+    }).nullable().optional().describe('Required for single-page schemas; identifies the existing frontend page surface.'),
     canonical_frontend_url: z.string().optional(),
     required_slug_structure: z.string().optional(),
     route_base_path: z.string().optional(),
@@ -108,7 +117,7 @@ const newSchemaToolSchema = {
     page_discovery_mode: z.enum(['schema-scoped-api', 'supabase-by-schema', 'infer-content-shape']).optional(),
     schema_identification_hint: z.string().optional(),
     registration_notes: z.string().optional(),
-  }).optional().describe('Optional schema routing and integration requirements'),
+  }).optional().describe('Optional schema routing and integration requirements. Choose content_scope=single-page for one existing landing page, or page-collection for many page records.'),
 };
 
 async function createMcpServerWithTools(
@@ -232,7 +241,7 @@ async function createMcpServerWithTools(
                 code: registrationCode,
                 frontend_url: 'https://your-frontend.example',
                 revalidation_endpoint: '/api/revalidate',
-                revalidation_secret: 'generate-a-secret',
+                revalidation_secret: 'REQUIRED_GENERATE_A_STRONG_RANDOM_SECRET',
                 slug_structure: data.slug_structure || '/:slug',
               },
             },
@@ -261,15 +270,26 @@ async function createMcpServerWithTools(
 
       const { data: schema, error: schemaError } = await supabase
         .from('page_schemas')
-        .select('id, slug, frontend_url, slug_structure')
+        .select('id, slug, frontend_url, slug_structure, content_scope')
         .eq('slug', schema_slug)
         .single();
       if (schemaError || !schema) {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: schemaError?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
       }
 
+      if (schema.content_scope === 'single-page') {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({
+          error: `Schema "${schema_slug}" is a single-page schema. Use the schema's existing page surface instead of create_page.`,
+          content_scope: schema.content_scope,
+        }, null, 2) }] };
+      }
+
       const requestedSlug = (slug || name)
         .toLowerCase()
+        .replace(/ä/g, 'ae')
+        .replace(/ö/g, 'oe')
+        .replace(/ü/g, 'ue')
+        .replace(/ß/g, 'ss')
         .replace(/[^a-z0-9\s-]/g, '')
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
@@ -278,17 +298,21 @@ async function createMcpServerWithTools(
       const { data: existing } = await supabase.from('pages').select('id').eq('slug', requestedSlug).limit(1);
       const uniqueSlug = existing && existing.length > 0 ? `${requestedSlug}-${Date.now().toString(36)}` : requestedSlug;
 
-      const { data: page, error: pageError } = await supabase
-        .from('pages')
-        .insert({
+      const pageInsert: Record<string, unknown> = {
           name,
           slug: uniqueSlug,
           content,
           status: status || 'draft',
           schema_id: schema.id,
-          tenant_id: tenant_id || null,
-        })
-        .select('id, slug, name, status, schema_id, tenant_id, frontend_url, domain_url, updated_at, published_at')
+        };
+      if (tenant_id) {
+        pageInsert.tenant_id = tenant_id;
+      }
+
+      const { data: page, error: pageError } = await supabase
+        .from('pages')
+        .insert(pageInsert)
+        .select('id, slug, name, status, schema_id, tenant_id, domain_url, updated_at, published_at')
         .single();
 
       if (pageError || !page) {
@@ -366,7 +390,7 @@ async function createMcpServerWithTools(
     async () => {
       const { data, error } = await supabase
         .from('page_schemas')
-        .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, created_at, updated_at')
+        .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
         .order('is_default', { ascending: false })
         .order('name', { ascending: true });
 
@@ -383,6 +407,8 @@ async function createMcpServerWithTools(
         frontend_url: s.frontend_url,
         slug_structure: s.slug_structure,
         integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
+        content_scope: s.content_scope || 'page-collection',
+        page_target: s.page_target || null,
         spec_url: `${baseUrl}/api/schemas/${s.slug}/spec.txt`,
         spec_json_url: `${baseUrl}/api/schemas/${s.slug}/spec`,
         pages_url: `${baseUrl}/api/schemas/${s.slug}/pages`,
@@ -488,7 +514,7 @@ async function createMcpServerWithTools(
             code: schema.registration_code,
             frontend_url: normalizeSchemaIntegrationRequirements(schema.integration_requirements).canonical_frontend_url || 'https://your-frontend.com',
             revalidation_endpoint: '/api/revalidate',
-            revalidation_secret: 'your-shared-secret',
+            revalidation_secret: 'REQUIRED_GENERATE_A_STRONG_RANDOM_SECRET',
             ...(targets.length > 0
               ? { targets: targets.map((target) => ({
                 target_key: target.target_key,
@@ -606,7 +632,7 @@ async function createMcpServerWithTools(
       code: z.string().describe('The registration code shown in the CMS'),
       frontend_url: z.string().url().describe('The deployed frontend URL (e.g. https://my-site.com)'),
       revalidation_endpoint: z.string().optional().describe('Path for ISR revalidation (e.g. /api/revalidate)'),
-      revalidation_secret: z.string().optional().describe('Shared secret for revalidation requests'),
+      revalidation_secret: z.string().min(1).describe('REQUIRED shared secret for authenticating ISR revalidation requests. Generate a strong random secret and send it with every registration.'),
       slug_structure: z.string().optional().describe('URL pattern for pages (default: /:slug)'),
       targets: z.array(z.object({
         target_key: z.string(),
@@ -620,6 +646,18 @@ async function createMcpServerWithTools(
       })).optional().describe('Frontend collection-slot and optional detail-page targets'),
     },
     async ({ slug, code, frontend_url, revalidation_endpoint, revalidation_secret, slug_structure, targets }) => {
+      if (!revalidation_secret?.trim()) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: 'Missing required field: revalidation_secret',
+              instruction: 'Generate a strong random secret, include it in register_frontend, and configure the same value in the deployed frontend revalidation endpoint.',
+            }, null, 2),
+          }],
+        };
+      }
+
       const result = await completeSchemaRegistration(env, slug, {
         code,
         frontend_url,
@@ -754,6 +792,14 @@ async function buildNewSchemaHandler(
     }
 
     try {
+      const contentContract = validateSchemaContentContract({
+        content_scope: integration_requirements?.content_scope as SchemaContentContractInput['content_scope'] ?? 'page-collection',
+        page_target: integration_requirements?.page_target as SchemaContentContractInput['page_target'] ?? null,
+      });
+      if (!contentContract.ok) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: contentContract.error }, null, 2) }] };
+      }
+
       const result = await createPendingSchema(env, authToken, {
         name,
         slug,
@@ -761,6 +807,8 @@ async function buildNewSchemaHandler(
         schema,
         llm_instructions: llm_instructions ?? null,
         integration_requirements: (integration_requirements ?? null) as Record<string, unknown> | null,
+        content_scope: contentContract.contract.content_scope,
+        page_target: contentContract.contract.page_target,
       });
 
       return {
@@ -776,6 +824,8 @@ async function buildNewSchemaHandler(
               description: result.schema.description,
               registration_status: result.schema.registration_status,
               registration_code: result.schema.registration_code,
+              content_scope: contentContract.contract.content_scope,
+              page_target: contentContract.contract.page_target,
               cms_url: `${baseUrl}/pages/schema/${result.schema.slug}`,
               spec_text_url: `${baseUrl}/api/schemas/${result.schema.slug}/spec.txt`,
               spec_json_url: `${baseUrl}/api/schemas/${result.schema.slug}/spec`,

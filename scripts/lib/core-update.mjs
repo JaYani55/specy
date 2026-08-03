@@ -61,6 +61,7 @@ export const MIGRATION_ORDER = [
   '202608020001_schema_frontend_targets.sql',
   '202608020002_schema_frontend_target_rpc.sql',
   '202608020003_schema_frontend_target_precedence.sql',
+  '202608020004_schema_content_scope.sql',
   'Auth/Access_hook.sql',
   'Auth/Access_hook_oauth_claims.sql',
 ];

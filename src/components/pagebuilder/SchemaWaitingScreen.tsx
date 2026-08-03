@@ -143,13 +143,13 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
       "code": "${schema.registration_code}",
       "frontend_url": "${integrationRequirements.canonical_frontend_url || 'https://your-site.com'}",
       "revalidation_endpoint": "/api/revalidate",
-      "revalidation_secret": "your-secret",
+      "revalidation_secret": "REQUIRED_GENERATE_A_STRONG_RANDOM_SECRET",
       "targets": [
         ${expectedSlugStructure === '/' ? '{ "target_key": "home.content", "kind": "collection-slot", "host_path": "/", "placement_key": "home.content" }' : `{ "target_key": "default", "kind": "detail-page", "host_path": "${expectedSlugStructure}" }`}
       ]
     }
 
-  6. Treat examples as illustrative only. Register targets that match the actual deployed frontend. A placement_key is a semantic component contract, not a CSS selector or DOM query. Do not register #posts; fragments are client-side only and server invalidation must target /.
+  6. The revalidation_secret is REQUIRED. Generate a strong random secret, send it in this registration request, and configure the exact same value in the frontend's revalidation endpoint. Registration must not be attempted without it. A placement_key is a semantic component contract, not a CSS selector or DOM query. Do not register #posts; fragments are client-side only and server invalidation must target /.
 
   7. Do not register the frontend until the final deployed domain is healthy.
     ${integrationRequirements.allow_temporary_frontend_urls

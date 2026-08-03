@@ -13,6 +13,8 @@ export interface CreatePendingSchemaInput {
   schema: Record<string, unknown>;
   llm_instructions?: string | null;
   integration_requirements?: SchemaIntegrationRequirementsRecord | null;
+  content_scope?: 'page-collection' | 'single-page';
+  page_target?: { target_key: string; host_path: string; page_slug?: string | null } | null;
 }
 
 interface CreatedSchemaRow {
@@ -89,6 +91,8 @@ export async function createPendingSchema(
       schema: input.schema,
       llm_instructions: input.llm_instructions ?? null,
       integration_requirements: normalizeSchemaIntegrationRequirements(input.integration_requirements),
+      content_scope: input.content_scope ?? 'page-collection',
+      page_target: input.page_target ?? null,
       registration_status: 'pending',
       registration_code: null,
     })

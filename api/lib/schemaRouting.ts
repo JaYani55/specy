@@ -1,6 +1,15 @@
 const SLUG_TOKEN = ':slug';
 
 export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
+export type SchemaContentScope = 'page-collection' | 'single-page';
+
+export interface SchemaPageTargetInput {
+  target_key: string;
+  host_path: string;
+  page_slug?: string | null;
+  is_primary?: boolean;
+  enabled?: boolean;
+}
 
 export interface FrontendTargetValidationResult {
   ok: boolean;
@@ -9,6 +18,8 @@ export interface FrontendTargetValidationResult {
 }
 
 export interface SchemaIntegrationRequirementsRecord {
+  content_scope?: SchemaContentScope | null;
+  page_target?: SchemaPageTargetInput | null;
   canonical_frontend_url?: string | null;
   required_slug_structure?: string | null;
   route_base_path?: string | null;
@@ -20,6 +31,8 @@ export interface SchemaIntegrationRequirementsRecord {
 }
 
 export interface NormalizedSchemaIntegrationRequirements {
+  content_scope: SchemaContentScope;
+  page_target: SchemaPageTargetInput | null;
   canonical_frontend_url: string | null;
   required_slug_structure: string | null;
   route_base_path: string | null;
@@ -56,6 +69,8 @@ export const normalizeRouteBasePath = (value: string): string => {
 export const normalizeSchemaIntegrationRequirements = (
   requirements: SchemaIntegrationRequirementsRecord | null | undefined,
 ): NormalizedSchemaIntegrationRequirements => ({
+  content_scope: requirements?.content_scope === 'single-page' ? 'single-page' : 'page-collection',
+  page_target: requirements?.page_target ?? null,
   canonical_frontend_url: normalizeNullable(requirements?.canonical_frontend_url),
   required_slug_structure: normalizeNullable(requirements?.required_slug_structure)
     ? normalizeSchemaSlugStructure(requirements?.required_slug_structure as string)

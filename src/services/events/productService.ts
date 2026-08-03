@@ -164,7 +164,7 @@ export const deleteProduct = async (id: number): Promise<boolean> => {
     if (existingProduct.product_page_id) {
       console.log(`Deleting linked product page with ID: ${existingProduct.product_page_id}`);
       const { error: pageDeleteError } = await supabase
-        .from('products')
+        .from('pages')
         .delete()
         .eq('id', existingProduct.product_page_id);
       
