@@ -25,7 +25,7 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [frontendUrl, setFrontendUrl] = useState<string | null>(null);
-  const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'sveltekit'>('nextjs');
+  const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'astro'>('nextjs');
   const [schemaSpecBundle, setSchemaSpecBundle] = useState<SchemaSpecBundle | null>(null);
 
   const specUrl = `${API_URL}/api/schemas/${schema.slug}/spec.txt`;
@@ -75,9 +75,9 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
     }, [language]);
 
     const agentPrompt = useMemo(() => {
-     const isNext = selectedFramework === 'nextjs';
+    const isNext = selectedFramework === 'nextjs';
 
-     let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for the Specy schema "${schema.name}".
+    let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'Astro SSR on Cloudflare Workers'} frontend for the Specy schema "${schema.name}".
 
   Schema slug: ${schema.slug}
   Unified spec discovery URL: ${specsUrl}
@@ -114,6 +114,8 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
     - quote
     - list
     - video
+    - form
+    - audio
   `;
 
      if (isNext) {
@@ -126,12 +128,30 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
   `;
      } else {
       prompt += `
-  4. Implement revalidation / cache invalidation in SvelteKit.
+    4. Implement request-time SSR and revalidation in Astro.
       - Implement a collection host route and/or detail route only for the registered targets.
-    - Expose POST /api/revalidate?path=<full-server-path>.
-    - Read Authorization: Bearer <secret> for authentication.
-      - Invalidate the full route path from the incoming path query parameter.
+      - Use output: 'server' with @astrojs/cloudflare and do not use getStaticPaths().
+      - Expose POST /api/revalidate?path=<full-server-path> from src/pages/api/revalidate.ts.
+      - Read Authorization: Bearer <secret> for authentication and return 401 for invalid credentials.
+      - Fetch published Specy pages at request time so new slugs work without a redeploy.
   `;
+     }
+
+     if (integrationRequirements.content_scope === 'single-page') {
+      prompt += `
+    4.5 SINGLE-PAGE CONTRACT
+      - This schema is single-page content.
+      - Render the existing host path ${integrationRequirements.page_target?.host_path || '/'}.
+      - Do not create a [slug] route and do not call create_page for this schema.
+      - Preserve the exact content keys, including Content, Code Block, author-name, and author-picture when present.
+    `;
+     } else {
+      prompt += `
+    4.5 PAGE-COLLECTION CONTRACT
+      - This schema contains multiple page records.
+      - Render the registered collection host path and detail route only when targets define them.
+      - New published slugs must resolve without a frontend rebuild when the frontend requirement is no-deploy publishing.
+    `;
      }
 
      prompt += `
@@ -183,6 +203,8 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
       specJsonUrl,
       specUrl,
       specsUrl,
+      integrationRequirements.content_scope,
+      integrationRequirements.page_target?.host_path,
     ]);
 
   const handleCancel = async () => {
@@ -424,14 +446,14 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedFramework('sveltekit')}
+                  onClick={() => setSelectedFramework('astro')}
                   className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                    selectedFramework === 'sveltekit'
+                    selectedFramework === 'astro'
                       ? 'bg-white dark:bg-amber-800/60 text-amber-900 dark:text-amber-100 shadow-sm'
                       : 'text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200'
                   }`}
                 >
-                  SvelteKit
+                  Astro
                 </button>
               </div>
             </div>

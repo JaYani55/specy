@@ -1,6 +1,6 @@
 import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { useLocation, Link } from "react-router-dom"
+import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { usePermissions } from "@/hooks/usePermissions"
@@ -38,7 +38,15 @@ export function AppSidebar() {
   const { canAccessVerwaltung, canManagePlugins } = usePermissions()
   const { webapps } = useEnabledWebapps()
   const location = useLocation()
+  const navigate = useNavigate()
   const [openPluginKey, setOpenPluginKey] = useState<string | null>(null)
+  const [isMcpOpen, setIsMcpOpen] = useState(location.pathname === '/mcp' || location.pathname.startsWith('/mcp/'))
+
+  useEffect(() => {
+    if (location.pathname === '/mcp' || location.pathname.startsWith('/mcp/')) {
+      setIsMcpOpen(true)
+    }
+  }, [location.pathname])
 
   const items = [
     {
@@ -212,7 +220,37 @@ export function AppSidebar() {
           <SidebarGroupLabel>Application</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {items.map((item) => item.url === '/mcp' ? (
+                <SidebarMenuItem key={item.title}>
+                  <Collapsible open={isMcpOpen} onOpenChange={setIsMcpOpen} className="w-full">
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton
+                        isActive={isMcpOpen}
+                        tooltip={item.title}
+                        onClick={() => navigate('/mcp')}
+                      >
+                        <item.icon />
+                        <span>{item.title}</span>
+                        <ChevronDown className={`ml-auto transition-transform ${isMcpOpen ? 'rotate-180' : ''}`} />
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/mcp'}>
+                            <Link to="/mcp"><Bot /><span>{language === 'en' ? 'Registry' : 'Registry'}</span></Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/mcp/specs'}>
+                            <Link to="/mcp/specs"><FileText /><span>{language === 'en' ? 'Prompt Specs' : 'Prompt-Specs'}</span></Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </SidebarMenuItem>
+              ) : (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton 
                     asChild 

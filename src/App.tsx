@@ -38,6 +38,7 @@ import Objects from "./pages/Objects";
 import ObjectEditor from "./pages/ObjectEditor";
 import ObjectSharePage from "./pages/ObjectSharePage";
 import Specs from "./pages/Specs";
+import McpPromptSpecs from "./pages/McpPromptSpecs";
 import SpecEditor from "./pages/SpecEditor";
 
 // Import components
@@ -256,6 +257,7 @@ const AppContent = () => {
           <Route path="/objects/new" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
           <Route path="/objects/:objectId" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
           <Route path="/mcp" element={<ProtectedRoute requiredRole="user"><Specs /></ProtectedRoute>} />
+          <Route path="/mcp/specs" element={<ProtectedRoute requiredRole="user"><McpPromptSpecs /></ProtectedRoute>} />
           <Route path="/mcp/new" element={<ProtectedRoute requiredRole="user"><SpecEditor /></ProtectedRoute>} />
           <Route path="/mcp/:specSlug" element={<ProtectedRoute requiredRole="user"><SpecEditor /></ProtectedRoute>} />
           <Route path="/specs" element={<Navigate to="/mcp" replace />} />

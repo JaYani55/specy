@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTheme } from '@/contexts/ThemeContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { API_URL } from '@/lib/apiUrl';
-import { deleteSpec, getSpecs, updateSpec } from '@/services/specService';
+import { deleteGlobalSpec, deleteSpec, getSpecs, updateSpec } from '@/services/specService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import type { SpecRecord } from '@/types/specs';
 
@@ -22,6 +23,8 @@ const statusVariant: Record<SpecRecord['status'], 'default' | 'secondary' | 'des
 const Specs = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { hasRole } = usePermissions();
+  const isSuperAdmin = hasRole('super-admin');
   const [specs, setSpecs] = useState<SpecRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -95,7 +98,11 @@ const Specs = () => {
     }
 
     try {
-      await deleteSpec(spec.id);
+      if (spec.global || spec.is_standard) {
+        await deleteGlobalSpec(spec.id);
+      } else {
+        await deleteSpec(spec.id);
+      }
       toast.success(language === 'en' ? 'MCP deleted.' : 'MCP gelöscht.');
       await loadSpecs();
     } catch (error) {
@@ -150,11 +157,16 @@ const Specs = () => {
             <FilePlus2 className="mr-2 h-4 w-4" />
             {language === 'en' ? 'New MCP' : 'Neues MCP'}
           </Button>
+          {isSuperAdmin && (
+            <Button variant="secondary" onClick={() => navigate('/mcp/new?global=1')}>
+              <FilePlus2 className="mr-2 h-4 w-4" />
+              {language === 'en' ? 'New Standard Spec' : 'Neue Standard-Spec'}
+            </Button>
+          )}
         </div>
       )}
     >
       <AdminCard>
-        <div className="space-y-4">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">
               {language === 'en' ? 'Connect An Agent To MCP' : 'Agent mit MCP verbinden'}
@@ -193,7 +205,6 @@ const Specs = () => {
               </div>
             </div>
           </div>
-        </div>
       </AdminCard>
 
       <AdminCard>
@@ -263,6 +274,9 @@ const Specs = () => {
 
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">/{spec.slug}</Badge>
+                  {(spec.global || spec.is_standard || spec.metadata?.standard_prompt === true) && (
+                    <Badge variant="outline">Standard · Global</Badge>
+                  )}
                   {spec.tenant_id && tenantNames[spec.tenant_id] && (
                     <Badge variant="outline">{tenantNames[spec.tenant_id]}</Badge>
                   )}
@@ -294,28 +308,34 @@ const Specs = () => {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="outline" size="sm">
-                    <Link to={`/mcp/${spec.slug}`}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {language === 'en' ? 'Edit MCP' : 'MCP bearbeiten'}
-                    </Link>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => void handleArchiveToggle(spec)}>
-                    <Shield className="mr-2 h-4 w-4" />
-                    {spec.status === 'archived'
-                      ? (language === 'en' ? 'Restore' : 'Wiederherstellen')
-                      : (language === 'en' ? 'Archive' : 'Archivieren')}
-                  </Button>
+                  {(!spec.global && !spec.is_standard || isSuperAdmin) && (
+                    <Button asChild variant="outline" size="sm">
+                      <Link to={`/mcp/${spec.slug}`}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {language === 'en' ? 'Edit MCP' : 'MCP bearbeiten'}
+                      </Link>
+                    </Button>
+                  )}
+                  {(!spec.global && !spec.is_standard || isSuperAdmin) && (
+                    <Button variant="outline" size="sm" onClick={() => void handleArchiveToggle(spec)}>
+                      <Shield className="mr-2 h-4 w-4" />
+                      {spec.status === 'archived'
+                        ? (language === 'en' ? 'Restore' : 'Wiederherstellen')
+                        : (language === 'en' ? 'Archive' : 'Archivieren')}
+                    </Button>
+                  )}
                   <Button asChild variant="outline" size="sm">
                     <a href={`/api/specs/${spec.slug}`} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="mr-2 h-4 w-4" />
                       {language === 'en' ? 'Open API' : 'API öffnen'}
                     </a>
                   </Button>
-                  <Button variant="destructive" size="sm" onClick={() => void handleDelete(spec)}>
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    {language === 'en' ? 'Delete' : 'Löschen'}
-                  </Button>
+                  {(!spec.global && !spec.is_standard || isSuperAdmin) && (
+                    <Button variant="destructive" size="sm" onClick={() => void handleDelete(spec)}>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {language === 'en' ? 'Delete' : 'Löschen'}
+                    </Button>
+                  )}
                 </div>
               </div>
             </AdminCard>

@@ -42,7 +42,7 @@ interface OnboardingScreenProps {
 const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, tenantNames, onCreateSchema, onNavigateSchema, onRefresh }) => {
   const [copied, setCopied] = useState(false);
   const [startingRegId, setStartingRegId] = useState<string | null>(null);
-  const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'sveltekit'>('nextjs');
+  const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'astro'>('nextjs');
 
   const handleCopy = async (text: string) => {
     try {
@@ -71,11 +71,11 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, 
   // Build dynamic prompt that includes registration codes for waiting schemas
   const waitingSchemas = schemas.filter(s => s.registration_status === 'waiting');
 
-  const buildPrompt = (framework: 'nextjs' | 'sveltekit') => {
+  const buildPrompt = (framework: 'nextjs' | 'astro') => {
     const isNext = framework === 'nextjs';
 
     // ── Section: discovery ──────────────────────────────────────────────────
-    let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'SvelteKit'} frontend for Specy.
+    let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'Astro SSR on Cloudflare Workers'} frontend for Specy.
 
 ════════════════════════════════════════════════════
   1. DISCOVERY
@@ -190,51 +190,29 @@ Each ContentBlock has { id, type } + type-specific fields:
 
 
 ════════════════════════════════════════════════════
-  3. ISR SETUP  (SvelteKit + edge/node adapter)
+  3. SSR SETUP  (Astro + Cloudflare Workers)
 ════════════════════════════════════════════════════
 
-── File: src/routes/[slug]/+page.server.ts ──
-  import type { PageServerLoad } from './$types';
-  import { error } from '@sveltejs/kit';
+  output: 'server'
+  adapter: cloudflare({ imageService: 'passthrough' })
 
-  export const load: PageServerLoad = async ({ params, setHeaders }) => {
-    const page = await fetchPageBySlug(params.slug); // your Supabase helper
-    if (!page) throw error(404);
+── File: src/pages/blog/index.astro ──
+  export const prerender = false;
+  const posts = await getBlogPosts(); // request-time Specy fetch
+  // Render /blog and link each post to /blog/{post.slug}.
 
-    // Tell the CDN to cache this response.
-    // stale-while-revalidate serves stale content while refetching.
-    setHeaders({
-      'cache-control': 's-maxage=60, stale-while-revalidate=600',
-    });
+── File: src/pages/blog/[slug].astro ──
+  export const prerender = false;
+  // Fetch current published pages and find Astro.params.slug.
+  // Do not add getStaticPaths(); new CMS slugs must work without a build.
 
-    return { page };
-  };
+── File: src/pages/api/revalidate.ts ──
+  // Export an ALL handler, accept POST only, and compare exactly:
+  // Authorization: Bearer <registered-secret>
+  // Return 401 for wrong/missing credentials and 500 if not configured.
 
-── File: src/routes/api/revalidate/+server.ts ──
-  // The CMS calls this endpoint via POST when content is saved.
-  // It sends: POST /api/revalidate?path=<full-server-path>&slug=<page_slug>
-  //           Authorization: Bearer <secret>
-
-  import { json, error } from '@sveltejs/kit';
-  import type { RequestHandler } from './$types';
-
-  export const POST: RequestHandler = async ({ request, platform }) => {
-    const authHeader = request.headers.get('authorization');
-    const secret = authHeader?.replace(/^Bearer\\s+/i, '') ?? null;
-
-    if (secret !== process.env.REVALIDATION_SECRET) {
-      throw error(401, 'Invalid secret');
-    }
-
-    // Vercel: use unstable_expireRoute / purge tag
-    const path = new URL(request.url).searchParams.get('path');
-    if (!path || !path.startsWith('/')) throw error(400, 'Missing path');
-    // Cloudflare: platform.env.CACHE.delete(path)
-    // Netlify:    fetch('/__netlify/builder/revalidate', { method: 'POST', ... })
-    // Generic:    rely on s-maxage + stale-while-revalidate above
-
-    return json({ revalidated: true, path });
-  };`;
+Use npx wrangler deploy, not wrangler pages deploy dist.
+For a single-page schema, render the registered host path and do not create a [slug] route.`;
     }
 
     // ── Section: registration ─────────────────────────────────────────────
@@ -298,9 +276,9 @@ Examples:
 1. For content rendered inside an existing landing page, use for example:
   { "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" }
   The frontend may link to /#posts, but the fragment is client-side only.
-2. For an optional detail route, inspect your ${isNext ? 'Next.js' : 'SvelteKit'} file-system routing:
-   - ${isNext ? 'app/[slug]/page.tsx' : 'src/routes/[slug]/+page.svelte'} → use "/:slug"
-   - ${isNext ? 'app/blog/[slug]/page.tsx' : 'src/routes/blog/[slug]/+page.svelte'} → use "/blog/:slug"
+2. For an optional detail route, inspect your ${isNext ? 'Next.js' : 'Astro'} file-system routing:
+  - ${isNext ? 'app/[slug]/page.tsx' : 'src/pages/[slug].astro'} → use "/:slug"
+  - ${isNext ? 'app/blog/[slug]/page.tsx' : 'src/pages/blog/[slug].astro'} → use "/blog/:slug"
 3. Include the targets in your registration POST body (see step 4).
 4. The CMS Page Builder shows an entry preview only when a detail-page target exists.
 
@@ -310,9 +288,9 @@ If the schema defines a fixed route segment like "/docs", keep the frontend isol
 The CMS saves pages as "draft" by default. To preview before publishing:
 ${isNext ? `  • Add a ?draft=true query param and check it in your page component
   • Or expose a dedicated preview route: app/preview/[slug]/page.tsx
-  • Optionally add a secret: app/api/preview/route.ts → sets a preview cookie` : `  • Add a ?draft=true query param in your +page.server.ts load function
-  • Or add a preview route: src/routes/preview/[slug]/+page.server.ts
-  • Use SvelteKit cookies to mark a preview session`}
+  • Optionally add a secret: app/api/preview/route.ts → sets a preview cookie` : `  • Read ?draft=true in the Astro server page
+  • Or add a preview route: src/pages/preview/[slug].astro
+  • Keep preview credentials server-side`}
 
 ── Revalidation path format ──
 The CMS calls your revalidation endpoint with:
@@ -491,8 +469,8 @@ Available MCP tools:
               </div>
               <p className="text-xs text-amber-800/70 dark:text-amber-300/60">
                 {language === 'en'
-                  ? 'Give the spec URL to an AI agent or developer. They build a Next.js / SvelteKit frontend and deploy it to a domain.'
-                  : 'Gib die Spec-URL an einen KI-Agenten oder Entwickler. Dieser baut ein Next.js / SvelteKit-Frontend und deployed es auf eine Domain.'}
+                  ? 'Give the spec URL to an AI agent or developer. They build a Next.js or Astro SSR frontend and deploy it to a domain.'
+                  : 'Gib die Spec-URL an einen KI-Agenten oder Entwickler. Dieser baut ein Next.js- oder Astro-SSR-Frontend und deployed es auf eine Domain.'}
               </p>
             </div>
             <div className="bg-white/60 dark:bg-black/20 rounded-xl p-4 border border-amber-200/80 dark:border-amber-700/40 space-y-2">
@@ -586,14 +564,14 @@ Available MCP tools:
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedFramework('sveltekit')}
+                  onClick={() => setSelectedFramework('astro')}
                   className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                    selectedFramework === 'sveltekit'
+                    selectedFramework === 'astro'
                       ? 'bg-white dark:bg-amber-800/60 text-amber-900 dark:text-amber-100 shadow-sm'
                       : 'text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200'
                   }`}
                 >
-                  SvelteKit
+                  Astro
                 </button>
               </div>
             </div>

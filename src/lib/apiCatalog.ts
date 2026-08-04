@@ -152,8 +152,8 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
       { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug awaiting registration.' },
       { name: 'code', in: 'body', required: true, type: 'string', description: 'Registration code issued by the CMS.' },
       { name: 'frontend_url', in: 'body', required: true, type: 'string', description: 'Base URL of the consuming frontend.' },
-      { name: 'revalidation_endpoint', in: 'body', required: false, type: 'string', description: 'Relative revalidation endpoint path.' },
-      { name: 'revalidation_secret', in: 'body', required: false, type: 'string', description: 'Shared secret for outbound ISR calls. Stored server-side; not persisted in plaintext on page_schemas.' },
+        { name: 'revalidation_endpoint', in: 'body', required: true, type: 'string', description: 'Relative revalidation endpoint path.' },
+        { name: 'revalidation_secret', in: 'body', required: true, type: 'string', description: 'Shared secret for outbound ISR calls. Stored server-side; not persisted in plaintext on page_schemas.' },
       { name: 'slug_structure', in: 'body', required: false, type: 'string', description: 'Frontend URL pattern. Must include :slug and match any schema-level route constraints.' },
       { name: 'targets', in: 'body', required: false, type: 'array', description: 'Frontend collection-slot and optional detail-page targets. Collection targets use a server host_path plus semantic placement_key; fragments are not accepted.' },
     ],
@@ -162,7 +162,9 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
   "frontend_url": "https://frontend.example.com",
   "revalidation_endpoint": "/api/revalidate",
   "revalidation_secret": "shared-secret",
-  "slug_structure": "/docs/:slug"
+    "targets": [
+      { "target_key": "docs.detail", "kind": "detail-page", "host_path": "/docs/:slug", "is_primary": true }
+    ]
 }`,
     responseExamples: [
       {
@@ -215,8 +217,8 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     method: 'POST',
     path: '/api/schemas/:slug/revalidate',
     summary: 'Trigger frontend revalidation for one page slug',
-    description: 'Builds the canonical page path from the stored schema slug_structure and forwards a POST request to the registered frontend.',
-    auth: 'public',
+      description: 'Builds one canonical page path per enabled frontend target and forwards an authenticated POST request to the registered frontend for each target.',
+      auth: 'bearer-required',
     mountsAt: '/api/schemas',
     sourceFile: 'api/routes/schemas.ts',
     logging: 'agentLogger',
@@ -233,8 +235,9 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
         description: 'Outbound revalidation request result.',
         example: `{
   "success": true,
-  "status": 200,
-  "message": "Revalidation triggered successfully"
+    "results": [
+      { "target_key": "docs.detail", "path": "/docs/example-entry", "status": 200, "success": true }
+    ]
 }`,
       },
       {

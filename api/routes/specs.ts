@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { requireAppRole } from '../lib/auth';
+import { requireAppRole, requireAnyJwtRole } from '../lib/auth';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 import {
   bootstrapSchemaMainSpec,
   getDiscoverableSpecBySlug,
   getSchemaSpecBundle,
   listDiscoverableSpecs,
+  listRegistryMcpSpecs,
   type LlmSpecStatus,
 } from '../lib/specRegistry';
 import { getPublicWorkerUrl } from '../lib/systemConfig';
@@ -60,7 +61,75 @@ specs.get('/', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
-  return c.json({ specs: data ?? [] });
+  const globalQuery = supabase
+    .from('global_llm_specs')
+    .select('*')
+    .order('updated_at', { ascending: false });
+  const { data: globalRows, error: globalError } = await globalQuery;
+  if (globalError) {
+    return c.json({ error: globalError.message }, 500);
+  }
+
+  const globalSpecs = (globalRows ?? []).map((row) => ({
+    ...row,
+    global: true,
+    is_standard: true,
+    tenant_id: null,
+  }));
+  const globalBySlug = new Map(globalSpecs.map((spec) => [spec.slug, spec]));
+  const tenantSpecs = (data ?? []).filter((spec) => !globalBySlug.has(String(spec.slug)));
+  return c.json({ specs: [...tenantSpecs, ...globalSpecs] });
+});
+
+specs.post('/global', async (c) => {
+  const auth = await requireAnyJwtRole(c, ['super-admin']);
+  if (auth instanceof Response) return auth;
+
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body?.name || !body.slug || !body.definition) {
+    return c.json({ error: 'Missing required fields: name, slug, definition' }, 400);
+  }
+
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data, error } = await supabase
+    .from('global_llm_specs')
+    .insert({
+      slug: body.slug,
+      name: body.name,
+      description: body.description ?? null,
+      definition: body.definition,
+      llm_instructions: body.llm_instructions ?? null,
+      status: normalizeStatus(body.status),
+      is_public: true,
+      is_main_template: Boolean(body.is_main_template),
+      tags: normalizeStringArray(body.tags),
+      metadata: { ...(body.metadata as Record<string, unknown> ?? {}), standard_prompt: true },
+    })
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    return c.json({ error: error?.message || 'Failed to create global spec' }, 400);
+  }
+
+  return c.json({ spec: { ...data, global: true, is_standard: true } }, 201);
+});
+
+specs.delete('/global/:id', async (c) => {
+  const auth = await requireAnyJwtRole(c, ['super-admin']);
+  if (auth instanceof Response) return auth;
+
+  const supabase = await createSupabaseClient(c.env, auth.token);
+  const { error } = await supabase
+    .from('global_llm_specs')
+    .delete()
+    .eq('id', c.req.param('id'));
+
+  if (error) {
+    return c.json({ error: error.message }, 400);
+  }
+
+  return c.json({ success: true });
 });
 
 specs.get('/schema/:schemaSlug', async (c) => {
@@ -100,17 +169,31 @@ specs.get('/:slug', async (c) => {
   if (auth instanceof Response) return auth;
 
   const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data: globalBySlug } = await supabase
+    .from('global_llm_specs')
+    .select('*')
+    .eq('slug', slug)
+    .single();
+
+  if (globalBySlug) {
+    return c.json({ spec: { ...globalBySlug, global: true, is_standard: true } });
+  }
+
   const { data, error } = await supabase
     .from('llm_specs')
     .select('*')
     .eq('slug', slug)
     .single();
 
-  if (error || !data) {
+  if (data) {
+    return c.json({ spec: data });
+  }
+
+  if (error) {
     return c.json({ error: `Spec "${slug}" not found` }, 404);
   }
 
-  return c.json({ spec: data });
+  return c.json({ error: `Spec "${slug}" not found` }, 404);
 });
 
 specs.post('/', async (c) => {
@@ -142,6 +225,30 @@ specs.post('/', async (c) => {
   }
 
   const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data: globalSpec } = await supabase
+    .from('global_llm_specs')
+    .select('id')
+    .eq('id', c.req.param('id'))
+    .maybeSingle();
+
+  if (globalSpec) {
+    const superAdmin = await requireAnyJwtRole(c, ['super-admin']);
+    if (superAdmin instanceof Response) return superAdmin;
+
+    const { data, error } = await supabase
+      .from('global_llm_specs')
+      .update(updateData)
+      .eq('id', c.req.param('id'))
+      .select('*')
+      .single();
+
+    if (error || !data) {
+      return c.json({ error: error?.message || 'Failed to update global spec' }, 400);
+    }
+
+    return c.json({ spec: { ...data, global: true, is_standard: true } });
+  }
+
   const { data, error } = await supabase
     .from('llm_specs')
     .insert({

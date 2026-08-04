@@ -17,6 +17,7 @@ export interface LlmSpecRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  global?: boolean;
 }
 
 export interface PageSchemaSpecAttachmentRow {
@@ -57,6 +58,7 @@ export interface DiscoverableSpecSummary extends SchemaSpecSummary {
   } | null;
   discovery_scope: 'mcp-registry' | 'schema';
   access_scope: 'public' | 'closed';
+  global?: boolean;
 }
 
 export interface SchemaSpecBundle {
@@ -114,6 +116,7 @@ function mapSpecRow(row: Record<string, unknown>): LlmSpecRow {
     created_by: typeof row.created_by === 'string' ? row.created_by : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
+    global: row.global === true,
   };
 }
 
@@ -368,9 +371,30 @@ export async function listRegistryMcpSpecs(
     throw new Error(error.message);
   }
 
-  return ((data ?? []) as Record<string, unknown>[])
-    .map((row) => mapSpecRow(row))
-    .map((spec) => ({
+  let globalQuery = client
+    .from('global_llm_specs')
+    .select('*')
+    .eq('status', 'published')
+    .order('updated_at', { ascending: false })
+    .order('name', { ascending: true });
+
+  if (!options?.includeClosed) {
+    globalQuery = globalQuery.eq('is_public', true);
+  }
+
+  const { data: globalData, error: globalError } = await globalQuery;
+  if (globalError && !globalError.message.includes('does not exist')) {
+    throw new Error(globalError.message);
+  }
+
+  const rows = [
+    ...((data ?? []) as Record<string, unknown>[]).map((row) => ({ row, global: false })),
+    ...((globalData ?? []) as Record<string, unknown>[]).map((row) => ({ row, global: true })),
+  ];
+
+  return rows
+    .map(({ row, global }) => ({ spec: mapSpecRow(row), global }))
+    .map(({ spec, global }) => ({
       id: spec.id,
       slug: spec.slug,
       name: spec.name,
@@ -388,6 +412,7 @@ export async function listRegistryMcpSpecs(
       discovery_scope: 'mcp-registry',
       access_scope: spec.is_public ? 'public' : 'closed',
       schema: null,
+      global,
     }) satisfies DiscoverableSpecSummary);
 }
 

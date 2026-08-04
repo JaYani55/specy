@@ -1003,6 +1003,9 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     'plugins_config_schema.sql',
     'mentorbooking_products.sql',
     'llm_specs.sql',
+    '202608030002_frontend_prompt_specs.sql',
+    '202608030003_global_llm_specs.sql',
+    '202608030004_global_llm_specs_super_admin_policy.sql',
     'page_schema_specs.sql',
     'llm_specs_default_specy_schema_docs.sql',
     'pages.sql',
@@ -1028,6 +1031,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202608020002_schema_frontend_target_rpc.sql',
     '202608020003_schema_frontend_target_precedence.sql',
     '202608020004_schema_content_scope.sql',
+    '202608030001_page_publication_timestamp.sql',
     'Auth/Access_hook.sql',
     'Auth/Access_hook_oauth_claims.sql',
     // storage.sql is generated from storage.default.sql at runtime using the

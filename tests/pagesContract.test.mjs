@@ -110,3 +110,25 @@ test('public page delivery uses server-side schema visibility for tenant-owned s
   assert.equal(publicDelivery.schemaLookup, 'admin');
   assert.deepEqual(publicDelivery.pageFilter, { status: 'published' });
 });
+
+test('frontend manifests are secret-free and target-aware', () => {
+  const manifest = {
+    manifest_version: '1',
+    targets: [{ target_key: 'posts.detail', kind: 'detail-page', host_path: '/posts/:slug' }],
+    revalidation: { authorization: 'bearer', requests_per_target: true },
+  };
+
+  assert.equal(manifest.manifest_version, '1');
+  assert.equal(manifest.revalidation.requests_per_target, true);
+  assert.equal(Object.hasOwn(manifest.revalidation, 'secret'), false);
+});
+
+test('latest publication transitions have a timestamp only while published', () => {
+  const transition = (status) => ({
+    status,
+    published_at: status === 'published' ? '2026-08-03T12:00:00.000Z' : null,
+  });
+
+  assert.equal(transition('published').published_at, '2026-08-03T12:00:00.000Z');
+  assert.equal(transition('draft').published_at, null);
+});

@@ -16,6 +16,8 @@ export interface SpecRecord {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  is_standard?: boolean;
+  global?: boolean;
 }
 
 export interface SchemaSpecSummary {

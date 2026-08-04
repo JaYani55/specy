@@ -24,6 +24,7 @@ import {
 } from '../lib/schemaRegistration';
 import { getSchemaSpecBundle } from '../lib/specRegistry';
 import { getPublicWorkerUrl } from '../lib/systemConfig';
+import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
@@ -63,6 +64,7 @@ interface PublishedSchemaPageRow {
   content: Record<string, unknown>;
   domain_url: string | null;
   updated_at: string;
+  published_at: string | null;
 }
 
 function buildSpecSections(
@@ -776,6 +778,26 @@ schemas.get('/:slug/spec', async (c) => {
   });
 });
 
+schemas.get('/:slug/manifest', async (c) => {
+  const slug = c.req.param('slug');
+  const supabase = await createSupabaseAdminClient(c.env);
+  const { data: schema, error } = await supabase
+    .from('page_schemas')
+    .select('id, slug, name, registration_status, content_scope, frontend_url, revalidation_endpoint, slug_structure, integration_requirements')
+    .eq('slug', slug)
+    .single();
+
+  if (error || !schema) {
+    return c.json({ error: `Schema "${slug}" not found` }, 404);
+  }
+  if (schema.registration_status !== 'registered') {
+    return c.json({ error: `Schema "${slug}" is not publicly registered` }, 404);
+  }
+
+  const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
+  return c.json(await buildFrontendIntegrationManifest(c.env, schema, baseUrl));
+});
+
 schemas.get('/:slug/pages', async (c) => {
   const slug = c.req.param('slug');
   // Public delivery must work for tenant-owned schemas without requiring the
@@ -799,7 +821,7 @@ schemas.get('/:slug/pages', async (c) => {
 
   const { data, error } = await supabase
     .from('pages')
-    .select('id, slug, name, status, content, domain_url, updated_at')
+    .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
     .eq('status', 'published')
     .order('updated_at', { ascending: false });
@@ -841,7 +863,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
 
   const { data: page, error } = await supabase
     .from('pages')
-    .select('id, slug, name, status, content, domain_url, updated_at')
+    .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
     .eq('slug', pageSlug)
     .eq('status', 'published')
@@ -1175,12 +1197,6 @@ schemas.post('/:slug/revalidate', async (c) => {
     kind: target.kind,
     path: buildTargetRevalidationPath(target, body.page_slug),
   }));
-  const routePath = routePaths[0]?.path || '/';
-
-  // Build revalidation URL
-  const revalidateUrl = new URL(resolvedSchema.revalidation_endpoint, resolvedSchema.frontend_url);
-  revalidateUrl.searchParams.set('path', routePath);
-  revalidateUrl.searchParams.set('slug', body.page_slug);
 
   let secretValue: string | null = null;
   if (resolvedSchema.revalidation_secret_name) {
@@ -1188,7 +1204,6 @@ schemas.post('/:slug/revalidate', async (c) => {
   } else if (resolvedSchema.revalidation_secret) {
     // Legacy compatibility for schemas that still store a plaintext secret.
     secretValue = resolvedSchema.revalidation_secret;
-    revalidateUrl.searchParams.set('secret', resolvedSchema.revalidation_secret);
   }
 
   if (!secretValue) {
@@ -1221,37 +1236,46 @@ schemas.post('/:slug/revalidate', async (c) => {
   };
 
   try {
-    let response = await fetch(revalidateUrl.toString(), {
-      method: 'POST',
-      headers: buildHeaders(secretValue),
-      signal: AbortSignal.timeout(10000),
-    });
+    const results = await Promise.all(routePaths.map(async (route) => {
+      const revalidateUrl = new URL(resolvedSchema.revalidation_endpoint as string, resolvedSchema.frontend_url as string);
+      revalidateUrl.searchParams.set('path', route.path);
+      revalidateUrl.searchParams.set('slug', body.page_slug);
 
-    let upstreamMessage = await parseUpstreamBody(response);
-
-    if (!response.ok && response.status === 401 && secretValue && !revalidateUrl.searchParams.has('secret')) {
-      const legacyUrl = new URL(revalidateUrl.toString());
-      legacyUrl.searchParams.set('secret', secretValue);
-
-      response = await fetch(legacyUrl.toString(), {
+      const request = async (url: URL) => fetch(url.toString(), {
         method: 'POST',
         headers: buildHeaders(secretValue),
         signal: AbortSignal.timeout(10000),
       });
 
-      upstreamMessage = await parseUpstreamBody(response);
-    }
+      let response = await request(revalidateUrl);
+      let upstreamMessage = await parseUpstreamBody(response);
 
+      if (!response.ok && response.status === 401 && !revalidateUrl.searchParams.has('secret')) {
+        const legacyUrl = new URL(revalidateUrl.toString());
+        legacyUrl.searchParams.set('secret', secretValue as string);
+        response = await request(legacyUrl);
+        upstreamMessage = await parseUpstreamBody(response);
+      }
+
+      return {
+        target_key: route.target_key,
+        path: route.path,
+        status: response.status,
+        success: response.ok,
+        endpoint: `${revalidateUrl.origin}${revalidateUrl.pathname}`,
+        message: response.ok
+          ? 'Revalidation triggered successfully'
+          : `Revalidation request failed${upstreamMessage ? `: ${upstreamMessage}` : ''}`,
+      };
+    }));
+
+    const success = results.every((result) => result.success);
     return c.json({
-      success: response.ok,
-      status: response.status,
-      path: routePath,
+      success,
       slug: body.page_slug,
       targets: routePaths,
-      endpoint: `${revalidateUrl.origin}${revalidateUrl.pathname}`,
-      message: response.ok
-        ? 'Revalidation triggered successfully'
-        : `Revalidation request failed${upstreamMessage ? `: ${upstreamMessage}` : ''}`,
+      results,
+      message: success ? 'Revalidation triggered successfully' : 'One or more target revalidation requests failed',
     });
   } catch (err) {
     return c.json({

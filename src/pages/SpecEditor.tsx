@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Bot, CheckCircle2, FileCode2, Lightbulb, Loader2, Save, Sparkles, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
-import { createSpec, getSpec, updateSpec } from '@/services/specService';
+import { usePermissions } from '@/hooks/usePermissions';
+import { createGlobalSpec, createSpec, getSpec, updateSpec } from '@/services/specService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import type { SaveSpecInput, SpecRecord } from '@/types/specs';
 
@@ -163,8 +164,11 @@ function validateDefinition(definitionText: string): DefinitionValidationResult 
 const SpecEditor = () => {
   const { specSlug } = useParams<{ specSlug: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { language } = useTheme();
+  const { hasRole } = usePermissions();
   const isEditing = Boolean(specSlug && specSlug !== 'new');
+  const [isGlobal, setIsGlobal] = useState(() => new URLSearchParams(location.search).get('global') === '1');
 
   const [isLoading, setIsLoading] = useState(isEditing);
   const [isSaving, setIsSaving] = useState(false);
@@ -211,6 +215,7 @@ const SpecEditor = () => {
       try {
         const spec = await getSpec(specSlug);
         setExistingSpec(spec);
+        setIsGlobal(Boolean(spec.global || spec.is_standard));
         setName(spec.name);
         setSlug(spec.slug);
         setSlugEdited(true);
@@ -273,7 +278,7 @@ const SpecEditor = () => {
       return;
     }
 
-    if (tenantOptions.length > 0 && !tenantId) {
+    if (!isGlobal && tenantOptions.length > 0 && !tenantId) {
       toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
       return;
     }
@@ -289,14 +294,19 @@ const SpecEditor = () => {
       is_main_template: isMainTemplate,
       tags: tagsText.split(',').map((entry) => entry.trim()).filter(Boolean),
       metadata: existingSpec?.metadata ?? {},
-      tenant_id: tenantId || null,
+      tenant_id: isGlobal ? null : (tenantId || null),
     };
 
     try {
       setIsSaving(true);
+      if (isGlobal && !hasRole('super-admin')) {
+        throw new Error(language === 'en' ? 'Only super-admins can edit global standard specs.' : 'Nur Super-Admins dürfen globale Standard-Specs bearbeiten.');
+      }
       const savedSpec = existingSpec
         ? await updateSpec(existingSpec.id, payload)
-        : await createSpec(payload);
+        : isGlobal
+          ? await createGlobalSpec(payload)
+          : await createSpec(payload);
       setStatus(savedSpec.status);
       toast.success(
         targetStatus === 'published'
@@ -378,7 +388,19 @@ const SpecEditor = () => {
               <Textarea id="spec-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
             </div>
 
-            <div className="space-y-2">
+            {isGlobal && (
+              <Alert>
+                <Bot className="h-4 w-4" />
+                <AlertTitle>{language === 'en' ? 'Global standard spec' : 'Globale Standard-Spec'}</AlertTitle>
+                <AlertDescription>
+                  {language === 'en'
+                    ? 'This spec is shared across all tenants. Only super-admins can create or edit it.'
+                    : 'Diese Spec wird tenantübergreifend geteilt. Nur Super-Admins dürfen sie erstellen oder bearbeiten.'}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!isGlobal && <div className="space-y-2">
               <Label>{language === 'en' ? 'Workspace' : 'Workspace'}</Label>
               <Select value={tenantId} onValueChange={setTenantId} disabled={tenantOptionsLoading || tenantOptions.length === 0}>
                 <SelectTrigger>
@@ -397,7 +419,7 @@ const SpecEditor = () => {
                   ? 'This controls which tenant can discover, attach, and manage the MCP entry.'
                   : 'Dies steuert, welcher Tenant den MCP-Eintrag entdecken, anhängen und verwalten kann.'}
               </p>
-            </div>
+            </div>}
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2 md:col-span-2">

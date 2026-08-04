@@ -75,6 +75,10 @@ const Breadcrumb: React.FC = () => {
       parent: '/forms'
     },
     '/mcp': { label: { en: 'MCP', de: 'MCP' } },
+    '/mcp/specs': {
+      label: { en: 'Prompt Specs', de: 'Prompt-Specs' },
+      parent: '/mcp'
+    },
     '/mcp/new': {
       label: { en: 'New Spec', de: 'Neue Spec' },
       parent: '/mcp'

@@ -500,10 +500,9 @@ export const updatePageStatus = async (
   pageId: string,
   status: 'draft' | 'published' | 'archived'
 ): Promise<void> => {
+  // The database publication trigger owns published_at semantics so MCP,
+  // dashboard, and other API writers cannot diverge.
   const updateData: Record<string, unknown> = { status };
-  if (status === 'published') {
-    updateData.published_at = new Date().toISOString();
-  }
 
   const { error } = await supabase
     .from('pages')

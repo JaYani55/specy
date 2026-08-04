@@ -106,6 +106,22 @@ export const deleteSpec = async (id: string): Promise<void> => {
   }
 };
 
+export const deleteGlobalSpec = async (id: string): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/specs/global/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: await buildHeaders(),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to delete global spec' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to delete global spec');
+  }
+};
+
 export const getSchemaSpecBundle = async (schemaSlug: string): Promise<SchemaSpecBundle> => {
   if (!API_URL) {
     throw new Error('API URL not configured');
@@ -143,4 +159,17 @@ export const updateSchemaSpecAttachments = async (
   }
 
   return response.json();
+};
+
+export const createGlobalSpec = async (input: SaveSpecInput): Promise<SpecRecord> => {
+  const response = await fetch(`${API_URL}/api/specs/global`, {
+    method: 'POST',
+    headers: await buildHeaders(),
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Failed to create global spec' })) as { error?: string };
+    throw new Error(body.error ?? 'Failed to create global spec');
+  }
+  return (await response.json() as { spec: SpecRecord }).spec;
 };

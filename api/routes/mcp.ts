@@ -28,6 +28,7 @@ import { getPublicUrlConfig } from '../lib/systemConfig';
 import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../lib/schemaRegistration';
 import { validateSchemaContentContract, type SchemaContentContractInput } from '../lib/schemaRegistration';
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
+import { serializeMcpError } from '../lib/apiError';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -780,7 +781,7 @@ async function buildNewSchemaHandler(
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            error: 'Authentication required. create_schema only works with a valid OAuth 2.1 bearer token.',
+            ...JSON.parse(serializeMcpError('AUTHENTICATION_REQUIRED', 'Authentication required. create_schema only works with a valid OAuth 2.1 bearer token.')),
             how_to_authenticate: {
               mode: 'MCP client-managed OAuth 2.1',
               note: 'Do not call authorize or ask the user to copy a code. The MCP client must handle the 401 challenge, open the browser, complete PKCE and consent, store the token, reconnect, and retry create_schema.',
@@ -797,7 +798,7 @@ async function buildNewSchemaHandler(
         page_target: integration_requirements?.page_target as SchemaContentContractInput['page_target'] ?? null,
       });
       if (!contentContract.ok) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: contentContract.error }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: serializeMcpError('SCHEMA_REGISTRATION_STATE_INVALID', contentContract.error) }] };
       }
 
       const result = await createPendingSchema(env, authToken, {
@@ -816,7 +817,7 @@ async function buildNewSchemaHandler(
           type: 'text' as const,
           text: JSON.stringify({
             success: true,
-            message: 'Pending schema created. The user must now review it in the CMS and click Register to generate a registration code.',
+            message: 'Pending schema created. Start registration through the authenticated MCP workflow before calling register_frontend.',
             schema: {
               id: result.schema.id,
               slug: result.schema.slug,
@@ -832,7 +833,7 @@ async function buildNewSchemaHandler(
             },
             main_spec: result.mainSpec,
             created_main_spec: result.createdMainSpec,
-            next_step: 'Have the user start registration in the frontend to generate a registration code before calling register_frontend.',
+            next_step: 'Call start_schema_registration to generate a registration code before calling register_frontend.',
           }, null, 2),
         }],
       };
