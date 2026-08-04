@@ -134,6 +134,66 @@ const buildInitialData = (fields: SchemaFieldDefinition[]): Record<string, unkno
   return defaults;
 };
 
+/** Normalize untrusted JSON loaded from pages.content before rendering editors. */
+const normalizeFieldValue = (field: SchemaFieldDefinition, value: unknown): unknown => {
+  if (field.type === 'media') {
+    if (typeof value === 'string') return value;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const media = value as Record<string, unknown>;
+      for (const key of ['src', 'url', 'href']) {
+        if (typeof media[key] === 'string') return media[key];
+      }
+    }
+    return '';
+  }
+  if (field.type === 'string') {
+    return typeof value === 'string' ? value : '';
+  }
+  if (field.type === 'boolean') return typeof value === 'boolean' ? value : false;
+  if (field.type === 'number') return typeof value === 'number' ? value : 0;
+  if (field.type === 'ContentBlock[]') {
+    if (!Array.isArray(value)) return [];
+    return value.filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === 'object')
+      .map((block) => {
+        const type = typeof block.type === 'string' ? block.type : 'text';
+        const normalized: Record<string, unknown> = { ...block, type };
+        for (const key of ['content', 'text', 'src', 'alt', 'caption', 'author', 'source', 'form_id', 'form_slug', 'form_name', 'share_slug', 'objectKey']) {
+          if (typeof normalized[key] === 'string') continue;
+          if (key === 'src' && normalized[key] && typeof normalized[key] === 'object' && !Array.isArray(normalized[key])) {
+            const source = normalized[key] as Record<string, unknown>;
+            normalized[key] = typeof source.src === 'string'
+              ? source.src
+              : typeof source.url === 'string' ? source.url : '';
+          } else if (key in normalized) {
+            normalized[key] = '';
+          }
+        }
+        if (type === 'list') {
+          normalized.items = Array.isArray(normalized.items)
+            ? normalized.items.filter((item): item is string => typeof item === 'string')
+            : [];
+        }
+        return normalized;
+      });
+  }
+  if (field.type === 'CodeBlock[]' || field.type === 'array') {
+    if (!Array.isArray(value)) return [];
+    return field.items ? value.map((item) => normalizeFieldValue(field.items!, item)) : value;
+  }
+  if (field.type === 'object') {
+    const source = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown> : {};
+    return Object.fromEntries((field.properties || []).map((property) => [
+      property.name,
+      normalizeFieldValue(property, source[property.name]),
+    ]));
+  }
+  return value;
+};
+
+const normalizeFormData = (fields: SchemaFieldDefinition[], data: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(fields.map((field) => [field.name, normalizeFieldValue(field, data[field.name])]));
+
 // ─── ContentBlocks Editor ─────────────────────────────────────────────────────
 
 interface ContentBlocksEditorProps {
@@ -709,7 +769,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   const [pageSlug, setPageSlug]           = useState(() => (initialSlug || (initialName ? generateSlug(initialName) : '')));
   const [slugEdited, setSlugEdited]       = useState(false);
   const [formData, setFormData]           = useState<Record<string, unknown>>(() =>
-    initialData ? { ...initialData } : buildInitialData(fields)
+    initialData ? { ...buildInitialData(fields), ...normalizeFormData(fields, initialData) } : buildInitialData(fields)
   );
 
   // Track which optional fields are active.
@@ -775,12 +835,13 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
 
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
-    setFormData((prev) => ({ ...prev, ...data }));
+    const normalizedData = normalizeFormData(fields, data);
+    setFormData((prev) => ({ ...prev, ...normalizedData }));
     // Activate any optional field that received non-empty data
     const newActive = new Set(activeOptional);
     for (const f of optionalFields) {
-      if (!(f.name in data)) continue;
-      const v = data[f.name];
+      if (!(f.name in normalizedData)) continue;
+      const v = normalizedData[f.name];
       const isEmpty =
         v === undefined || v === null || v === '' || v === false || v === 0 ||
         (Array.isArray(v) && v.length === 0) ||
@@ -788,7 +849,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
       if (!isEmpty) newActive.add(f.name);
     }
     setActiveOptional(newActive);
-  }, [activeOptional, optionalFields]);
+  }, [activeOptional, fields, optionalFields]);
 
   // ── Save handler
   const handleSave = async () => {

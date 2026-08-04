@@ -57,9 +57,8 @@ const getLinkHref = (marks?: TiptapMark[]): string | null => {
   return href || null;
 };
 
-const createLinkAttributes = (href: string): Record<string, string> => ({
+const createLinkAttributes = (href: string): { href: string } => ({
   href,
-  title: href,
 });
 
 const applyMarks = (text: string, marks?: TiptapMark[]): string => {
@@ -394,8 +393,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   placeholder = 'Text eingeben...',
   className = '',
 }) => {
+  const safeContent = typeof content === 'string' ? content : '';
   const isUpdatingFromPropRef = useRef(false);
-  const lastContentRef = useRef(content);
+  const lastContentRef = useRef(safeContent);
   const savedSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
@@ -452,7 +452,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         },
       }),
     ],
-    content: parseMarkdownToDocument(content || ''),
+    content: parseMarkdownToDocument(safeContent),
     onUpdate: ({ editor }) => {
       // Prevent update loops - don't trigger onChange if we're updating from props
       if (isUpdatingFromPropRef.current) {
@@ -479,26 +479,26 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   // Update editor content when prop changes
   useEffect(() => {
-    if (editor && content !== undefined) {
+    if (editor) {
       // Skip update if content hasn't actually changed (avoids loops)
-      if (content === lastContentRef.current) {
+      if (safeContent === lastContentRef.current) {
         return;
       }
 
-      const nextDoc = parseMarkdownToDocument(content);
+      const nextDoc = parseMarkdownToDocument(safeContent);
       const currentMarkdown = serializeDocumentToMarkdown(editor.getJSON() as TiptapNode);
 
-      if (currentMarkdown !== content) {
+      if (currentMarkdown !== safeContent) {
         // Set flag to prevent onUpdate from firing
         isUpdatingFromPropRef.current = true;
         editor.commands.setContent(nextDoc, { emitUpdate: false });
         // Reset the flag immediately since emitUpdate is false
         isUpdatingFromPropRef.current = false;
         // Update last content reference
-        lastContentRef.current = content;
+        lastContentRef.current = safeContent;
       }
     }
-  }, [content, editor]);
+  }, [safeContent, editor]);
 
   if (!editor) {
     return null;

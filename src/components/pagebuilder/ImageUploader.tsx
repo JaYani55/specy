@@ -120,12 +120,16 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   previewVariant = 'banner',
   folder,
 }) => {
+  // Persisted schema values are JSON and may contain legacy media metadata
+  // objects. Keep the component boundary string-only so preview helpers and
+  // URL resolvers cannot receive a value on which string methods are unsafe.
+  const safeValue = typeof value === 'string' ? value : '';
   const { roles } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [selectedImage, setSelectedImage] = useState<string | null>(value || null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(safeValue || null);
   const [currentPath, setCurrentPath] = useState<string>('');
   const [pathHistory, setPathHistory] = useState<string[]>([]);
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false);
@@ -136,8 +140,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   // Multi-source support
   const [availableSources, setAvailableSources] = useState<MediaSourceInfo[]>([]);
   const [activeSourceId, setActiveSourceId] = useState<string>('');
-  const resolvedValue = useResolvedMediaUrl(value);
-  const resolvedAvatarValue = useResolvedMediaUrl(normalizeProfileImageUrl(value, 160) || value);
+  const resolvedValue = useResolvedMediaUrl(safeValue);
+  const resolvedAvatarValue = useResolvedMediaUrl(normalizeProfileImageUrl(safeValue, 160) || safeValue);
   const resolvedSelectedImage = useResolvedMediaUrl(selectedImage);
 
   const getErrorMessage = (error: unknown) =>
@@ -373,7 +377,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     if (open) {
       // Sync internal selection with the current committed value
       void (async () => {
-        const normalizedValue = await resolveMediaUrl(value, roles);
+        const normalizedValue = await resolveMediaUrl(safeValue, roles);
         setSelectedImage(normalizedValue || null);
       })();
       const initialPath = folder?.replace(/^\/+|\/+$/g, '') || '';
@@ -391,7 +395,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   return (
     <div className="space-y-2">
       {/* Preview thumbnail shown when a value is committed */}
-      {value && previewVariant === 'avatar' && (
+      {safeValue && previewVariant === 'avatar' && (
         <div className="flex items-center gap-3">
           <div className="relative group shrink-0">
             <AuthenticatedImage
@@ -409,10 +413,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
               <X className="h-3 w-3" />
             </button>
           </div>
-          <p className="text-xs text-muted-foreground break-all line-clamp-2">{value.split('/').pop()}</p>
+          <p className="text-xs text-muted-foreground break-all line-clamp-2">{safeValue.split('/').pop()}</p>
         </div>
       )}
-      {value && previewVariant === 'banner' && (
+      {safeValue && previewVariant === 'banner' && (
         <div className="relative group w-full rounded-lg overflow-hidden border bg-muted/30">
           <AuthenticatedImage
             src={resolvedValue}
@@ -437,9 +441,22 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       <DialogTrigger asChild>
         <Button type="button" variant="outline" className="w-full">
           <ImageIcon className="h-4 w-4 mr-2" />
-          {value ? 'Bild ändern' : 'Bild auswählen'}
+          {safeValue ? 'Bild ändern' : 'Bild auswählen'}
         </Button>
       </DialogTrigger>
+      <div className="space-y-1.5">
+        <Label htmlFor="image-url">Bild-URL</Label>
+        <Input
+          id="image-url"
+          value={safeValue}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="https://example.com/bild.jpg"
+          type="url"
+        />
+        <p className="text-xs text-muted-foreground">
+          Sie können eine externe Bild-URL eintragen oder oben ein Bild aus der Mediathek auswählen.
+        </p>
+      </div>
       <DialogContent className="max-w-4xl max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>Bild auswählen oder hochladen</DialogTitle>
