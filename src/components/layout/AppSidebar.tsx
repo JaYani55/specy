@@ -1,10 +1,11 @@
-import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown } from "lucide-react"
+import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { usePermissions } from "@/hooks/usePermissions"
 import { useEnabledWebapps } from "@/hooks/useEnabledWebapps"
+import { useActiveWorkspace } from "@/contexts/ActiveWorkspaceContext"
 import { getPluginSidebarTree } from "@/plugins/loader"
 import Logo from "@/components/shared/Logo"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -30,6 +31,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
+  DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu"
 
 export function AppSidebar() {
@@ -37,6 +40,7 @@ export function AppSidebar() {
   const { theme, language, toggleTheme } = useTheme()
   const { canAccessVerwaltung, canManagePlugins } = usePermissions()
   const { webapps } = useEnabledWebapps()
+  const { options: workspaceOptions, activeTenant, activeTenantId, setActiveTenantId } = useActiveWorkspace()
   const location = useLocation()
   const navigate = useNavigate()
   const [openPluginKey, setOpenPluginKey] = useState<string | null>(null)
@@ -345,7 +349,7 @@ export function AppSidebar() {
                   <User className="size-8" />
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-semibold">{user?.email}</span>
-                    <span className="truncate text-xs text-muted-foreground">{language === 'en' ? 'User' : 'Benutzer'}</span>
+                    <span className="truncate text-xs text-muted-foreground">{activeTenant?.organization_name ?? activeTenant?.name ?? (language === 'en' ? 'User' : 'Benutzer')}</span>
                   </div>
                   <ChevronUp className="ml-auto" />
                 </SidebarMenuButton>
@@ -354,6 +358,34 @@ export function AppSidebar() {
                 side="top"
                 className="w-[--radix-popper-anchor-width]"
               >
+              {workspaceOptions.length > 0 && (
+                <>
+                  <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground px-2 py-1.5">
+                    {language === 'en' ? 'Workspace' : 'Arbeitsbereich'}
+                  </DropdownMenuLabel>
+                  {workspaceOptions.map((option) => (
+                    <DropdownMenuCheckboxItem
+                      key={option.id}
+                      checked={option.id === activeTenantId}
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={() => setActiveTenantId(option.id)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-muted-foreground" />
+                        {option.organization_name ?? option.name}
+                      </span>
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/organization" className="flex items-center gap-2 w-full">
+                      <Building2 className="h-4 w-4" />
+                      <span>{language === 'en' ? 'Organization' : 'Organisation'}</span>
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem asChild>
                   <Link to="/settings" className="flex items-center gap-2 w-full">
                       <SlidersHorizontal className="h-4 w-4" />

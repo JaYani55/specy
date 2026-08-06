@@ -16,6 +16,7 @@ import {
 import { getSchemas, groupSchemasByTLD, checkDomainHealthDirect, startSchemaRegistration, unhookSchema } from '@/services/pageService';
 import type { PageSchema, TLDGroup } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { toast } from 'sonner';
 import AgentLogs from '@/components/pagebuilder/AgentLogs';
 import { API_URL } from '@/lib/apiUrl';
@@ -890,6 +891,7 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
 const Pages: React.FC = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [schemas, setSchemas] = useState<PageSchema[]>([]);
   const [tldGroups, setTldGroups] = useState<TLDGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -899,7 +901,7 @@ const Pages: React.FC = () => {
   const fetchAndGroup = useCallback(async () => {
     try {
       setIsLoading(true);
-      const data = await getSchemas();
+      const data = await getSchemas(activeTenantId);
       setSchemas(data);
 
       // Tenant name resolution is best-effort — don't let it block schema rendering
@@ -937,7 +939,7 @@ const Pages: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     fetchAndGroup();

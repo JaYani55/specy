@@ -1032,6 +1032,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202608020003_schema_frontend_target_precedence.sql',
     '202608020004_schema_content_scope.sql',
     '202608030001_page_publication_timestamp.sql',
+    '202608050001_tenant_organization_alias.sql',
     'Auth/Access_hook.sql',
     'Auth/Access_hook_oauth_claims.sql',
     // storage.sql is generated from storage.default.sql at runtime using the

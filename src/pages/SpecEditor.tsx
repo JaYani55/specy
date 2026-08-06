@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { createGlobalSpec, createSpec, getSpec, updateSpec } from '@/services/specService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
@@ -187,6 +188,7 @@ const SpecEditor = () => {
   const [tenantId, setTenantId] = useState('');
   const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
+  const { activeTenantId } = useActiveWorkspace();
 
   useEffect(() => {
     const loadTenantOptions = async () => {
@@ -194,7 +196,7 @@ const SpecEditor = () => {
         setTenantOptionsLoading(true);
         const options = await getTenantOptions();
         setTenantOptions(options);
-        setTenantId((current) => pickInitialTenantId(options, current));
+        setTenantId((current) => pickInitialTenantId(options, current || activeTenantId));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
       } finally {
@@ -203,7 +205,7 @@ const SpecEditor = () => {
     };
 
     void loadTenantOptions();
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     if (!isEditing || !specSlug) {

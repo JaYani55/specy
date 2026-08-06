@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useNavigate } from "react-router-dom";
 import { Users } from 'lucide-react';
@@ -27,6 +28,7 @@ interface Mentor {
 
 const VerwaltungAllMentors = () => {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const navigate = useNavigate();
   
@@ -64,7 +66,7 @@ const VerwaltungAllMentors = () => {
       try {
         setIsLoading(true);
 
-        const staffRecords = await fetchStaffDirectory();
+        const staffRecords = await fetchStaffDirectory(activeTenantId);
         const processedMentors: Mentor[] = staffRecords.map((staff) => ({
           id: staff.id,
           name: staff.displayName || 'No Username given',
@@ -84,7 +86,7 @@ const VerwaltungAllMentors = () => {
     };
 
     loadMentors();
-  }, []);
+  }, [activeTenantId]);
 
   // Load available traits
   useEffect(() => {

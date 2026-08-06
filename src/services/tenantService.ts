@@ -3,7 +3,9 @@ import { supabase } from '@/lib/supabase';
 export interface TenantOption {
   id: string;
   name: string;
+  organization_name: string | null;
   slug: string;
+  organization_slug: string | null;
   is_tenant_admin: boolean;
   is_default: boolean;
 }
@@ -16,7 +18,9 @@ interface TenantMembershipRow {
 interface TenantRow {
   id: string;
   name: string;
+  organization_name: string | null;
   slug: string;
+  organization_slug: string | null;
   default_for_user_id: string | null;
   created_by?: string | null;
   created_at?: string;
@@ -60,14 +64,34 @@ const getCurrentUserId = async (): Promise<string | null> => {
 export const getVisibleTenants = async (): Promise<TenantRecord[]> => {
   const { data, error } = await supabase
     .from('tenants')
-    .select('id, name, slug, default_for_user_id, created_by, created_at, updated_at')
+    .select('id, name, slug, organization_slug, default_for_user_id, created_by, created_at, updated_at')
     .order('name', { ascending: true });
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return (data ?? []) as TenantRecord[];
+  const tenants = (data ?? []) as TenantRecord[];
+  let organizations: Array<{ tenant_id: string; name: string }> = [];
+  try {
+    const { data: organizationRows, error: organizationsError } = await supabase
+      .schema('pluradash')
+      .from('organizations')
+      .select('tenant_id, name');
+    if (!organizationsError) {
+      organizations = (organizationRows ?? []) as Array<{ tenant_id: string; name: string }>;
+    }
+  } catch {
+    // Keep legacy tenant names usable before or without the PluraDash schema.
+  }
+  const organizationNames = new Map(
+    organizations.map((organization) => [organization.tenant_id, organization.name]),
+  );
+
+  return tenants.map((tenant) => ({
+    ...tenant,
+    organization_name: organizationNames.get(tenant.id) ?? null,
+  }));
 };
 
 export const getVisibleTenantNameMap = async (
@@ -80,7 +104,7 @@ export const getVisibleTenantNameMap = async (
 
   return visibleTenants.reduce<Record<string, string>>((accumulator, tenant) => {
     if (!allowedIds || allowedIds.has(tenant.id)) {
-      accumulator[tenant.id] = tenant.name;
+      accumulator[tenant.id] = tenant.organization_name ?? tenant.name;
     }
     return accumulator;
   }, {});
@@ -88,15 +112,19 @@ export const getVisibleTenantNameMap = async (
 
 export const getVisibleTenantInfoMap = async (
   tenantIds?: Array<string | null | undefined>,
-): Promise<Record<string, { name: string; slug: string }>> => {
+): Promise<Record<string, { name: string; slug: string; organization_slug: string | null }>> => {
   const visibleTenants = await getVisibleTenants();
   const allowedIds = tenantIds
     ? new Set(tenantIds.filter((tenantId): tenantId is string => Boolean(tenantId)))
     : null;
 
-  return visibleTenants.reduce<Record<string, { name: string; slug: string }>>((accumulator, tenant) => {
+  return visibleTenants.reduce<Record<string, { name: string; slug: string; organization_slug: string | null }>>((accumulator, tenant) => {
     if (!allowedIds || allowedIds.has(tenant.id)) {
-      accumulator[tenant.id] = { name: tenant.name, slug: tenant.slug };
+      accumulator[tenant.id] = {
+        name: tenant.organization_name ?? tenant.name,
+        slug: tenant.slug,
+        organization_slug: tenant.organization_slug,
+      };
     }
     return accumulator;
   }, {});
@@ -134,8 +162,10 @@ export const getTenantOptions = async (): Promise<TenantOption[]> => {
 
       return {
         id: tenant.id,
-        name: tenant.name,
+        name: tenant.organization_name ?? tenant.name,
+        organization_name: tenant.organization_name,
         slug: tenant.slug,
+        organization_slug: tenant.organization_slug,
         is_tenant_admin: membership.is_tenant_admin,
         is_default: tenant.default_for_user_id === userId,
       } satisfies TenantOption;
@@ -192,7 +222,7 @@ export const createTenant = async (input: { name: string; slug?: string }): Prom
       name: input.name.trim(),
       slug,
     })
-    .select('id, name, slug, default_for_user_id, created_by, created_at, updated_at')
+    .select('id, name, slug, organization_slug, default_for_user_id, created_by, created_at, updated_at')
     .single();
 
   if (error) {
@@ -218,7 +248,7 @@ export const updateTenant = async (
     .from('tenants')
     .update(updateData)
     .eq('id', id)
-    .select('id, name, slug, default_for_user_id, created_by, created_at, updated_at')
+    .select('id, name, slug, organization_slug, default_for_user_id, created_by, created_at, updated_at')
     .single();
 
   if (error) {

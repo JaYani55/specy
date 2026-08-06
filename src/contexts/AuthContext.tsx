@@ -3,9 +3,7 @@ import { Session } from '@supabase/supabase-js';
 import type { Subscription } from '@supabase/auth-js';
 import { supabase } from '../lib/supabase';
 import { User, UserRole } from '@/types/auth';
-import { useQueryClient, QueryClient } from '@tanstack/react-query';
-import { QUERY_KEYS } from '../constants/queryKeys';
-import { fetchStaffNames } from '../utils/staffUtils';
+import { useQueryClient } from '@tanstack/react-query';
 import { jwtDecode } from 'jwt-decode';
 
 // Import your new reducer and helpers
@@ -38,114 +36,6 @@ interface AuthContextType {
 
 // Create context with undefined initial value
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Helper functions for auth API calls
-const loadAppData = async (session: Session, queryClient: QueryClient) => {
-  try {
-    const { data, error } = await supabase
-      .from('mentorbooking_events')
-      .select(`
-        *,
-        mentorbooking_products:product_id (
-          id,
-          name,
-          description_de,
-          description_effort
-        )
-      `)
-      .order('date', { ascending: true });
-    
-    if (error) throw error;
-    
-    if (data && data.length > 0) {
-      // Collect all staff member IDs
-      const allStaffIds = new Set<string>();
-      
-      data.forEach(event => {
-        if (event.staff_members && Array.isArray(event.staff_members)) {
-          event.staff_members.forEach(id => allStaffIds.add(id));
-        }
-      });
-      
-      const staffNames = await fetchStaffNames([...allStaffIds]);
-  
-      const transformedEvents = data.map(event => {
-        const staffMembers = event.staff_members || [];
-        const primaryStaffId = staffMembers[0] || '';
-        
-        return {
-          id: event.id,
-          company: event.company,
-          date: event.date,
-          time: event.time,
-          description: event.description || '',
-          staff_members: staffMembers,
-          primaryStaffId: primaryStaffId,
-          primaryStaffName: staffNames[primaryStaffId] || 'Unknown',
-          staffNames: staffMembers.map(id => staffNames[id] || 'Unknown'),
-          status: event.status,
-          requestingMentors: event.requesting_mentors || [],
-          acceptedMentors: event.accepted_mentors || [],
-          declinedMentors: event.declined_mentors || [],
-          amount_requiredmentors: event.amount_requiredmentors || 1,
-          product_id: event.product_id,
-          ProductInfo: event.mentorbooking_products ? {
-            name: event.mentorbooking_products.name,
-            description: event.mentorbooking_products.description_de
-          } : undefined
-        };
-      });
-      
-      // Use Supabase user_profile for staff photos
-      const staffProfileUrls = await Promise.all(
-        [...allStaffIds].map(async (staffId) => {
-          try {
-            const { data: profile } = await supabase
-              .from('user_profile')
-              .select('pfp_url')
-              .eq('user_id', staffId)
-              .single();
-
-            return { 
-              user_id: staffId,
-              profile_picture_url: profile?.pfp_url || null
-            };
-          } catch (err) {
-            return { user_id: staffId, profile_picture_url: null };
-          }
-        })
-      );
-
-      type StaffProfile = {
-        user_id: string;
-        profile_picture_url: string | null;
-      };
-
-      const staffProfiles = staffProfileUrls.reduce<Record<string, StaffProfile>>((acc, curr) => {
-        if (curr.user_id) {
-          acc[curr.user_id] = curr;
-        }
-        return acc;
-      }, {});
-
-      // Now, attach the profile_picture_url to each event
-      const eventsWithStaff = transformedEvents.map(event => {
-        const staffProfile = staffProfiles[event.primaryStaffId];
-        return {
-          ...event,
-          staffProfilePicture: staffProfile?.profile_picture_url || null
-        };
-      });
-
-      // Update the cache with events that include staff profile pictures
-      queryClient.setQueryData([QUERY_KEYS.EVENTS], eventsWithStaff);
-    } else {
-      queryClient.setQueryData([QUERY_KEYS.EVENTS], []);
-    }
-  } catch (err) {
-    console.error("[CACHE DEBUG] Error loading app data:", err);
-  }
-};
 
 // Add a ref to track initial authentication
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -334,10 +224,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Not permitted / Keine Berechtigung');
       }
 
-      // 4. Load fresh data before updating UI state
-      await loadAppData(data.session, queryClient);
-
-      // 5. Only update UI state after everything is loaded
+      // Only update UI state after authentication is complete. Tenant-scoped
+      // data is loaded by DataProvider after the active workspace is known.
       dispatch({ 
         type: 'LOGIN_SUCCESS', 
         payload: {

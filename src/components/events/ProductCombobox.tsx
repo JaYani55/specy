@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchProducts, Product } from "../../services/events/productService";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { getIconByName } from '@/constants/pillaricons';
 import { Badge } from "@/components/ui/badge";
 import { useRef } from "react";
@@ -22,6 +23,7 @@ interface ProductComboboxProps {
 
 export function ProductCombobox({ value, onChange, disabled = false }: ProductComboboxProps) {
   const { language, theme } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState("");
@@ -33,7 +35,7 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
   const loadProducts = React.useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchProducts();
+      const data = await fetchProducts(activeTenantId);
       setProducts(data);
 
       if (value !== undefined) {
@@ -47,7 +49,7 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
     } finally {
       setLoading(false);
     }
-  }, [value]);
+  }, [activeTenantId, value]);
 
   // Format salary display
   const formatSalary = (Product: Product) => {

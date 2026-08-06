@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { assignMentorToEvent, removeMentorFromEvent } from '@/services/events/mentorService';
 import { Event } from '@/types/event';
 import { toast } from 'sonner';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 interface UseEventActionsReturn {
   isDeleting: boolean;
@@ -23,6 +24,7 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   const { refetchEvents } = useData();
   const { user } = useAuth();
   const permissions = usePermissions();
+  const { activeTenantId } = useActiveWorkspace();
   
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -58,17 +60,19 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   };
 
   const handleDeleteEvent = async () => {
-    if (!event || !permissions.canDeleteEvents) {
+    if (!event || !activeTenantId || !permissions.canDeleteEvents) {
       console.error('Cannot delete event: missing event or permissions');
       return;
     }
 
     setIsDeleting(true);
     try {
-      const { error } = await supabase
+      let deleteQuery = supabase
         .from('mentorbooking_events')
         .delete()
         .eq('id', event.id);
+      if (activeTenantId) deleteQuery = deleteQuery.eq('tenant_id', activeTenantId);
+      const { error } = await deleteQuery;
 
       if (error) throw error;
 
@@ -85,13 +89,13 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   };
 
   const handleAssignMentor = async (mentorId: string) => {
-    if (!event || !permissions.canAssignMentors) {
+    if (!event || !activeTenantId || !permissions.canAssignMentors) {
       console.error('Cannot assign mentor: missing event or permissions');
       return;
     }
 
     try {
-      await assignMentorToEvent(event.id, mentorId);
+      await assignMentorToEvent(event.id, mentorId, activeTenantId);
       toast.success('Mentor assigned successfully');
       
       // Update local event state
@@ -110,13 +114,13 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   };
 
   const handleRemoveMentor = async (mentorId: string) => {
-    if (!event || !permissions.canAssignMentors) {
+    if (!event || !activeTenantId || !permissions.canAssignMentors) {
       console.error('Cannot remove mentor: missing event or permissions');
       return;
     }
 
     try {
-      await removeMentorFromEvent(event.id, mentorId);
+      await removeMentorFromEvent(event.id, mentorId, activeTenantId);
       toast.success('Mentor removed successfully');
       
       // Update local event state
@@ -134,16 +138,18 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
   };
 
   const handleUpdateStaffMembers = async (staffIds: string[]) => {
-    if (!event || !permissions.canAssignMentors) {
+    if (!event || !activeTenantId || !permissions.canAssignMentors) {
       console.error('Cannot update staff members: missing event or permissions');
       return;
     }
 
     try {
-      const { error } = await supabase
+      let updateQuery = supabase
         .from('mentorbooking_events')
         .update({ staff_members: staffIds })
         .eq('id', event.id);
+      if (activeTenantId) updateQuery = updateQuery.eq('tenant_id', activeTenantId);
+      const { error } = await updateQuery;
 
       if (error) {
         throw error;

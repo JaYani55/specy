@@ -113,13 +113,15 @@ const generateRegistrationCode = (): string => {
 
 // --- Schema CRUD ---
 
-export const getSchemas = async (): Promise<PageSchema[]> => {
-  const { data, error } = await supabase
+export const getSchemas = async (tenantId?: string | null): Promise<PageSchema[]> => {
+  let query = supabase
     .from('page_schemas')
     .select('*')
     .neq('registration_status', 'archived')
     .order('is_default', { ascending: false })
     .order('created_at', { ascending: true });
+  if (tenantId) query = query.or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return data as PageSchema[];
@@ -423,12 +425,14 @@ export const getSchemaRegistrationStatus = async (id: string): Promise<{
 
 // --- Pages CRUD ---
 
-export const getPagesBySchema = async (schemaId: string): Promise<PageRecord[]> => {
-  const { data, error } = await supabase
+export const getPagesBySchema = async (schemaId: string, tenantId?: string | null): Promise<PageRecord[]> => {
+  let query = supabase
     .from('pages')
     .select('id, slug, name, status, is_draft, schema_id, domain_url, updated_at, published_at')
     .eq('schema_id', schemaId)
     .order('updated_at', { ascending: false });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as PageRecord[];

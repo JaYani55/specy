@@ -10,6 +10,7 @@ import { deleteObject, getObjects } from '@/services/objectService';
 import { getVisibleTenantInfoMap } from '@/services/tenantService';
 import type { ObjectRecord } from '@/types/objects';
 import { buildObjectSharePath } from '@/utils/sharePaths';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 const statusVariant: Record<ObjectRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
@@ -21,12 +22,13 @@ const Objects = () => {
   const { language } = useTheme();
   const [items, setItems] = useState<ObjectRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string }>>({});
+  const { activeTenantId } = useActiveWorkspace();
+  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string; organization_slug: string | null }>>({});
 
   const loadObjects = useCallback(async () => {
     try {
       setIsLoading(true);
-      const records = await getObjects();
+      const records = await getObjects(activeTenantId);
       setItems(records);
       setTenantInfo(await getVisibleTenantInfoMap(records.map((item) => item.tenant_id)));
     } catch (error) {
@@ -34,7 +36,7 @@ const Objects = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     void loadObjects();
@@ -105,7 +107,6 @@ const Objects = () => {
             <AdminCard
               key={obj.id}
               title={obj.name}
-              description={obj.description ?? undefined}
               actions={(
                 <div className="flex items-center gap-2">
                   <Button
@@ -129,7 +130,7 @@ const Objects = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigate(buildObjectSharePath(tenantInfo[obj.tenant_id].slug, obj.share_slug))}
+                      onClick={() => navigate(buildObjectSharePath(tenantInfo[obj.tenant_id].organization_slug || tenantInfo[obj.tenant_id].slug, obj.share_slug))}
                     >
                       <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
                       {language === 'en' ? 'Share' : 'Teilen'}
@@ -138,6 +139,7 @@ const Objects = () => {
                 </div>
               )}
             >
+              {obj.description && <p className="mb-2 text-sm text-muted-foreground">{obj.description}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <Badge variant={statusVariant[obj.status]}>
                   {obj.status}

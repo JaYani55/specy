@@ -25,11 +25,13 @@ export interface SupabaseResponse<T> {
   error: Error | null;
 }
 
-export const fetchProducts = async (): Promise<Product[]> => {
-  const response: SupabaseResponse<Product[]> = await supabase
+export const fetchProducts = async (tenantId?: string | null): Promise<Product[]> => {
+  let query = supabase
     .from('mentorbooking_products')
     .select('*')
     .order('name', { ascending: true });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const response: SupabaseResponse<Product[]> = await query;
 
   const { data, error } = response;
 
@@ -41,14 +43,15 @@ export const fetchProducts = async (): Promise<Product[]> => {
   return data || [];
 };
 
-export const fetchProductById = async (id: number): Promise<Product | null> => {
+export const fetchProductById = async (id: number, tenantId?: string | null): Promise<Product | null> => {
   if (!id) return null;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('mentorbooking_products')
     .select('*')
-    .eq('id', id)
-    .single();
+    .eq('id', id);
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query.single();
 
   if (error) {
     console.error('Error fetching Product:', error);
@@ -59,7 +62,7 @@ export const fetchProductById = async (id: number): Promise<Product | null> => {
 };
 
 // Create a new Product
-export const createProduct = async (Product: Omit<Product, 'id'>): Promise<Product | null> => {
+export const createProduct = async (Product: Omit<Product, 'id'>, tenantId?: string | null): Promise<Product | null> => {
   try {
     // Ensure required fields have defaults and proper data types
     // DO NOT include 'id' in the insert data - let the database generate it
@@ -78,6 +81,7 @@ export const createProduct = async (Product: Omit<Product, 'id'>): Promise<Produ
       is_mentor_product: Boolean(Product.is_mentor_product)
       // DO NOT include id, created_at, or updated_at - let the database handle these
     };
+    if (tenantId) Object.assign(sanitizedProduct, { tenant_id: tenantId });
     
     console.log('Creating product with sanitized data:', sanitizedProduct);
     
@@ -103,7 +107,7 @@ export const createProduct = async (Product: Omit<Product, 'id'>): Promise<Produ
 };
 
 // Update an existing Product
-export const updateProduct = async (id: number, Product: Partial<Product>): Promise<Product | null> => {
+export const updateProduct = async (id: number, Product: Partial<Product>, tenantId?: string | null): Promise<Product | null> => {
   console.log(`Updating product with ID ${id}:`, Product);
   
   try {
@@ -115,11 +119,12 @@ export const updateProduct = async (id: number, Product: Partial<Product>): Prom
     
     // Remove delivery_mode handling since it's no longer part of products
     
-    const { data, error } = await supabase
+    let query = supabase
       .from('mentorbooking_products')
       .update(updateData)
-      .eq('id', id)
-      .select();
+      .eq('id', id);
+    if (tenantId) query = query.eq('tenant_id', tenantId);
+    const { data, error } = await query.select();
 
     if (error) {
       console.error('Error updating Product:', error);
@@ -140,16 +145,17 @@ export const updateProduct = async (id: number, Product: Partial<Product>): Prom
 };
 
 // Delete a Product
-export const deleteProduct = async (id: number): Promise<boolean> => {
+export const deleteProduct = async (id: number, tenantId?: string | null): Promise<boolean> => {
   try {
     console.log(`Deleting Product with ID: ${id}`);
     
     // First check if the Product exists and get its product_page_id
-    const { data: existingProduct, error: checkError } = await supabase
+    let existingQuery = supabase
       .from('mentorbooking_products')
       .select('id, product_page_id')
-      .eq('id', id)
-      .single();
+      .eq('id', id);
+    if (tenantId) existingQuery = existingQuery.eq('tenant_id', tenantId);
+    const { data: existingProduct, error: checkError } = await existingQuery.single();
       
     if (checkError) {
       console.error('Error checking Product:', checkError);
@@ -163,10 +169,12 @@ export const deleteProduct = async (id: number): Promise<boolean> => {
     // If there's a linked product page, delete it first
     if (existingProduct.product_page_id) {
       console.log(`Deleting linked product page with ID: ${existingProduct.product_page_id}`);
-      const { error: pageDeleteError } = await supabase
+      let pageDeleteQuery = supabase
         .from('pages')
         .delete()
         .eq('id', existingProduct.product_page_id);
+      if (tenantId) pageDeleteQuery = pageDeleteQuery.eq('tenant_id', tenantId);
+      const { error: pageDeleteError } = await pageDeleteQuery;
       
       if (pageDeleteError) {
         console.error('Error deleting product page:', pageDeleteError);
@@ -178,10 +186,12 @@ export const deleteProduct = async (id: number): Promise<boolean> => {
     }
     
     // Delete the Product from mentorbooking_products
-    const { error } = await supabase
+    let deleteQuery = supabase
       .from('mentorbooking_products')
       .delete()
       .eq('id', id);
+    if (tenantId) deleteQuery = deleteQuery.eq('tenant_id', tenantId);
+    const { error } = await deleteQuery;
 
     if (error) {
       console.error('Error deleting Product:', error);
@@ -191,11 +201,12 @@ export const deleteProduct = async (id: number): Promise<boolean> => {
     console.log('Product deleted successfully from mentorbooking_products');
     
     // Double-check deletion was successful
-    const { data: checkAfter, error: afterError } = await supabase
+    let afterQuery = supabase
       .from('mentorbooking_products')
       .select('id')
-      .eq('id', id)
-      .maybeSingle();
+      .eq('id', id);
+    if (tenantId) afterQuery = afterQuery.eq('tenant_id', tenantId);
+    const { data: checkAfter, error: afterError } = await afterQuery.maybeSingle();
       
     if (afterError) {
       console.error('Error verifying deletion:', afterError);

@@ -27,6 +27,7 @@ interface ObjectWithTenantRow extends ObjectRow {
   tenants?: {
     name: string;
     slug?: string;
+    organization_slug?: string | null;
   } | null;
 }
 
@@ -68,7 +69,7 @@ const getObjectByShareSlug = async (
   const admin = await createSupabaseAdminClient(env);
   const { data, error } = await admin
     .from('objects')
-    .select('*, tenants (name, slug)')
+    .select('*, tenants (name, slug, organization_slug)')
     .eq('share_slug', shareSlug)
     .eq('share_enabled', true)
     .neq('status', 'archived')
@@ -83,8 +84,9 @@ const getObjectByShareSlug = async (
 
     const resolvedTenantName = obj.tenants?.name;
     const resolvedTenantSlug = obj.tenants?.slug;
+    const resolvedOrganizationSlug = obj.tenants?.organization_slug;
 
-    const matchesTenant = [resolvedTenantName, resolvedTenantSlug]
+    const matchesTenant = [resolvedTenantName, resolvedTenantSlug, resolvedOrganizationSlug]
       .filter((v): v is string => Boolean(v))
       .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
 
@@ -121,11 +123,26 @@ objects.get('/', async (c) => {
     if (hasConsoleAccess) {
       const supabase = await createSupabaseClient(c.env, auth.token);
 
-      const { data, error: dbError } = await supabase
+      let objectQuery = supabase
         .from('objects')
         .select('id, name, slug, description, agent_description, object_type, status, requires_auth, api_enabled, share_enabled, share_slug, created_at, updated_at')
         .neq('status', 'archived')
         .order('updated_at', { ascending: false });
+
+      const requestedTenantId = c.req.query('tenantId');
+      if (requestedTenantId) {
+        const { data: membership } = await supabase
+          .from('tenant_users')
+          .select('tenant_id')
+          .eq('tenant_id', requestedTenantId)
+          .eq('user_id', auth.userId)
+          .eq('status', 'active')
+          .maybeSingle();
+        if (!membership) return c.json({ error: 'You are not a member of this workspace.' }, 403);
+        objectQuery = objectQuery.eq('tenant_id', requestedTenantId);
+      }
+
+      const { data, error: dbError } = await objectQuery;
 
       if (dbError) {
         return c.json({ error: 'Failed to load objects.' }, 500);

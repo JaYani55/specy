@@ -29,12 +29,14 @@ const buildAuthHeaders = async (): Promise<HeadersInit> => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-export const getForms = async (): Promise<FormRecord[]> => {
-  const { data, error } = await supabase
+export const getForms = async (tenantId?: string | null): Promise<FormRecord[]> => {
+  let query = supabase
     .from('forms')
     .select('*')
     .neq('status', 'archived')
     .order('updated_at', { ascending: false });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as FormRecord[];

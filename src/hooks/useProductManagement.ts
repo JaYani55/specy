@@ -3,6 +3,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Product, fetchProducts, deleteProduct, updateProduct, createProduct } from '@/services/events/productService';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 type EventSummary = {
   id: string;
@@ -34,6 +35,7 @@ const mapToEventSummaries = (rows: unknown[] | null | undefined): EventSummary[]
 
 export function useProductManagement(onProductsChange?: () => void) {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [Products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -52,7 +54,7 @@ export function useProductManagement(onProductsChange?: () => void) {
   const loadProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await fetchProducts();
+      const data = await fetchProducts(activeTenantId);
       setProducts(data);
     } catch (error) {
       console.error('Error loading Products:', error);
@@ -60,7 +62,7 @@ export function useProductManagement(onProductsChange?: () => void) {
     } finally {
       setIsLoading(false);
     }
-  }, [language]);
+  }, [activeTenantId, language]);
 
   // Create or update Product
   const createOrUpdateProduct = useCallback(async (ProductData: Omit<Product, "id">) => {
@@ -78,7 +80,7 @@ export function useProductManagement(onProductsChange?: () => void) {
       
       if (editingProduct) {
         console.log(`Updating product ID ${editingProduct.id}`, preparedData);
-        const updatedProduct = await updateProduct(editingProduct.id, preparedData);
+        const updatedProduct = await updateProduct(editingProduct.id, preparedData, activeTenantId);
         console.log("Update result:", updatedProduct);
         
         if (!updatedProduct) {
@@ -88,7 +90,7 @@ export function useProductManagement(onProductsChange?: () => void) {
         toast.success(language === 'en' ? 'Product updated successfully' : 'Produkt erfolgreich aktualisiert');
       } else {
         console.log("Creating new product:", preparedData);
-        await createProduct(preparedData);
+        await createProduct(preparedData, activeTenantId);
         toast.success(language === 'en' ? 'Product created successfully' : 'Produkt erfolgreich erstellt');
       }
       
@@ -108,7 +110,7 @@ export function useProductManagement(onProductsChange?: () => void) {
     } finally {
       setIsLoading(false);
     }
-  }, [editingProduct, language, loadProducts, onProductsChange]);
+  }, [activeTenantId, editingProduct, language, loadProducts, onProductsChange]);
 
   // Check if Product is in use and prepare for deletion
   const checkProductUsageForDelete = useCallback(async (product: Product) => {
@@ -202,7 +204,7 @@ export function useProductManagement(onProductsChange?: () => void) {
     
     setIsDeleting(true);
     try {
-      await deleteProduct(ProductToDelete.id);
+      await deleteProduct(ProductToDelete.id, activeTenantId);
       toast.success(language === 'en' ? 'Product deleted successfully' : 'Produkt erfolgreich gelöscht');
       
       await loadProducts();
@@ -221,7 +223,7 @@ export function useProductManagement(onProductsChange?: () => void) {
       setProductToDelete(null);
       setDeleteProductDialogOpen(false);
     }
-  }, [ProductToDelete, language, loadProducts, onProductsChange]);
+  }, [ProductToDelete, activeTenantId, language, loadProducts, onProductsChange]);
 
   // Check if Product is in use and prepare for editing
   const checkProductUsageForEdit = useCallback(async (product: Product) => {

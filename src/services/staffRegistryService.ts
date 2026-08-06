@@ -168,11 +168,13 @@ const fetchLegacyStaffDirectory = async (): Promise<StaffRecord[]> => {
   }));
 };
 
-export const fetchStaffDirectory = async (): Promise<StaffRecord[]> => {
-  const { data, error } = await supabase
+export const fetchStaffDirectory = async (tenantId?: string | null): Promise<StaffRecord[]> => {
+  let query = supabase
     .from('staff')
     .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .order('display_name', { ascending: true });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
 
   if (error) {
     if (isMissingRelationError(error)) {

@@ -69,6 +69,7 @@ interface FormWithTenantRow extends FormRow {
   tenants?: {
     name: string;
     slug?: string;
+    organization_slug?: string | null;
   } | null;
 }
 
@@ -982,7 +983,7 @@ const getFormByShareSlug = async (
   const admin = await createSupabaseAdminClient(env);
   const { data, error } = await admin
     .from('forms')
-    .select('*, tenants (name, slug)')
+    .select('*, tenants (name, slug, organization_slug)')
     .eq('share_slug', shareSlug)
     .eq('share_enabled', true)
     .neq('status', 'archived')
@@ -997,8 +998,9 @@ const getFormByShareSlug = async (
 
     const resolvedTenantName = form.tenants?.name;
     const resolvedTenantSlug = form.tenants?.slug;
+    const resolvedOrganizationSlug = form.tenants?.organization_slug;
 
-    const matchesTenant = [resolvedTenantName, resolvedTenantSlug]
+    const matchesTenant = [resolvedTenantName, resolvedTenantSlug, resolvedOrganizationSlug]
       .filter((v): v is string => Boolean(v))
       .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
 

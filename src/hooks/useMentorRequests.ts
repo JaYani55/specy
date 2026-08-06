@@ -5,11 +5,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { Event } from '@/types/event';
 import type { User } from '@/types/auth';
 import { QUERY_KEYS } from '@/constants/queryKeys';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 export function useMentorRequests(event: Event | null, user: User | null) {
   const [isRequestLoading, setIsRequestLoading] = useState(false);
   const { language } = useTheme();
   const qc = useQueryClient();
+  const { activeTenantId } = useActiveWorkspace();
 
   /** Atomically request to be mentor */
   async function requestToMentor(): Promise<Event> {
@@ -21,7 +23,7 @@ export function useMentorRequests(event: Event | null, user: User | null) {
         mentor_id: user.id
       });
       if (error) throw error;
-      qc.invalidateQueries({ queryKey: [QUERY_KEYS.EVENTS] });
+      qc.invalidateQueries({ queryKey: [QUERY_KEYS.EVENTS, activeTenantId] });
       return data as Event;
     } finally {
       setIsRequestLoading(false);
@@ -42,7 +44,7 @@ export function useMentorRequests(event: Event | null, user: User | null) {
       action_text: action
     });
     if (error) throw error;
-    qc.invalidateQueries({ queryKey: [QUERY_KEYS.EVENTS] });
+    qc.invalidateQueries({ queryKey: [QUERY_KEYS.EVENTS, activeTenantId] });
     return data as Event;
   }
 

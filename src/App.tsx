@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from "
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { ActiveWorkspaceProvider } from "./contexts/ActiveWorkspaceContext";
 import { DataProvider } from "./contexts/DataContext";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingState } from "./components/ui/LoadingState";
@@ -367,9 +368,11 @@ const App = () => {
       <ThemeProvider>
         <BrowserRouter>
           <AuthProvider>
-            <DataProvider>
-              <AppContent />
-            </DataProvider>
+            <ActiveWorkspaceProvider>
+              <DataProvider>
+                <AppContent />
+              </DataProvider>
+            </ActiveWorkspaceProvider>
           </AuthProvider>
         </BrowserRouter>
       </ThemeProvider>

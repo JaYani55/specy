@@ -10,6 +10,7 @@ import { fetchProducts, Product } from '@/services/events/productService';
 // NEU: Importiere ensureProductGradient
 import { ensureProductGradient } from '@/services/events/productService';
 import type { UserProfileRecord } from '@/types/auth';
+import { useActiveWorkspace } from './ActiveWorkspaceContext';
 
 // Define types for our context
 interface DataContextType {
@@ -29,6 +30,7 @@ const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const { activeTenantId } = useActiveWorkspace();
   const queryClient = useQueryClient();
 
   // --- NEU: QUERIES FÜR PRODUKTE ---
@@ -38,9 +40,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error: productsError,
     refetch: refetchProducts,
   } = useQuery<Product[], Error>({
-    queryKey: [QUERY_KEYS.PRODUCTS],
+    queryKey: [QUERY_KEYS.PRODUCTS, activeTenantId],
     queryFn: async () => {
-      const fetchedProducts = await fetchProducts();
+      const fetchedProducts = await fetchProducts(activeTenantId);
       return fetchedProducts.map(p => ensureProductGradient(p));
     },
     staleTime: Infinity,
@@ -49,7 +51,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refetchOnMount: false,
     refetchOnReconnect: false,
     retry: false,
-    enabled: !!user && user.hasAccess
+    enabled: !!user && user.hasAccess && !!activeTenantId
   });
   // --- ENDE NEUE PRODUKT-QUERIES ---
 
@@ -58,6 +60,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data, error } = await supabase
       .from('mentorbooking_events')
       .select(`* , product_id`)
+      .eq('tenant_id', activeTenantId)
       .order('date', { ascending: true });
 
     if (error) {
@@ -117,7 +120,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       });
     return transformedEvents;
-  }, []);
+  }, [activeTenantId]);
 
   const {
     data: events,
@@ -125,7 +128,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error: eventsError,
     refetch
   } = useQuery({
-    queryKey: [QUERY_KEYS.EVENTS],
+    queryKey: [QUERY_KEYS.EVENTS, activeTenantId],
     queryFn: fetchEventsFromAPI,
     staleTime: Infinity,
     gcTime: Infinity,
@@ -133,19 +136,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refetchOnMount: false,
     refetchOnReconnect: false,
     retry: false,
-    enabled: !!user && user.hasAccess
+    enabled: !!user && user.hasAccess && !!activeTenantId
   });
 
   const refetchEvents = useCallback(async () => {
     try {
       const freshEvents = await fetchEventsFromAPI();
-      queryClient.setQueryData([QUERY_KEYS.EVENTS], freshEvents || []);
+      queryClient.setQueryData([QUERY_KEYS.EVENTS, activeTenantId], freshEvents || []);
       await refetch();
     } catch (error) {
-      queryClient.setQueryData([QUERY_KEYS.EVENTS], []);
+      queryClient.setQueryData([QUERY_KEYS.EVENTS, activeTenantId], []);
       throw error;
     }
-  }, [fetchEventsFromAPI, queryClient, refetch]);
+  }, [activeTenantId, fetchEventsFromAPI, queryClient, refetch]);
 
   useEffect(() => {
     if (!user?.hasAccess) return;
@@ -205,7 +208,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refetchAllData = useCallback(async () => {
     await refetchProducts();
     const freshEvents = await fetchEventsFromAPI();
-    queryClient.setQueryData([QUERY_KEYS.EVENTS], freshEvents || []);
+    queryClient.setQueryData([QUERY_KEYS.EVENTS, activeTenantId], freshEvents || []);
 
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.USER_PROFILE] }),
@@ -213,7 +216,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
 
     await refetch();
-  }, [fetchEventsFromAPI, queryClient, refetch, refetchProducts]);
+  }, [activeTenantId, fetchEventsFromAPI, queryClient, refetch, refetchProducts]);
 
   // Helper to get a single event by ID from the cache
   const getEventById = useCallback((id: string): Event | undefined => {

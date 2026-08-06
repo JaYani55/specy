@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { UseFormReturn } from 'react-hook-form';
 import { ProductFormValues } from '../types';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { fetchProducts } from '@/services/events/productService';
 import {
   FormControl,
@@ -19,12 +20,13 @@ interface ProductFormGradientProps {
 
 export function ProductFormGradient({ form, productId }: ProductFormGradientProps) {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [usedColors, setUsedColors] = useState<{ color: string; productName: string }[]>([]);
   
   useEffect(() => {
     const loadUsedColors = async () => {
       try {
-        const products = await fetchProducts();
+        const products = await fetchProducts(activeTenantId);
         
         // Filter out the current product and collect colors that are already in use
         const colors = products
@@ -49,7 +51,7 @@ export function ProductFormGradient({ form, productId }: ProductFormGradientProp
     };
     
     loadUsedColors();
-  }, [productId, form]);
+  }, [activeTenantId, productId, form]);
   
   return (
     <FormField

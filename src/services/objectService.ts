@@ -28,12 +28,14 @@ const generateSlug = (name: string): string =>
 
 export { generateSlug as generateObjectSlug };
 
-export const getObjects = async (): Promise<ObjectRecord[]> => {
-  const { data, error } = await supabase
+export const getObjects = async (tenantId?: string | null): Promise<ObjectRecord[]> => {
+  let query = supabase
     .from('objects')
     .select('*')
     .neq('status', 'archived')
     .order('updated_at', { ascending: false });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as ObjectRecord[];

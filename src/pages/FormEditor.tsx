@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from '@/services/formService';
@@ -69,6 +70,7 @@ const FormEditor = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
   const { user } = useAuth();
+  const { activeTenantId } = useActiveWorkspace();
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(formId));
   const [isSaving, setIsSaving] = useState(false);
   const [name, setName] = useState('');
@@ -121,7 +123,7 @@ const FormEditor = () => {
         setTenantOptionsLoading(true);
         const options = await getTenantOptions();
         setTenantOptions(options);
-        setTenantId((current) => pickInitialTenantId(options, current));
+        setTenantId((current) => pickInitialTenantId(options, current || activeTenantId));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
       } finally {
@@ -130,7 +132,7 @@ const FormEditor = () => {
     };
 
     void loadTenantOptions();
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     const loadStaffOptions = async () => {

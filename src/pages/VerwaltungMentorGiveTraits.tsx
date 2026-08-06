@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Users, Settings } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,7 @@ interface MentorGroupData {
 
 const VerwaltungMentorAdmin = () => {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const navigate = useNavigate();
 
@@ -50,7 +52,7 @@ const VerwaltungMentorAdmin = () => {
   const fetchMentors = useCallback(async () => {
     try {
       setIsLoadingMentors(true);
-      const staffRecords = await fetchStaffDirectory();
+      const staffRecords = await fetchStaffDirectory(activeTenantId);
       const normalizedStaff = staffRecords
         .map((staff) => ({
           id: staff.id,
@@ -71,7 +73,7 @@ const VerwaltungMentorAdmin = () => {
     } finally {
       setIsLoadingMentors(false);
     }
-  }, [language]);
+  }, [activeTenantId, language]);
 
   const fetchGroups = useCallback(async () => {
     try {

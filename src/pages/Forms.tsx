@@ -10,6 +10,7 @@ import { deleteForm, getForms } from '@/services/formService';
 import { getVisibleTenantInfoMap } from '@/services/tenantService';
 import type { FormRecord } from '@/types/forms';
 import { buildFormSharePath } from '@/utils/sharePaths';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 const statusVariant: Record<FormRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
@@ -21,12 +22,13 @@ const Forms = () => {
   const { language } = useTheme();
   const [forms, setForms] = useState<FormRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string }>>({});
+  const { activeTenantId } = useActiveWorkspace();
+  const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string; organization_slug: string | null }>>({});
 
   const loadForms = useCallback(async () => {
     try {
       setIsLoading(true);
-      const records = await getForms();
+      const records = await getForms(activeTenantId);
       setForms(records);
       setTenantInfo(await getVisibleTenantInfoMap(records.map((form) => form.tenant_id)));
     } catch (error) {
@@ -34,7 +36,7 @@ const Forms = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     void loadForms();
@@ -112,7 +114,7 @@ const Forms = () => {
           {forms.map((form) => {
             const currentTenantInfo = form.tenant_id ? tenantInfo[form.tenant_id] : undefined;
             const sharePath = form.share_enabled && form.share_slug && currentTenantInfo
-              ? buildFormSharePath(currentTenantInfo.slug, form.share_slug)
+              ? buildFormSharePath(currentTenantInfo.organization_slug || currentTenantInfo.slug, form.share_slug)
               : null;
             
             const resultsPath = sharePath ? `${sharePath}/results` : null;

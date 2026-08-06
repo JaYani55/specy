@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ObjectContentBlocksEditor } from '@/components/objects/ObjectContentBlocksEditor';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { createObject, generateObjectSlug, getObject, updateObject } from '@/services/objectService';
@@ -1129,6 +1130,7 @@ const ObjectEditor: React.FC = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
   const { user } = useAuth();
+  const { activeTenantId } = useActiveWorkspace();
   const isEditing = !!objectId && objectId !== 'new';
 
   const [isLoading, setIsLoading] = useState(isEditing);
@@ -1174,7 +1176,7 @@ const ObjectEditor: React.FC = () => {
         setTenantOptionsLoading(true);
         const options = await getTenantOptions();
         setTenantOptions(options);
-        setTenantId((current) => pickInitialTenantId(options, current));
+        setTenantId((current) => pickInitialTenantId(options, current || activeTenantId));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
       } finally {
@@ -1183,7 +1185,7 @@ const ObjectEditor: React.FC = () => {
     };
 
     void loadTenantOptions();
-  }, []);
+  }, [activeTenantId]);
 
   // Load existing object when editing
   useEffect(() => {

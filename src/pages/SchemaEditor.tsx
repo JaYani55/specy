@@ -33,6 +33,7 @@ import {
 } from '@/types/pagebuilder';
 import type { SchemaSpecBundle, SpecRecord } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { toast } from 'sonner';
@@ -641,6 +642,7 @@ const SchemaEditor: React.FC = () => {
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
   const [isSavingSpecAssignments, setIsSavingSpecAssignments] = useState(false);
   const [frontendTargets, setFrontendTargets] = useState<SchemaFrontendTargetInput[]>([]);
+  const { activeTenantId } = useActiveWorkspace();
 
   useEffect(() => {
     const loadTenantOptions = async () => {
@@ -648,7 +650,7 @@ const SchemaEditor: React.FC = () => {
         setTenantOptionsLoading(true);
         const options = await getTenantOptions();
         setTenantOptions(options);
-        setTenantId((current) => pickInitialTenantId(options, current));
+        setTenantId((current) => pickInitialTenantId(options, current || activeTenantId));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load workspaces.');
       } finally {
@@ -657,7 +659,7 @@ const SchemaEditor: React.FC = () => {
     };
 
     void loadTenantOptions();
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => {
     if (isEditing && schemaSlug) {

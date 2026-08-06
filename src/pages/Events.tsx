@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import ConfirmationModal from "@/components/shared/ConfirmationModal";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useActiveWorkspace } from "@/contexts/ActiveWorkspaceContext";
 
 const Events = () => {
   const navigate = useNavigate();
@@ -26,6 +27,7 @@ const Events = () => {
   const { language } = useTheme();
   const { events, isLoadingEvents, refetchEvents } = useData();
   const permissions = usePermissions();
+  const { activeTenantId } = useActiveWorkspace();
   
   const isMentor = user?.role === 'mentor';
   const hasStaffPermissions = permissions.canViewMentorProfiles;
@@ -71,17 +73,19 @@ const Events = () => {
   };
   
   const handleConfirmedRequest = async () => {
-    if (!selectedRequestEvent || !user) return;
+    if (!selectedRequestEvent || !user || !activeTenantId) return;
     
     setIsSubmittingRequest(true);
     
     try {
-      const { error } = await supabase
+      let updateQuery = supabase
         .from('mentorbooking_events')
         .update({
           requesting_mentors: [...(selectedRequestEvent.requestingMentors || []), user.id]
         })
         .eq('id', selectedRequestEvent.id);
+      if (activeTenantId) updateQuery = updateQuery.eq('tenant_id', activeTenantId);
+      const { error } = await updateQuery;
         
       if (error) throw error;
       

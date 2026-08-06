@@ -12,6 +12,7 @@ import { isEventInPast } from '@/utils/eventUtils';
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from '@/contexts/AuthContext';
 import { useMentorRequests } from '@/hooks/useMentorRequests';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 
 // Define action types for mentor requests
@@ -45,6 +46,7 @@ const MentorRequestsModal = ({
   const [processingSubmit, setProcessingSubmit] = useState(false);
   const [processingMentors, setProcessingMentors] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  const { activeTenantId } = useActiveWorkspace();
 
   useEffect(() => {
     const loadMentorData = async () => {
@@ -163,7 +165,7 @@ const MentorRequestsModal = ({
     if (!event) return;
     
     // Get the current events from cache
-    const events = queryClient.getQueryData<Event[]>([QUERY_KEYS.EVENTS]);
+    const events = queryClient.getQueryData<Event[]>([QUERY_KEYS.EVENTS, activeTenantId]);
     
     if (events) {
       // Find and update the specific event
@@ -175,7 +177,7 @@ const MentorRequestsModal = ({
       });
       
       // Update the cache
-      queryClient.setQueryData([QUERY_KEYS.EVENTS], updatedEvents);
+      queryClient.setQueryData([QUERY_KEYS.EVENTS, activeTenantId], updatedEvents);
     }
   };
 

@@ -1,12 +1,13 @@
 import { supabase } from '@/lib/supabase';
 
-export const assignMentorToEvent = async (eventId: string, mentorId: string): Promise<void> => {
+export const assignMentorToEvent = async (eventId: string, mentorId: string, tenantId?: string | null): Promise<void> => {
   // First, get the current event to access existing mentor arrays
-  const { data: currentEvent, error: fetchError } = await supabase
+  let eventQuery = supabase
     .from('mentorbooking_events')
     .select('acceptedMentors, requestingMentors')
-    .eq('id', eventId)
-    .single();
+    .eq('id', eventId);
+  if (tenantId) eventQuery = eventQuery.eq('tenant_id', tenantId);
+  const { data: currentEvent, error: fetchError } = await eventQuery.single();
 
   if (fetchError) {
     console.error('Error fetching current event:', fetchError);
@@ -17,13 +18,15 @@ export const assignMentorToEvent = async (eventId: string, mentorId: string): Pr
   const updatedAcceptedMentors = [...(currentEvent.acceptedMentors || []), mentorId];
   const updatedRequestingMentors = (currentEvent.requestingMentors || []).filter(id => id !== mentorId);
 
-  const { error } = await supabase
+  let updateQuery = supabase
     .from('mentorbooking_events')
     .update({
       acceptedMentors: updatedAcceptedMentors,
       requestingMentors: updatedRequestingMentors
     })
     .eq('id', eventId);
+  if (tenantId) updateQuery = updateQuery.eq('tenant_id', tenantId);
+  const { error } = await updateQuery;
 
   if (error) {
     console.error('Error assigning mentor to event:', error);
@@ -31,13 +34,14 @@ export const assignMentorToEvent = async (eventId: string, mentorId: string): Pr
   }
 };
 
-export const removeMentorFromEvent = async (eventId: string, mentorId: string): Promise<void> => {
+export const removeMentorFromEvent = async (eventId: string, mentorId: string, tenantId?: string | null): Promise<void> => {
   // First, get the current event to access existing mentor arrays
-  const { data: currentEvent, error: fetchError } = await supabase
+  let eventQuery = supabase
     .from('mentorbooking_events')
     .select('acceptedMentors')
-    .eq('id', eventId)
-    .single();
+    .eq('id', eventId);
+  if (tenantId) eventQuery = eventQuery.eq('tenant_id', tenantId);
+  const { data: currentEvent, error: fetchError } = await eventQuery.single();
 
   if (fetchError) {
     console.error('Error fetching current event:', fetchError);
@@ -47,12 +51,14 @@ export const removeMentorFromEvent = async (eventId: string, mentorId: string): 
   // Remove mentor from accepted array only
   const updatedAcceptedMentors = (currentEvent.acceptedMentors || []).filter(id => id !== mentorId);
 
-  const { error } = await supabase
+  let updateQuery = supabase
     .from('mentorbooking_events')
     .update({
       acceptedMentors: updatedAcceptedMentors
     })
     .eq('id', eventId);
+  if (tenantId) updateQuery = updateQuery.eq('tenant_id', tenantId);
+  const { error } = await updateQuery;
 
   if (error) {
     console.error('Error removing mentor from event:', error);

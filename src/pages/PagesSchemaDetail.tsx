@@ -45,6 +45,7 @@ import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScree
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
 import type { SchemaSpecBundle } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
@@ -59,6 +60,7 @@ const PagesSchemaDetail: React.FC = () => {
   const { schemaSlug } = useParams<{ schemaSlug: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const canManageRevalidationSecret = permissions.hasRole('admin');
 
@@ -84,7 +86,7 @@ const PagesSchemaDetail: React.FC = () => {
       setSchema(schemaData);
 
       const [pagesData, specBundle] = await Promise.all([
-        getPagesBySchema(schemaData.id),
+        getPagesBySchema(schemaData.id, activeTenantId),
         getSchemaSpecBundle(schemaData.slug).catch(() => null),
       ]);
       setPages(pagesData);
@@ -113,7 +115,7 @@ const PagesSchemaDetail: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [canManageRevalidationSecret, schemaSlug]);
+  }, [activeTenantId, canManageRevalidationSecret, schemaSlug]);
 
   useEffect(() => {
     fetchData();
