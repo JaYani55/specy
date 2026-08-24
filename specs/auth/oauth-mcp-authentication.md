@@ -12,6 +12,7 @@ It covers:
 Related documents:
 
 - [`Auth-docs.md`](authentication-authorization.md) — overall auth & authorization model
+- [`../agents/oauth-unified-authentication.md`](../agents/oauth-unified-authentication.md) — guide for other microservices integrating with this auth stack
 - [`Specs_MCP_Exposition.md`](../agents/mcp-exposition.md) — MCP registry and exposure model
 - [`multi-tenancy.md`](../platform/multi-tenancy.md) — tenant/workspace model behind `tenant_id`
 
@@ -75,7 +76,7 @@ The `agent` role is seeded idempotently by the same migration. It is **not** par
 - **No `Authorization` header on MCP POST/initialization** → `401` with `WWW-Authenticate: Bearer resource_metadata="<public-worker-url>/.well-known/oauth-protected-resource"`. This intentionally starts the standard MCP OAuth flow instead of creating an anonymous MCP session.
 - **Anonymous GET/discovery** → public discovery metadata may be read without authentication.
 - **Valid Bearer token** → `verifyAuthSession` validates via `auth.getClaims()` (compatible with Supabase asymmetric signing keys), derives `isAgent`/`tenantId` from claims, and the per-request `McpServer` factory registers closed specs and gated built-ins (`new_schema`). Tool lists differ per caller — clients must re-run `tools/list` after obtaining a token.
-- **Invalid/expired Bearer token** → `401` with `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"`. The same challenge now accompanies every 401 emitted by `requireAuthSession`, `requireAppRole`, `requireAnyJwtRole`, and `getOptionalAuthSession` ([api/lib/auth.ts](../api/lib/auth.ts)).
+- **Invalid/expired Bearer token** → `401` with `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"`. The same challenge now accompanies every 401 emitted by `requireAuthSession`, `requireAppRole`, `requireAnyJwtRole`, and `getOptionalAuthSession` ([api/lib/auth.ts](../../api/lib/auth.ts)).
 
 ### 4.3 Manual OAuth tools are not part of the normal MCP surface
 
@@ -104,7 +105,7 @@ This keeps the open-source core portable across custom domains and deployments. 
 
 ## 5. Consent Screen
 
-Route: `/oauth/consent` (public route outside `Layout`, [src/App.tsx](../src/App.tsx)).
+Route: `/oauth/consent` (public route outside `Layout`, [src/App.tsx](../../src/App.tsx)).
 
 Flow:
 
@@ -117,7 +118,7 @@ Flow:
 7. **Deny** → `supabase.auth.oauth.denyAuthorization(authorizationId)`.
 8. The MCP client captures the callback, exchanges the code, stores the token, and reconnects to `/mcp`. No code or JWT is copied into chat.
 
-Implementation: [src/pages/OAuthConsent.tsx](../src/pages/OAuthConsent.tsx) + [src/services/oauthConsentService.ts](../src/services/oauthConsentService.ts) (thin SDK wrapper per the page→service convention). UI copy follows the German/English `useTheme()` language pattern.
+Implementation: [src/pages/OAuthConsent.tsx](../../src/pages/OAuthConsent.tsx) + [src/services/oauthConsentService.ts](../../src/services/oauthConsentService.ts) (thin SDK wrapper per the page→service convention). UI copy follows the German/English `useTheme()` language pattern.
 
 ---
 

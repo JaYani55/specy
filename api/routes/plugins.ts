@@ -44,7 +44,7 @@ plugins.get('/', async (c) => {
   return c.json({
     service: 'specy-api',
     description: 'Registered plugins for this CMS instance.',
-    install_docs: `${baseUrl}/docs/Plugin_Development.md`,
+    install_docs: `${baseUrl}/specs/plugins/development.md`,
     plugins: ((data ?? []) as PluginRow[]).map((p) => ({
       slug: p.slug,
       name: p.name,

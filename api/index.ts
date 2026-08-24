@@ -126,7 +126,7 @@ app.get('/.well-known/mcp.json', (c) => {
     name: 'specy',
     description: 'Specy MCP server exposed over Streamable HTTP for schema discovery, spec discovery, and frontend registration workflows.',
     version: '1.0.0',
-    documentation_url: `${baseUrl}/specs/Specs_MCP_Exposition.md`,
+    documentation_url: `${baseUrl}/specs/agents/mcp-exposition.md`,
     server: {
       url: `${baseUrl}/mcp`,
       transport: 'streamable-http',

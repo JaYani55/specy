@@ -6,12 +6,12 @@ This document describes the authentication and authorization model used by Specy
 
 ## 1. Authentication (Login & Session Management)
 
-Authentication is handled entirely by Supabase Auth. The frontend uses the [@supabase/supabase-js](../../lib/supabase.ts) client to sign in, sign out, and manage session lifecycle.
+Authentication is handled entirely by Supabase Auth. The frontend uses the [@supabase/supabase-js](../../src/lib/supabase.ts) client to sign in, sign out, and manage session lifecycle.
 
 ### Login Flow
 
 1. User submits email + password.
-2. [AuthContext.login()](../../contexts/AuthContext.tsx#L218) calls `supabase.auth.signInWithPassword()`.
+2. [AuthContext.login()](../../src/contexts/AuthContext.tsx#L218) calls `supabase.auth.signInWithPassword()`.
 3. Supabase returns an access token (JWT) and a refresh token.
 4. The JWT is decoded client-side with `jwtDecode` to extract `user_roles` from custom claims.
 5. The frontend checks that the user has at least one allowed role (`user`, `staff`, `admin`, `super-admin`). If not, access is denied.
@@ -19,11 +19,11 @@ Authentication is handled entirely by Supabase Auth. The frontend uses the [@sup
 
 ### Session Persistence
 
-Supabase stores the session in localStorage by default. On app load, [AuthProvider's initAuth()](../../contexts/AuthContext.tsx#L85) checks for an existing session via `supabase.auth.getSession()` and restores it if valid. An `onAuthStateChange` listener handles `SIGNED_IN`, `SIGNED_OUT`, and `TOKEN_REFRESHED` events reactively.
+Supabase stores the session in localStorage by default. On app load, [AuthProvider's initAuth()](../../src/contexts/AuthContext.tsx#L85) checks for an existing session via `supabase.auth.getSession()` and restores it if valid. An `onAuthStateChange` listener handles `SIGNED_IN`, `SIGNED_OUT`, and `TOKEN_REFRESHED` events reactively.
 
 ### Logout
 
-[logout()](../../contexts/AuthContext.tsx#L256) clears the React Query cache, localStorage, sessionStorage, cookies, calls `supabase.auth.signOut()`, and redirects to `/login`.
+[logout()](../../src/contexts/AuthContext.tsx#L256) clears the React Query cache, localStorage, sessionStorage, cookies, calls `supabase.auth.signOut()`, and redirects to `/login`.
 
 ---
 
@@ -33,8 +33,8 @@ Supabase stores the session in localStorage by default. On app load, [AuthProvid
 
 Core roles are stored in two tables:
 
-- **[roles](../../roles.sql)**: Role definitions (`user`, `staff`, `admin`, `super-admin`) seeded idempotently by migration.
-- **[user_roles](../../user_roles.sql)**: Maps users to roles via `user_id` and `role_id` foreign keys.
+- **[roles](../../migrations/roles.sql)**: Role definitions (`user`, `staff`, `admin`, `super-admin`) seeded idempotently by migration.
+- **[user_roles](../../migrations/user_roles.sql)**: Maps users to roles via `user_id` and `role_id` foreign keys.
 
 ### Custom JWT Claim: `user_roles`
 
@@ -73,7 +73,7 @@ Additional helpers derive common checks from this:
 
 ## 3. Backend Authorization (Hono / Worker)
 
-The backend uses two authorization functions from [api/lib/auth.ts](../../lib/auth.ts):
+The backend uses two authorization functions from [api/lib/auth.ts](../../api/lib/auth.ts):
 
 ### `requireAppRole(c, requiredRole)`
 
@@ -101,18 +101,18 @@ All backend functions use `createSupabaseClient(env, token)` and call `supabase.
 
 ### AuthContext
 
-[AuthContext](../../contexts/AuthContext.tsx) provides the current user's roles via `user.roles` (string array) and `user.role` (the primary `UserRole` enum). It exposes permission helpers:
+[AuthContext](../../src/contexts/AuthContext.tsx) provides the current user's roles via `user.roles` (string array) and `user.role` (the primary `UserRole` enum). It exposes permission helpers:
 
 - `hasRole(role: UserRole)` — checks if a specific role string is in the user's role array.
 - `hasAnyRole(roles: UserRole[])` — checks if any of the given roles match.
 
 ### Protected Routes
 
-[ProtectedRoute](../../components/auth/ProtectedRoute.tsx) uses the `requiredRole` prop (`AppRole` type) to gate access to pages. It mirrors the backend's hierarchical check: a user with `admin` can access a page requiring `user`.
+[ProtectedRoute](../../src/components/auth/ProtectedRoute.tsx) uses the `requiredRole` prop (`AppRole` type) to gate access to pages. It mirrors the backend's hierarchical check: a user with `admin` can access a page requiring `user`.
 
 ### Plugin Access Gating
 
-Plugins declare access rules in their [PluginDefinition](../../types/plugin.ts#L277):
+Plugins declare access rules in their [PluginDefinition](../../src/types/plugin.ts#L277):
 
 ```typescript
 const plugin: PluginDefinition = {
@@ -167,7 +167,7 @@ This ensures users can only see objects within their own tenant, while super-adm
 
 ## 6. When to Use `createSupabaseClient` vs `createSupabaseAdminClient`
 
-From [api/lib/supabase.ts](../../lib/supabase.ts):
+From [api/lib/supabase.ts](../../src/lib/supabase.ts):
 
 ### `createSupabaseClient(env, token?)`
 

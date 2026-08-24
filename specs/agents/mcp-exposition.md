@@ -145,7 +145,7 @@ In other words:
 
 ## 6. Auth Model For Closed MCP Entries
 
-**Updated 2026-08-01:** programmatic MCP authentication now uses OAuth 2.1 (Authorization Code + PKCE) with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed; it now returns OAuth flow instructions. See [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md) for the full model. The visibility rules below are unchanged — only the token acquisition path changed.
+**Updated 2026-08-01:** programmatic MCP authentication now uses OAuth 2.1 (Authorization Code + PKCE) with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed; it now returns OAuth flow instructions. See [`OAuth_MCP_Authentication.md`](../auth/oauth-mcp-authentication.md) for the full model. The visibility rules below are unchanged — only the token acquisition path changed.
 
 Requirements:
 

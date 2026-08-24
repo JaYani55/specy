@@ -30,31 +30,45 @@ Specy is an **open-source, headless CMS** that treats content as a living specif
 ├── functions/            # Supabase Edge Functions (send_email)
 ├── plugins/              # Workspace plugin directories (gitignored — see §4)
 ├── scripts/              # Build, install, setup, and registry tooling
-├── specs/                # All project documentation (see below)
+├── specs/                # Knowledge base: topical documentation folders (see below)
 ├── wrangler.jsonc        # Cloudflare Worker config (generated from wrangler.default.jsonc)
 └── wrangler.default.jsonc  # Template for wrangler.jsonc
 ```
 
-### `/specs` Directory
+### `/specs` — Knowledge Base
 
-All project documentation lives here. Key files:
+All project documentation lives in `/specs`, organized as a **knowledge base with
+topical folders**. Each folder contains a `README.md` indexing its documents; the root
+[`specs/README.md`](specs/README.md) is the master map.
 
-| File | Purpose |
+**How to navigate:**
+
+1. Start at `specs/README.md` — it maps every folder and answers common questions.
+2. Open the relevant topical folder's `README.md`, then the individual documents.
+3. Follow relative cross-links between documents as needed.
+4. When adding documentation: place it in the matching topical folder, use a
+   kebab-case filename, and register it in that folder's `README.md`.
+5. Older documents in `specs/changes/` may reference pre-restructure paths — treat
+   those references as historical.
+
+| Folder | Purpose |
 |---|---|
-| `Architecture.md` | Frontend architecture, backend communication, maintenance history |
-| `architecture-workflow.md` | BPMN-style overview of all system workflows |
-| `Architecture_Pagebuilder.md` | Page builder architecture deep-dive |
-| `Auth-docs.md` | Authentication and authorization model |
-| `EUPL_Compliance.md` | EUPL licensing rules for plugins and core |
-| `Plugin_Development.md` | Complete plugin development guide |
-| `Plugin_Installation.md` | Plugin lifecycle: register, install, configure, update, remove |
-| `Forms.md` | Forms subsystem documentation |
-| `multi-tenancy.md` | Multi-tenancy model and RLS policies |
-| `Specs_MCP_Exposition.md` | MCP server and spec exposure |
-| `Supabase_Cloudflare-Setup.md` | Infrastructure setup guide |
-| `TIPTAP_INTEGRATION.md` | Rich text editor integration |
-| `Core_Extension_AudioBlock_Queues_Secrets.md` | Core extension documentation |
-| `TODO - Docker Installer.md` | Docker installer planning |
+| `specs/architecture/` | System overview, page builder deep-dive, BPMN workflow overview |
+| `specs/auth/` | Authentication & authorization model, OAuth 2.1 MCP authentication |
+| `specs/platform/` | Supabase/Cloudflare setup, multi-tenancy & RLS, core extensions (audio blocks, queues, secrets) |
+| `specs/features/` | Forms subsystem, Tiptap rich text integration |
+| `specs/plugins/` | Plugin development guide, installation lifecycle, EUPL licensing |
+| `specs/agents/` | Agent-facing docs: MCP exposition, agent system prompt, frontend integration manifest/prompt specs, R2 file storage integration |
+| `specs/plans/` | Forward-looking plans and drafts (not yet implemented) |
+| `specs/changes/` | Date-prefixed change records — mandatory for every change |
+
+Key entry points:
+
+- New to the codebase → `specs/architecture/system-overview.md`
+- Auth model → `specs/auth/authentication-authorization.md`
+- Multi-tenancy / RLS → `specs/platform/multi-tenancy.md`
+- Writing plugins → `specs/plugins/development.md`
+- Storing files/media → `specs/agents/r2-file-storage.md`
 
 ### `/specs/changes` Directory
 
@@ -72,7 +86,7 @@ Existing change logs:
 ### Documentation Requirements
 
 - **All changes must be documented** in `/specs/changes/` with the date in the filename (`YYYY-MM-DD-<description>.md`).
-- **All new systems and features must be documented** in the `/specs/` folder with a dedicated specification file.
+- **All new systems and features must be documented** in `/specs/` inside the matching topical folder (with a kebab-case filename), registered in that folder's `README.md`, and listed in `specs/README.md` if a new folder is created.
 - Change documentation must include: Summary, Files Added, Files Changed, and impact analysis (database, runtime, API surface).
 
 ### Core vs. Plugin Boundary (STRICT)
@@ -82,7 +96,7 @@ All changes are **strictly bound** between Core Changes and Plugin Changes:
 - **Core changes** must be documented in `/specs/` and `/specs/changes/`.
 - **Plugin changes** must be documented in the plugin's own repository. Plugins are **separate repositories** and must NOT be committed to the core repo. The `.gitignore` already enforces this: `plugins/*/` is gitignored.
 - **Communication between plugins and core** can ONLY happen via clearly delineated **Hooks and APIs**. Plugins must never import internal implementation details from core pages or components.
-- **If a new Hook or API is created**, it must be documented in `/specs/` with its contract (target name, scope, context shape, and usage guidance).
+- **If a new Hook or API is created**, it must be documented in the appropriate `/specs/` topical folder with its contract (target name, scope, context shape, and usage guidance).
 
 ### General Rules
 
@@ -119,7 +133,7 @@ Because plugins only depend on the *shape* of core interfaces (not internal logi
   - Documented hook targets (e.g., `settings.defaultLanding.options`, `isibot.flow.types`, `knowledgeBase.entity.actions`)
 - Never modify core files (`src/`, `api/`, `migrations/`) for plugin logic.
 - Importing from `@/components/ui/*`, `@/contexts/*`, `@/hooks/*`, and `@/types/*` is permitted for interoperability.
-- See `specs/Plugin_Development.md` and `specs/EUPL_Compliance.md` for full details.
+- See `specs/plugins/development.md` and `specs/plugins/eupl-compliance.md` for full details.
 
 ---
 

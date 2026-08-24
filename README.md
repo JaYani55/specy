@@ -117,7 +117,7 @@ npm run plugin:remove         # Remove a plugin
 - Namespace your routes under `/plugins/{slug}/`.
 - Never modify files in `src/components/`, `src/pages/`, or `api/` directly â€” the build system gathers your plugin code automatically.
 
-See [specs/EUPL_Compliance.md](specs/EUPL_Compliance.md) for detailed development guidelines.
+See [specs/plugins/eupl-compliance.md](specs/plugins/eupl-compliance.md) for detailed development guidelines.
 
 ---
 
@@ -134,7 +134,7 @@ Because the plugin does not require the internal logic of the CMS to function â€
 
 This means you can distribute plugins under any license (MIT, Apache, proprietary) without triggering the EUPL's copyleft clause.
 
-See [specs/EUPL_Compliance.md](specs/EUPL_Compliance.md) for the full compliance guide.
+See [specs/plugins/eupl-compliance.md](specs/plugins/eupl-compliance.md) for the full compliance guide.
 
 ---
 

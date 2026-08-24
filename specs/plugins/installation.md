@@ -142,11 +142,11 @@ Plugin authors are required to ship matching downmigrations for every forward mi
 
 ## 5. Step 4 — Generated API mounting and wrangler bindings
 
-Plugin API routes are now mounted through the generated [api/plugin-routes.ts](../api/plugin-routes.ts) file. If a plugin's `plugin.json` declares an `api_entrypoint`, `node scripts/register-plugins.mjs` or the normal prebuild/predev flow will regenerate the mount table automatically.
+Plugin API routes are now mounted through the generated [api/plugin-routes.ts](../../api/plugin-routes.ts) file. If a plugin's `plugin.json` declares an `api_entrypoint`, `node scripts/register-plugins.mjs` or the normal prebuild/predev flow will regenerate the mount table automatically.
 
 Plugin API endpoints are reachable under `/api/plugin/{id}/`.
 
-If the plugin also declares `api_hooks_entrypoint`, its backend hook contributions are regenerated into [api/plugin-hooks.ts](../api/plugin-hooks.ts) the same way.
+If the plugin also declares `api_hooks_entrypoint`, its backend hook contributions are regenerated into [api/plugin-hooks.ts](../../api/plugin-hooks.ts) the same way.
 
 ### Wrangler binding injection
 
@@ -312,7 +312,7 @@ npm run plugin:remove -- yatda
 
 The script prints these explicitly, but the things that require manual action are:
 
-**API route** — if the plugin had an `api_entrypoint`, remove its import and `app.route(...)` line from [api/index.ts](../api/index.ts).
+**API route** — if the plugin had an `api_entrypoint`, remove its import and `app.route(...)` line from [api/index.ts](../../api/index.ts).
 
 **Wrangler bindings** — handled automatically. The registry rebuild removes the plugin's bindings from the PLUGIN BINDINGS section of `wrangler.jsonc`.
 
