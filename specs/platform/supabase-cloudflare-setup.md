@@ -369,7 +369,7 @@ SELECT '<USER_UUID>', id FROM public.roles WHERE name = 'super-admin';
 
 ## 10. OAuth 2.1 Server for MCP Agents
 
-Programmatic MCP clients (Cursor, Claude Desktop, autonomous agents) authenticate via OAuth 2.1 with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed on 2026-08-01. Full model: [`OAuth_MCP_Authentication.md`](OAuth_MCP_Authentication.md).
+Programmatic MCP clients (Cursor, Claude Desktop, autonomous agents) authenticate via OAuth 2.1 with Supabase Auth as the Authorization Server. The password-grant `login` MCP tool was removed on 2026-08-01. Full model: [`OAuth_MCP_Authentication.md`](../auth/oauth-mcp-authentication.md).
 
 ### Dashboard configuration (manual, per environment)
 

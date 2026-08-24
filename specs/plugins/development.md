@@ -1037,7 +1037,7 @@ import { SomeIcon } from 'lucide-react';
 
 ## 11. Installation Workflow
 
-The full installation workflow — including registering via the UI, running the install script, applying migrations, mounting API routes, configuring secrets, building, deploying, updating, and removing — is documented in **[Plugin_Installation.md](Plugin_Installation.md)**.
+The full installation workflow — including registering via the UI, running the install script, applying migrations, mounting API routes, configuring secrets, building, deploying, updating, and removing — is documented in **[Plugin_Installation.md](installation.md)**.
 
 Quick reference:
 
@@ -1095,7 +1095,7 @@ To maintain compliance and avoid the copyleft clause:
 - **Do not modify the CMS core** (anything outside of `src/plugins/{slug}/`) for your plugin's logic.
 - **Use the provided interfaces** (`PluginDefinition`, `PluginRoute`) for all interaction points.
 
-For more detailed information, see the [EUPL Compliance Guide](EUPL_Compliance.md).
+For more detailed information, see the [EUPL Compliance Guide](eupl-compliance.md).
 
 ---
 

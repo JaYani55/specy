@@ -2,7 +2,7 @@
 
 This document covers the complete lifecycle of a plugin: registering, installing, configuring, updating, and removing it.
 
-For plugin **development** (writing code, manifest fields, API routes, etc.) see [Plugin_Development.md](Plugin_Development.md).
+For plugin **development** (writing code, manifest fields, API routes, etc.) see [Plugin_Development.md](development.md).
 
 ---
 

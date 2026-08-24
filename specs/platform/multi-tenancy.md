@@ -647,7 +647,7 @@ using (
 
 The intent was to tighten access. The side effect was that the system-seeded default schemas (`service-product`, `blog`, etc. with `owner_user_id IS NULL`) only became visible when `public.is_super_admin()` returned true.
 
-This combined with the auth-gated route rendering change in `App.tsx` (documented in [`Architecture.md`](Architecture.md) and `specs/changes/2026-06-20-page-schema-visibility-fix.md`) to produce a console regression:
+This combined with the auth-gated route rendering change in `App.tsx` (documented in [`Architecture.md`](../architecture/system-overview.md) and `../changes/2026-06-20-page-schema-visibility-fix.md`) to produce a console regression:
 
 - non-super-admin users resolve zero rows from `getSchemas()`
 - the empty-state handler in `src/pages/Pages.tsx` interprets that as "no frontends connected yet" and renders the tutorial introduction
@@ -1181,7 +1181,7 @@ That means deployment review must consider both:
 
 The `authenticated_select_page_schemas` policy introduced in Migration 5 had the side effect of hiding system-owned `page_schemas` rows (`owner_user_id IS NULL`, e.g. the seeded `service-product` and `blog` defaults) from regular authenticated users, because the visibility clause required `public.is_super_admin()` for that branch.
 
-Combined with the auth-gated route rendering change in `App.tsx` (see [`specs/Architecture.md`](Architecture.md) and `specs/changes/2026-06-20-page-schema-visibility-fix.md`), the Pages console then resolved zero schemas for non-super-admin users. The empty-state handler in `src/pages/Pages.tsx` rendered the onboarding tutorial instead of the populated dashboard, masking the regression as a "no frontends connected yet" message.
+Combined with the auth-gated route rendering change in `App.tsx` (see [`specs/Architecture.md`](../architecture/system-overview.md) and `../changes/2026-06-20-page-schema-visibility-fix.md`), the Pages console then resolved zero schemas for non-super-admin users. The empty-state handler in `src/pages/Pages.tsx` rendered the onboarding tutorial instead of the populated dashboard, masking the regression as a "no frontends connected yet" message.
 
 The follow-up migration re-opens the SELECT path for system-owned schemas to all authenticated users while leaving the mutating restrictions in Migration 4 untouched. Mutating system-owned schemas still requires `super-admin`, so this is a visibility-only relaxation.
 

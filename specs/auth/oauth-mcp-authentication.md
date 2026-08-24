@@ -1,6 +1,6 @@
 # OAuth 2.1 MCP Authentication
 
-This document describes the OAuth 2.1 authentication model for programmatic MCP access to Specy, introduced on August 1, 2026. OAuth is client-managed for standards-compliant MCP clients: the client handles PKCE, browser launch, callback capture, token exchange, storage, refresh, and reconnection. The Worker does not expose manual authorization-code tools on the normal MCP surface. It supersedes the password-grant `login` MCP tool described in [`Specs_MCP_Exposition.md`](Specs_MCP_Exposition.md) §6.
+This document describes the OAuth 2.1 authentication model for programmatic MCP access to Specy, introduced on August 1, 2026. OAuth is client-managed for standards-compliant MCP clients: the client handles PKCE, browser launch, callback capture, token exchange, storage, refresh, and reconnection. The Worker does not expose manual authorization-code tools on the normal MCP surface. It supersedes the password-grant `login` MCP tool described in [`Specs_MCP_Exposition.md`](../agents/mcp-exposition.md) §6.
 
 It covers:
 
@@ -11,9 +11,9 @@ It covers:
 
 Related documents:
 
-- [`Auth-docs.md`](Auth-docs.md) — overall auth & authorization model
-- [`Specs_MCP_Exposition.md`](Specs_MCP_Exposition.md) — MCP registry and exposure model
-- [`multi-tenancy.md`](multi-tenancy.md) — tenant/workspace model behind `tenant_id`
+- [`Auth-docs.md`](authentication-authorization.md) — overall auth & authorization model
+- [`Specs_MCP_Exposition.md`](../agents/mcp-exposition.md) — MCP registry and exposure model
+- [`multi-tenancy.md`](../platform/multi-tenancy.md) — tenant/workspace model behind `tenant_id`
 
 ---
 
