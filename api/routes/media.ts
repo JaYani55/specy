@@ -9,9 +9,9 @@
  * Endpoints:
  *   GET  /config            → { provider, bucket, configured, publicUrlConfigured? }
  *   GET  /sources           → { sources: MediaSourceInfo[] }
- *   GET  /list?path=&source=        → { items: MediaItem[] }
- *   POST /upload?source=            → { url, path }   (multipart/form-data: file, path?)
- *   DELETE /file?path=&source=      → { success: true }
+ *   GET  /list?path=&source=&scope=  → { items: MediaItem[] }        (scope: media|files, default: media)
+ *   POST /upload?source=&scope=     → { url, path }   (multipart/form-data: file, path?, scope?)
+ *   DELETE /file?path=&source=&scope= → { success: true }
  */
 
 import { AwsClient } from 'aws4fetch';
@@ -44,6 +44,9 @@ import {
 } from '../lib/tenantStorageMgt';
 import { Env, createSupabaseClient, createSupabaseAdminClient } from '../lib/supabase';
 import { getMediaSourceMounts, type ExtraMediaSource, type MediaSourceMount } from '../lib/systemConfig';
+import { parseTenantStorageScope, type TenantStorageScope } from '../lib/tenantStorageHooks';
+
+const INVALID_SCOPE_ERROR = 'Invalid "scope" — expected "media" or "files".';
 
 // File operations (list files, upload, delete) use the publishable key — bucket
 // policies govern access so no service key is needed for those.
@@ -315,10 +318,13 @@ media.get('/sources', async (c) => {
   return c.json({ sources });
 });
 
-// GET /api/media/list?path=&source=
+// GET /api/media/list?path=&source=&scope=
 media.get('/list', async (c) => {
   const path = c.req.query('path') ?? '';
   const sourceParam = c.req.query('source');
+  const scope = parseTenantStorageScope(c.req.query('scope'));
+  if (!scope) return c.json({ error: INVALID_SCOPE_ERROR }, 400);
+
   const token = getBearerToken(c.req.header('Authorization'));
   const auth = token ? await getOptionalAuthSession(c) : null;
   if (auth instanceof Response) return auth;
@@ -349,7 +355,7 @@ media.get('/list', async (c) => {
       if (requiredAuth instanceof Response) return requiredAuth;
 
       const { items, summary } = await listTenantStorageItems(c.env, requiredAuth, {
-        scope: 'media',
+        scope,
         folderPath: path,
         requestUrl: c.req.url,
       });
@@ -398,7 +404,7 @@ media.get('/list', async (c) => {
   }
 });
 
-// POST /api/media/upload  (multipart/form-data: file, path?, source?)
+// POST /api/media/upload  (multipart/form-data: file, path?, source?, scope?)
 media.post('/upload', async (c) => {
   const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
@@ -415,6 +421,12 @@ media.post('/upload', async (c) => {
 
   const folder = normalizeTenantStorageFolderPath((formData.get('path') as string | null) ?? '');
   const sourceParam = (formData.get('source') as string | null) ?? c.req.query('source');
+  // Scope is chosen at upload time — it decides the scope segment of the object key
+  // (see specs/agents/r2-file-storage.md §5 and §8.1).
+  const scope: TenantStorageScope | null = parseTenantStorageScope(
+    formData.get('scope') ?? c.req.query('scope'),
+  );
+  if (!scope) return c.json({ error: INVALID_SCOPE_ERROR }, 400);
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = folder ? `${folder.replace(/\/$/, '')}/${safeName}` : safeName;
 
@@ -441,7 +453,7 @@ media.post('/upload', async (c) => {
     }
 
     if (cfg.provider === 'r2') {
-      const summary = await ensureTenantStorageSummary(c.env, auth, { scope: 'media' });
+      const summary = await ensureTenantStorageSummary(c.env, auth, { scope });
       assertTenantStorageAccess(summary);
       const buf = await file.arrayBuffer();
       assertTenantStorageQuota(summary, buf.byteLength);
@@ -449,7 +461,7 @@ media.post('/upload', async (c) => {
       const scoped = buildTenantStorageObjectKey({
         tenantId: summary.tenantId,
         userId: summary.userId,
-        scope: 'media',
+        scope,
         folderPath: folder,
         filename: safeName,
       });
@@ -460,7 +472,7 @@ media.post('/upload', async (c) => {
       try {
         await registerTenantStorageObject(c.env, auth, {
           tenantId: summary.tenantId,
-          scope: 'media',
+          scope,
           sourceMountId: cfg.id,
           folderPath: scoped.folderPath,
           objectKey: scoped.objectKey,
@@ -493,13 +505,16 @@ media.post('/upload', async (c) => {
   }
 });
 
-// DELETE /api/media/file?path=
+// DELETE /api/media/file?path=&scope=
 media.delete('/file', async (c) => {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path query param required' }, 400);
 
   const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
+
+  const scope = parseTenantStorageScope(c.req.query('scope'));
+  if (!scope) return c.json({ error: INVALID_SCOPE_ERROR }, 400);
 
   const sourceParam = c.req.query('source');
   const cfg = await resolveMediaMount(c.env, c.req.url, sourceParam, auth, path);
@@ -521,7 +536,7 @@ media.delete('/file', async (c) => {
 
       await s3Delete(toExtraMediaSource(cfg), secretAccessKey, path);
     } else if (cfg.provider === 'r2') {
-      const summary = await ensureTenantStorageSummary(c.env, auth, { scope: 'media' });
+      const summary = await ensureTenantStorageSummary(c.env, auth, { scope });
       assertTenantStorageAccess(summary);
       await deleteTenantStorageObject(c.env, auth, path);
     } else {
@@ -585,7 +600,9 @@ media.get('/file', async (c) => {
       }
     }
   } else {
-    const trackedObject = await getTenantStorageObjectByKey(c.env, auth, path, 'media');
+    // Authenticated lookups are not restricted to the 'media' scope — users may
+    // fetch their own 'files'-scope documents without a signature as well.
+    const trackedObject = await getTenantStorageObjectByKey(c.env, auth, path);
     if (!trackedObject) {
       return c.json({ error: 'File not found' }, 404);
     }

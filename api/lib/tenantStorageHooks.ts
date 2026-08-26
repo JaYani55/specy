@@ -2,6 +2,26 @@ import type { VerifiedAuthSession } from './auth';
 
 export type TenantStorageScope = 'media' | 'files';
 
+/** All scopes accepted by client-facing storage endpoints (upload, list, delete). */
+export const TENANT_STORAGE_SCOPES: readonly TenantStorageScope[] = ['media', 'files'];
+
+export function isTenantStorageScope(value: unknown): value is TenantStorageScope {
+  return typeof value === 'string' && (TENANT_STORAGE_SCOPES as readonly string[]).includes(value);
+}
+
+/**
+ * Parses a client-supplied scope value (form field or query param).
+ * Returns `fallback` when absent/empty, `null` when present but invalid — callers
+ * should reject invalid values with HTTP 400 instead of silently coercing.
+ */
+export function parseTenantStorageScope(
+  value: string | FormDataEntryValue | null | undefined,
+  fallback: TenantStorageScope = 'media',
+): TenantStorageScope | null {
+  if (value === null || value === undefined || value === '') return fallback;
+  return isTenantStorageScope(value) ? value : null;
+}
+
 export interface TenantStorageTenant {
   id: string;
   name: string;

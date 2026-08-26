@@ -11,6 +11,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | [`frontend-prompt-specs.md`](frontend-prompt-specs.md) | Prompt specs served via `/api/specs` for frontends |
 | [`r2-file-storage.md`](r2-file-storage.md) | Unified R2 file & media storage: API vs. binding decision, auth, DB schema, key conventions |
 | [`database-integration.md`](database-integration.md) | Database layer overview (Supabase client, core tables) and the dedicated-schema rule for plugin databases |
+| [`unified-secrets-storage.md`](unified-secrets-storage.md) | Secrets storage via Cloudflare (Secrets Store bindings, Worker secrets) and encrypted managed secrets |
 
 Related: token acquisition is covered in
 [`../auth/oauth-mcp-authentication.md`](../auth/oauth-mcp-authentication.md).
