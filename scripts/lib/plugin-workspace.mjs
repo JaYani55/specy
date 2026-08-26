@@ -701,12 +701,13 @@ function rebuildWranglerPluginBindings(plugins) {
           }
         }
 
-        const varEntries = varKeys.map((key) => {
+        const varEntries = varKeys.map((key, idx) => {
           const { value, pluginId } = pluginVars[key];
-          return `${varIndent}"${key}": "${value}"  // ${pluginId}`;
+          const comma = idx < varKeys.length - 1 ? ',' : '';
+          return `${varIndent}"${key}": "${value}"${comma}  // ${pluginId}`;
         });
 
-        modifiedLines.splice(varsCloseIdx, 0, ...varEntries.map((l) => l + '\n'));
+        modifiedLines.splice(varsCloseIdx, 0, ...varEntries);
         startLineIdx += varEntries.length;
         endLineIdx += varEntries.length;
       }
