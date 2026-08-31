@@ -18,12 +18,21 @@ interface TenantRow extends TenantStorageTenant {
   default_for_user_id: string | null;
 }
 
+/**
+ * Provisioning type of a tenant storage allocation:
+ * - 'files' — generic managed file/media storage (default, existing behavior).
+ * - 'apps'  — dedicated quota bucket for workspace app files stored by the
+ *             PluraDash sync engine under .../files/apps/... .
+ */
+export type TenantStorageAllocationType = 'files' | 'apps';
+
 interface StorageAllocationRow {
   tenant_id: string;
   user_id: string;
   quota_bytes: number;
   used_bytes_cached: number;
   status: 'active' | 'suspended';
+  allocation_type?: TenantStorageAllocationType;
 }
 
 export interface TenantStorageObjectRow {
@@ -138,13 +147,24 @@ async function resolveTenant(env: Env, auth: VerifiedAuthSession, requestedTenan
   return defaultTenant ?? tenants[0];
 }
 
-async function readTenantStorageUsageBytes(env: Env, tenantId: string, userId: string): Promise<number> {
+async function readTenantStorageUsageBytes(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  allocationType: TenantStorageAllocationType = 'files',
+): Promise<number> {
   const admin = await createSupabaseAdminClient(env);
-  const { data, error } = await admin
+  let query = admin
     .from('tenant_storage_objects')
-    .select('size_bytes')
+    .select('size_bytes, object_key')
     .eq('tenant_id', tenantId)
     .eq('user_id', userId);
+
+  if (allocationType === 'apps') {
+    query = query.like('object_key', `tenant/${tenantId}/user/${userId}/files/apps/%`);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -156,8 +176,14 @@ async function readTenantStorageUsageBytes(env: Env, tenantId: string, userId: s
 export async function ensureTenantStorageSummary(
   env: Env,
   auth: VerifiedAuthSession,
-  input: { requestedTenantId?: string | null; scope: TenantStorageScope },
+  input: {
+    requestedTenantId?: string | null;
+    scope: TenantStorageScope;
+    /** Provisioning bucket to check/provision; defaults to 'files'. */
+    allocationType?: TenantStorageAllocationType;
+  },
 ): Promise<TenantStorageSummary> {
+  const allocationType: TenantStorageAllocationType = input.allocationType ?? 'files';
   if (!auth.userId) {
     throw new Error('Authenticated user id is required.');
   }
@@ -178,13 +204,14 @@ export async function ensureTenantStorageSummary(
     auth,
     tenant,
     scope: input.scope,
+    allocationType,
     summary: baseSummary,
   });
 
   const configuredSummary = hookContext.summary;
 
   if (configuredSummary.isUnlimited) {
-    const usedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId);
+    const usedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId, allocationType);
     return {
       ...configuredSummary,
       tenantId: tenant.id,
@@ -214,9 +241,10 @@ export async function ensureTenantStorageSummary(
   const admin = await createSupabaseAdminClient(env);
   const { data: existing, error: existingError } = await admin
     .from('tenant_storage_allocations')
-    .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status')
+    .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status, allocation_type')
     .eq('tenant_id', tenant.id)
     .eq('user_id', auth.userId)
+    .eq('allocation_type', allocationType)
     .maybeSingle();
 
   if (existingError) {
@@ -227,17 +255,22 @@ export async function ensureTenantStorageSummary(
   let allocation = existing as StorageAllocationRow | null;
 
   if (!allocation) {
+    // Provision the allocation with the usage already recorded for this
+    // bucket (existing catalog rows are back-filled on first provisioning).
+    const initialUsedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId, allocationType);
+
     const { data: inserted, error: insertError } = await admin
       .from('tenant_storage_allocations')
       .insert({
         tenant_id: tenant.id,
         user_id: auth.userId,
+        allocation_type: allocationType,
         quota_bytes: configuredQuotaBytes,
-        used_bytes_cached: 0,
+        used_bytes_cached: initialUsedBytes,
         status: 'active',
         provisioned_by: auth.userId,
       })
-      .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status')
+      .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status, allocation_type')
       .single();
 
     if (insertError) {

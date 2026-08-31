@@ -1,3 +1,4 @@
+import type { TenantStorageAllocationType } from './tenantStorageMgt';
 import type { VerifiedAuthSession } from './auth';
 
 export type TenantStorageScope = 'media' | 'files';
@@ -43,6 +44,8 @@ export interface TenantStoragePolicyContext {
   auth: VerifiedAuthSession;
   tenant: TenantStorageTenant;
   scope: TenantStorageScope;
+  /** Provisioning bucket being checked/provisioned ('files' or 'apps'). */
+  allocationType: TenantStorageAllocationType;
   summary: TenantStorageSummary;
 }
 

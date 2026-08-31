@@ -10,6 +10,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | [`frontend-integration-manifest.md`](frontend-integration-manifest.md) | Manifest contract for frontend integrations |
 | [`frontend-prompt-specs.md`](frontend-prompt-specs.md) | Prompt specs served via `/api/specs` for frontends |
 | [`r2-file-storage.md`](r2-file-storage.md) | Unified R2 file & media storage: API vs. binding decision, auth, DB schema, key conventions |
+| [`plurapi-file-sync-integration.md`](plurapi-file-sync-integration.md) | Handoff spec for PluraPi: workspace file sync endpoints, auth, workflows, error recovery |
 | [`database-integration.md`](database-integration.md) | Database layer overview (Supabase client, core tables) and the dedicated-schema rule for plugin databases |
 | [`unified-secrets-storage.md`](unified-secrets-storage.md) | Secrets storage via Cloudflare (Secrets Store bindings, Worker secrets) and encrypted managed secrets |
 

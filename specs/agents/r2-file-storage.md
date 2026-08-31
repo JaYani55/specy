@@ -187,9 +187,14 @@ this correctly.
 
 ### `tenant_storage_allocations` — quotas
 
-Composite PK `(tenant_id, user_id)` with `quota_bytes`, `used_bytes_cached` (denormalized),
-and `status` (`active` / `suspended`). An AFTER INSERT/UPDATE/DELETE trigger on
-`tenant_storage_objects` keeps `used_bytes_cached` in sync — you never update it manually.
+Composite PK `(tenant_id, user_id, allocation_type)` with `quota_bytes`,
+`used_bytes_cached` (denormalized), `allocation_type` (`files` / `apps`), and
+`status` (`active` / `suspended`). An AFTER INSERT/UPDATE/DELETE trigger on
+`tenant_storage_objects` keeps `used_bytes_cached` in sync — you never update it
+manually. The trigger routes usage to the matching allocation row based on the
+object key: objects under `tenant/{tenantId}/user/{userId}/files/apps/%` count
+toward the `apps` bucket (workspace app files of the PluraDash sync engine,
+default 2 GiB), everything else toward the `files` bucket.
 
 ### Indexes
 
