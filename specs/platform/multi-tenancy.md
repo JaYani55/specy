@@ -672,6 +672,72 @@ Existing migration files must not be edited once shipped — re-running a migrat
 
 ---
 
+## Workspace Invitations And Membership Acceptance
+
+Organization workspaces layer an e-mail-first invitation flow on top of `tenant_users`.
+The invitation data model lives in the PluraDash plugin schema (`pluradash.organization_invitations`,
+see [`specs/changes/2026-08-05-pluradash-organization-foundation.md`](../changes/2026-08-05-pluradash-organization-foundation.md));
+the acceptance chain is documented here because it spans core and plugin surfaces.
+
+### Invitation Lifecycle
+
+1. **Invite** — a tenant admin posts to `/api/plugin/pluradash/organization/invitations`.
+   The Worker generates a 32-byte random token, stores only its SHA-256 hash
+   (`acceptance_token_hash`) plus a 7-day `expires_at`, checks that the e-mail is not
+   already an active member, queues the invitation e-mail via `mail_delivery_jobs`
+   (event `organization_invitation`) and returns the acceptance URL
+   (`{APP_URL}/invitation/accept?token=...`) so the UI can re-display it.
+2. **Lookup** — `GET /organization/invitations/lookup?token=...` is public (no auth).
+   It resolves the token hash to safe display data: organization name, recipient
+   e-mail, admin flag, expiry, and whether an auth account already exists for the
+   e-mail. Stale pending/sent invitations are lazily transitioned to `expired`.
+3. **Accept** — `POST /organization/invitations/accept` is public with **optional**
+   bearer auth and supports both personas:
+   - *Existing user*: the bearer token identifies the caller; the Worker verifies
+     that the authenticated e-mail matches the invitation recipient and links the
+     membership.
+   - *New user*: the request carries `username` + `password`; the Worker creates the
+     auth user (e-mail pre-confirmed), the `user_profile` row (whose insert trigger
+     bootstraps the default workspace), the base `user` role, and the membership.
+   In both cases the membership is written with `status = 'active'` and
+   `is_tenant_admin = requested_tenant_admin`, and the invitation transitions to
+   `accepted`.
+4. **Expiry** — invitations older than `expires_at` transition to `expired` lazily on
+   lookup, accept, and the authenticated listing route. A unique partial index on
+   `(organization_id, lower(recipient_email)) where status in ('pending','sent')`
+   prevents duplicate open invitations; expired/cancelled/accepted rows free the
+   e-mail for re-invitation.
+
+### Frontend Route Slot
+
+The acceptance page must be reachable without login. Core therefore provides a
+**public route slot**: `PluginDefinition.publicRoutes` (see
+[`specs/plugins/development.md`](../plugins/development.md) §5). Core renders these
+routes in `App.tsx` outside the authenticated layout; PluraDash fills the slot with
+`/invitation/accept` (`AcceptInvitationPage`). The page branches on the lookup
+result: accept directly when a matching session exists, offer login with a
+`returnTo` handoff when the account exists, or show the registration form for new
+users.
+
+### Security Properties
+
+- Only the token **hash** is stored; the raw token exists solely in the e-mail link
+  and the lookup/accept request. Tokens are single-purpose and expire.
+- Acceptance for existing users requires the authenticated e-mail to match the
+  invitation recipient — a logged-in user cannot accept someone else's invitation.
+- Membership insertion on acceptance runs through the admin client **server-side
+  after token validation**; this is deliberate because a brand-new member cannot
+  pass the `tenant_admin_insert_tenant_users` RLS policy on their own.
+- Member administration (`PATCH`/`DELETE /organization/members/:userId`) runs
+  through the user-scoped client so `tenant_users` RLS remains the enforcement
+  layer; the routes refuse self-modification and refuse to remove the last active
+  tenant admin.
+- Deleting the organization record (`DELETE /organization`) is tenant-admin gated
+  via the `024_organization_delete_rls.sql` plugin policy; the tenant workspace and
+  its members are preserved.
+
+---
+
 ## Route-Level Changes
 
 Database hardening alone is not sufficient when route handlers use a service client that bypasses RLS. The following route changes were therefore included.

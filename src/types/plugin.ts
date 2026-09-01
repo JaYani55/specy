@@ -366,6 +366,12 @@ export interface PluginDefinition {
   version: string;
   /** Page routes registered by this plugin. */
   routes: PluginRoute[];
+  /**
+   * Optional public routes rendered OUTSIDE the authenticated layout and
+   * without any auth gate (e.g. invitation acceptance, share pages).
+   * Use sparingly — every route here is reachable by anonymous visitors.
+   */
+  publicRoutes?: PluginRoute[];
   /** Sidebar entries registered by this plugin. */
   sidebarItems: PluginSidebarItem[];
   /** Optional access contract evaluated against JWT user_roles claims. */

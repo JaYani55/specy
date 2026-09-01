@@ -46,6 +46,14 @@ export function getPluginRoutes(userRoles?: string[]): PluginRoute[] {
 }
 
 /**
+ * Returns public (unauthenticated) page routes contributed by plugins.
+ * These are rendered by App.tsx outside the authenticated layout.
+ */
+export function getPluginPublicRoutes(): PluginRoute[] {
+  return registeredPlugins.flatMap((plugin) => plugin.publicRoutes ?? []);
+}
+
+/**
  * Returns all sidebar items contributed by plugins, optionally filtered by group.
  * @param group  If provided, only returns items from that group.
  */

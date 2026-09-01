@@ -64,7 +64,7 @@ import Plugins from "./pages/Plugins";
 import { getDefaultLandingPath, getStoredSetting, resolveDefaultLandingView } from './services/defaultLandingService';
 
 // Plugin loader — provides build-time routes from installed plugins
-import { getPluginRoutes } from "./plugins/loader";
+import { getPluginPublicRoutes, getPluginRoutes } from "./plugins/loader";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -327,6 +327,15 @@ const AppContent = () => {
         <Route path="/s/:tenantName/:formShareSlug" element={<FormSharePage />} />
         <Route path="/s/:tenantName/:formShareSlug/results" element={<PollResultsPage />} />
         <Route path="/o/:tenantName/:objectShareSlug" element={<ObjectSharePage />} />
+
+        {/* Public plugin routes (no auth gate, e.g. workspace invitation acceptance) */}
+        {getPluginPublicRoutes().map((r) => (
+          <Route
+            key={r.path}
+            path={r.path}
+            element={<r.component />}
+          />
+        ))}
 
         <Route path="*" element={<NotFound />} />
       </Routes>

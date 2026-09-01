@@ -542,6 +542,32 @@ interface PluginRoute {
 - `'admin'` — requires admin or super-admin role
 - `'super-admin'` — requires SUPERADMIN role only
 
+**Public routes (no auth gate):**
+
+Plugins may also contribute routes that are reachable by **anonymous visitors** — for
+example an invitation acceptance page. Declare them in the optional `publicRoutes`
+array of the `PluginDefinition`:
+
+```typescript
+const plugin: PluginDefinition = {
+  // ...
+  routes: [ /* authenticated routes */ ],
+  publicRoutes: [
+    {
+      path: '/invitation/accept',
+      component: AcceptInvitationPage,
+    },
+  ],
+};
+```
+
+Core renders these in `App.tsx` outside the authenticated layout and without any
+`ProtectedRoute` (see `getPluginPublicRoutes()` in `src/plugins/loader.ts`). The
+component itself is responsible for handling the unauthenticated state. Use this
+slot sparingly — every entry is publicly reachable, must not assume a logged-in
+user, and must be namespaced to avoid collisions with core routes (the CMS owns
+`/login`, `/s/*`, `/o/*`, `/forms/share/*`, `/objects/share/*`, `/oauth/*`).
+
 **Example page component:**
 
 ```typescript
