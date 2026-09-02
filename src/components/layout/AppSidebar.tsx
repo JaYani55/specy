@@ -6,6 +6,7 @@ import { useTheme } from "@/contexts/ThemeContext"
 import { usePermissions } from "@/hooks/usePermissions"
 import { useEnabledWebapps } from "@/hooks/useEnabledWebapps"
 import { useActiveWorkspace } from "@/contexts/ActiveWorkspaceContext"
+import { useFeatureFlags } from "@/contexts/FeatureFlagsContext"
 import { getPluginSidebarTree } from "@/plugins/loader"
 import Logo from "@/components/shared/Logo"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -109,25 +110,26 @@ export function AppSidebar() {
   }
 
   // Dynamic sidebar items from installed plugins (admin group)
+  const { flags: featureFlags } = useFeatureFlags()
   const pluginAdminItems = useMemo(
     () => canAccessVerwaltung
-      ? getPluginSidebarTree('admin', user?.roles ?? []).filter((item) => {
+      ? getPluginSidebarTree('admin', user?.roles ?? [], featureFlags).filter((item) => {
           if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
           if (item.requiredRole === 'admin') return canManagePlugins;
           return true;
         })
       : [],
-    [canAccessVerwaltung, canManagePlugins, user?.roles]
+    [canAccessVerwaltung, canManagePlugins, user?.roles, featureFlags]
   )
 
   // Dynamic sidebar items from installed plugins (main group — visible to all authenticated users)
   const pluginMainItems = useMemo(
-    () => getPluginSidebarTree('main', user?.roles ?? []).filter((item) => {
+    () => getPluginSidebarTree('main', user?.roles ?? [], featureFlags).filter((item) => {
       if (item.requiredRole === 'super-admin') return user?.roles?.includes('super-admin') ?? false;
       if (item.requiredRole === 'admin') return canManagePlugins;
       return true;
     }),
-    [canManagePlugins, user?.roles]
+    [canManagePlugins, user?.roles, featureFlags]
   )
   const webappItems = webapps
 

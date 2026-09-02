@@ -16,6 +16,7 @@ import {
 import { getSchemas, groupSchemasByTLD, checkDomainHealthDirect, startSchemaRegistration, unhookSchema } from '@/services/pageService';
 import type { PageSchema, TLDGroup } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useFeatureFlags } from '@/contexts/FeatureFlagsContext';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { toast } from 'sonner';
 import AgentLogs from '@/components/pagebuilder/AgentLogs';
@@ -44,6 +45,9 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ language, schemas, 
   const [copied, setCopied] = useState(false);
   const [startingRegId, setStartingRegId] = useState<string | null>(null);
   const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'astro'>('nextjs');
+  const [showTechnical, setShowTechnical] = useState(false);
+  const { isFeatureFlagEnabled } = useFeatureFlags();
+  const isDevMode = isFeatureFlagEnabled('devMode');
 
   const handleCopy = async (text: string) => {
     try {
@@ -399,35 +403,14 @@ Available MCP tools:
             </p>
           </div>
 
-          {/* What is a TLD section */}
-          <div className="bg-white/60 dark:bg-black/20 rounded-xl p-5 border border-amber-200/80 dark:border-amber-700/40 space-y-3">
-            <h3 className="font-semibold text-amber-900 dark:text-amber-200 text-sm flex items-center gap-2">
-              <Globe className="h-4 w-4" />
-              {language === 'en' ? 'How Domains (TLDs) Work' : 'Wie Domains (TLDs) funktionieren'}
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-amber-800/80 dark:text-amber-200/70 leading-relaxed">
-              <div className="space-y-2">
-                <p className="font-medium text-amber-900 dark:text-amber-200">
-                  {language === 'en' ? 'One domain = one frontend app' : 'Eine Domain = eine Frontend-App'}
-                </p>
-                <p>
-                  {language === 'en'
-                    ? 'Each TLD (e.g. example.com, blog.yoursite.de) represents one deployed frontend. The CMS sends content to it and monitors its health.'
-                    : 'Jede TLD (z.B. example.com, blog.deinsite.de) repräsentiert ein deployed Frontend. Das CMS sendet Inhalte dorthin und überwacht die Erreichbarkeit.'}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <p className="font-medium text-amber-900 dark:text-amber-200">
-                  {language === 'en' ? 'Multiple schemas per domain' : 'Mehrere Schemas pro Domain'}
-                </p>
-                <p>
-                  {language === 'en'
-                    ? 'A single domain can handle multiple schemas (e.g. product pages + blog posts). All schemas sharing a domain are grouped together and share one health ping.'
-                    : 'Eine Domain kann mehrere Schemas bedienen (z.B. Produktseiten + Blogbeiträge). Alle Schemas einer Domain werden gruppiert und teilen sich einen Health-Ping.'}
-                </p>
-              </div>
-            </div>
-          </div>
+          {/* Hint for technical users (only shown when developer mode is enabled) */}
+          {isDevMode && (
+          <p className="text-center text-xs text-amber-700/80 dark:text-amber-300/60">
+            {language === 'en'
+              ? 'Developer or working with an AI agent? Open the “Technical Documentation” below for API endpoints and a ready-to-use agent prompt.'
+              : 'Entwickler oder mit einem KI-Agenten unterwegs? Öffne unten die „Technische Dokumentation“ für API-Endpunkte und einen einsatzbereiten Agenten-Prompt.'}
+          </p>
+          )}
 
           {/* Steps */}
           <div className="space-y-3">
@@ -490,7 +473,55 @@ Available MCP tools:
             </div>
           </div>
 
+          {/* Technical documentation — only visible with the "devMode" feature flag */}
+          {isDevMode && (
+            <>
           <Separator className="bg-amber-200/60 dark:bg-amber-700/30" />
+
+          <Collapsible open={showTechnical} onOpenChange={setShowTechnical} className="space-y-6">
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="w-full flex items-center justify-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 transition-colors"
+              >
+                {showTechnical ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {language === 'en' ? 'Technical Documentation' : 'Technische Dokumentation'}
+                <span className="text-xs font-normal text-amber-700/70 dark:text-amber-400/60">
+                  {language === 'en' ? '— for developers & AI agents' : '— für Entwickler & KI-Agenten'}
+                </span>
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-8">
+
+          {/* What is a TLD section */}
+          <div className="bg-white/60 dark:bg-black/20 rounded-xl p-5 border border-amber-200/80 dark:border-amber-700/40 space-y-3">
+            <h3 className="font-semibold text-amber-900 dark:text-amber-200 text-sm flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              {language === 'en' ? 'How Domains (TLDs) Work' : 'Wie Domains (TLDs) funktionieren'}
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-amber-800/80 dark:text-amber-200/70 leading-relaxed">
+              <div className="space-y-2">
+                <p className="font-medium text-amber-900 dark:text-amber-200">
+                  {language === 'en' ? 'One domain = one frontend app' : 'Eine Domain = eine Frontend-App'}
+                </p>
+                <p>
+                  {language === 'en'
+                    ? 'Each TLD (e.g. example.com, blog.yoursite.de) represents one deployed frontend. The CMS sends content to it and monitors its health.'
+                    : 'Jede TLD (z.B. example.com, blog.deinsite.de) repräsentiert ein deployed Frontend. Das CMS sendet Inhalte dorthin und überwacht die Erreichbarkeit.'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="font-medium text-amber-900 dark:text-amber-200">
+                  {language === 'en' ? 'Multiple schemas per domain' : 'Mehrere Schemas pro Domain'}
+                </p>
+                <p>
+                  {language === 'en'
+                    ? 'A single domain can handle multiple schemas (e.g. product pages + blog posts). All schemas sharing a domain are grouped together and share one health ping.'
+                    : 'Eine Domain kann mehrere Schemas bedienen (z.B. Produktseiten + Blogbeiträge). Alle Schemas einer Domain werden gruppiert und teilen sich einen Health-Ping.'}
+                </p>
+              </div>
+            </div>
+          </div>
 
           {/* API Endpoints */}
           <div className="space-y-3">
@@ -592,6 +623,11 @@ Available MCP tools:
               </Button>
             </div>
           </div>
+
+            </CollapsibleContent>
+          </Collapsible>
+            </>
+          )}
 
           {/* Available Schemas */}
           {schemas.length > 0 && (

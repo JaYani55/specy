@@ -3,9 +3,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { DefaultViewSetting } from '@/components/profile/DefaultViewSetting';
-import { ArrowLeft, LayoutDashboard, PanelLeft, Globe } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, PanelLeft, Globe, FlaskConical, Code2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { FEATURE_FLAGS, useFeatureFlags } from '@/contexts/FeatureFlagsContext';
 import { ProfileSkeleton } from '@/components/profile/ProfileSkeleton';
 import {
   getDefaultLandingOptions,
@@ -15,8 +17,14 @@ import {
   type DefaultLandingOption,
 } from '@/services/defaultLandingService';
 
+const flagIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  betaFeatures: FlaskConical,
+  devMode: Code2,
+};
+
 const Settings = () => {
   const { language, layoutMode, setLayoutMode, changeLanguage } = useTheme();
+  const { flags, setFeatureFlag } = useFeatureFlags();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [defaultView, setDefaultView] = React.useState<string>('events');
@@ -145,6 +153,54 @@ const Settings = () => {
               options={defaultViewOptions}
               onUpdate={handleUpdateDefaultView}
             />
+          </Card>
+
+          {/* Feature Flags (stored locally in this browser) */}
+          <Card className="p-6">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-primary" />
+                <h2 className="text-lg font-semibold">
+                  {language === "en" ? "Feature Flags" : "Funktionen"}
+                </h2>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {language === "en"
+                  ? "These switches are saved locally in your browser and only affect this device."
+                  : "Diese Schalter werden lokal in deinem Browser gespeichert und wirken sich nur auf dieses Gerät aus."}
+              </p>
+              <div className="space-y-4">
+                {FEATURE_FLAGS.map((flag) => {
+                  const Icon = flagIcons[flag.id] ?? FlaskConical;
+                  const enabled = flags[flag.id];
+                  return (
+                    <div
+                      key={flag.id}
+                      className="flex items-center justify-between gap-4 rounded-lg border p-4 bg-card"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-full bg-primary/10 shrink-0">
+                          <Icon className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="font-medium">
+                            {language === "en" ? flag.label.en : flag.label.de}
+                          </span>
+                          <p className="text-xs text-muted-foreground">
+                            {language === "en" ? flag.description.en : flag.description.de}
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={(value) => setFeatureFlag(flag.id, value)}
+                        aria-label={language === "en" ? flag.label.en : flag.label.de}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </Card>
 
           {/* Language */}

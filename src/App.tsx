@@ -5,6 +5,7 @@ import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ActiveWorkspaceProvider } from "./contexts/ActiveWorkspaceContext";
 import { DataProvider } from "./contexts/DataContext";
+import { FeatureFlagsProvider, useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { Toaster } from "./components/ui/sonner";
 import { LoadingState } from "./components/ui/LoadingState";
 
@@ -65,6 +66,7 @@ import { getDefaultLandingPath, getStoredSetting, resolveDefaultLandingView } fr
 
 // Plugin loader — provides build-time routes from installed plugins
 import { getPluginPublicRoutes, getPluginRoutes } from "./plugins/loader";
+import type { PluginFeatureFlagState } from "./plugins/loader";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -127,6 +129,8 @@ const DocumentLanguageUpdater = () => {
 // Content component must be used inside Router
 const AppContent = () => {
   const { user, loading } = useAuth();
+  const { flags } = useFeatureFlags();
+  const pluginFeatureFlags = flags as PluginFeatureFlagState;
 
   if (loading) {
     return <LoadingState fullHeight={true} />;
@@ -303,7 +307,7 @@ const AppContent = () => {
           <Route path="/plugins" element={<ProtectedRoute requiredRole="admin"><Plugins /></ProtectedRoute>} />
 
           {/* Dynamic plugin routes (build-time, from src/plugins/registry.ts) */}
-          {getPluginRoutes(user?.roles ?? []).map((r) => (
+          {getPluginRoutes(user?.roles ?? [], pluginFeatureFlags).map((r) => (
             <Route
               key={r.path}
               path={r.path}
@@ -375,6 +379,7 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <FeatureFlagsProvider>
         <BrowserRouter>
           <AuthProvider>
             <ActiveWorkspaceProvider>
@@ -384,6 +389,7 @@ const App = () => {
             </ActiveWorkspaceProvider>
           </AuthProvider>
         </BrowserRouter>
+        </FeatureFlagsProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

@@ -103,6 +103,7 @@ All changes are **strictly bound** between Core Changes and Plugin Changes:
 - Follow existing folder structure and naming conventions.
 - Use TypeScript throughout. No `any` without justification.
 - All user-facing text in the dashboard is in German.
+- Do not document UI/technical behavior in the frontend. User-facing UI must stay free of technical or meta documentation (e.g. default values, feature-flag behavior, implementation notes). Such information belongs in `/specs`, not in the interface the user sees.
 - Run `npm run build` before committing — the prebuild hook runs `ensure-registry.mjs` automatically.
 - Test your changes locally with `npm run dev` (frontend) and `npm run dev:api` (backend).
 

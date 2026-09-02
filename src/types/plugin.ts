@@ -108,6 +108,15 @@ export interface PluginConfigFieldDefinition {
 
 export type PluginHookScope = 'ui' | 'page' | 'service' | 'api';
 
+/**
+ * Core feature flag that gates a plugin route/sidebar item.
+ * Mirrors FeatureFlagId in @/contexts/FeatureFlagsContext (string literal
+ * here so plugins never need to import core React contexts).
+ * - "betaFeatures" — only visible when the user enabled beta features.
+ * - "devMode"      — only visible when the user enabled developer mode.
+ */
+export type PluginFeatureFlag = 'betaFeatures' | 'devMode';
+
 export type PluginHookKind = 'observer' | 'validator' | 'transform';
 
 export interface PluginHookDescriptor {
@@ -300,6 +309,12 @@ export interface PluginRoute {
     * "user" | "admin" | "super-admin" | undefined (any authenticated user)
    */
     requiredRole?: AppRole;
+  /**
+   * Optional core feature flag gating this route. When set, the route is
+   * only registered if the flag is enabled in the user's browser
+   * (see @/contexts/FeatureFlagsContext).
+   */
+  featureFlag?: PluginFeatureFlag;
 }
 
 // ─── Sidebar Item ─────────────────────────────────────────────────────────────
@@ -328,6 +343,12 @@ export interface PluginSidebarItem {
     * "user" — any authenticated app user sees this item.
    */
     requiredRole?: AppRole;
+  /**
+   * Optional core feature flag gating this sidebar item. When set, the
+   * item is only shown if the flag is enabled in the user's browser
+   * (see @/contexts/FeatureFlagsContext).
+   */
+  featureFlag?: PluginFeatureFlag;
 }
 
 // ─── Plugin Definition ────────────────────────────────────────────────────────

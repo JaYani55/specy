@@ -12,6 +12,7 @@ import type {
   PluginApiRouteMetadata,
   PluginCapabilityDescriptor,
   PluginDefinition,
+  PluginFeatureFlag,
   PluginHookContribution,
   PluginRoute,
   PluginSidebarItem,
@@ -19,6 +20,23 @@ import type {
 
 export interface PluginSidebarTreeItem extends PluginSidebarItem {
   children: PluginSidebarTreeItem[];
+}
+
+/**
+ * Per-browser feature flag values (see @/contexts/FeatureFlagsContext).
+ * Only flags referenced by plugin route/sidebar `featureFlag` declarations
+ * are consumed here. When `featureFlags` is omitted entirely, all flags are
+ * treated as enabled (fail-open) so non-flag-aware callers are unaffected.
+ */
+export type PluginFeatureFlagState = Partial<Record<PluginFeatureFlag, boolean>>;
+
+function isFlagEnabled(
+  flag: PluginFeatureFlag | undefined,
+  featureFlags?: PluginFeatureFlagState,
+): boolean {
+  if (!flag) return true;
+  if (!featureFlags) return true;
+  return featureFlags[flag] === true;
 }
 
 export function isPluginAccessible(plugin: PluginDefinition, userRoles?: string[]): boolean {
@@ -39,10 +57,11 @@ export function isPluginAccessible(plugin: PluginDefinition, userRoles?: string[
  * Returns all page routes contributed by installed+registered plugins.
  * Used in App.tsx to render dynamic <Route> elements.
  */
-export function getPluginRoutes(userRoles?: string[]): PluginRoute[] {
+export function getPluginRoutes(userRoles?: string[], featureFlags?: PluginFeatureFlagState): PluginRoute[] {
   return registeredPlugins
     .filter((plugin) => isPluginAccessible(plugin, userRoles))
-    .flatMap((plugin) => plugin.routes);
+    .flatMap((plugin) => plugin.routes)
+    .filter((route) => isFlagEnabled(route.featureFlag, featureFlags));
 }
 
 /**
@@ -57,17 +76,18 @@ export function getPluginPublicRoutes(): PluginRoute[] {
  * Returns all sidebar items contributed by plugins, optionally filtered by group.
  * @param group  If provided, only returns items from that group.
  */
-export function getPluginSidebarItems(group?: 'main' | 'admin', userRoles?: string[]): PluginSidebarItem[] {
+export function getPluginSidebarItems(group?: 'main' | 'admin', userRoles?: string[], featureFlags?: PluginFeatureFlagState): PluginSidebarItem[] {
   const items = registeredPlugins
     .filter((plugin) => isPluginAccessible(plugin, userRoles))
-    .flatMap((plugin) => plugin.sidebarItems);
+    .flatMap((plugin) => plugin.sidebarItems)
+    .filter((item) => isFlagEnabled(item.featureFlag, featureFlags));
 
   if (group) return items.filter((item) => item.group === group);
   return items;
 }
 
-export function getPluginSidebarTree(group?: 'main' | 'admin', userRoles?: string[]): PluginSidebarTreeItem[] {
-  const items = getPluginSidebarItems(group, userRoles);
+export function getPluginSidebarTree(group?: 'main' | 'admin', userRoles?: string[], featureFlags?: PluginFeatureFlagState): PluginSidebarTreeItem[] {
+  const items = getPluginSidebarItems(group, userRoles, featureFlags);
   const itemMap = new Map<string, PluginSidebarTreeItem>();
   const roots: PluginSidebarTreeItem[] = [];
 

@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { usePermissions } from '@/hooks/usePermissions';
 import { useEnabledWebapps } from '@/hooks/useEnabledWebapps';
+import { useFeatureFlags } from '@/contexts/FeatureFlagsContext';
 import { getPluginSidebarTree } from '@/plugins/loader';
 import { Moon, Sun, Menu, Calendar, Users, List, X, Settings, LogOut, HelpCircle, SlidersHorizontal, FileText, Globe, ClipboardList, ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -14,6 +15,7 @@ const Navbar = () => {
   const { theme, language, toggleTheme } = useTheme();
   const { canAccessVerwaltung } = usePermissions(); // Use centralized permission
   const { webapps } = useEnabledWebapps();
+  const { flags: featureFlags } = useFeatureFlags();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openPluginMenuKey, setOpenPluginMenuKey] = useState<string | null>(null);
   const location = useLocation();
@@ -46,7 +48,7 @@ const Navbar = () => {
     );
   }
 
-  const pluginMainTree = getPluginSidebarTree('main', userRoles).filter((item) => {
+  const pluginMainTree = getPluginSidebarTree('main', userRoles, featureFlags).filter((item) => {
     if (item.requiredRole === 'super-admin') return userRoles.includes('super-admin');
     if (item.requiredRole === 'admin') return userRoles.includes('admin') || userRoles.includes('super-admin');
     return true;
