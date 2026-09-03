@@ -41,6 +41,7 @@ interface FormFieldDefinition {
   upload_mount?: string;
   upload_bucket?: string;
   upload_folder?: string;
+  reply_to?: boolean;
 }
 
 interface FormRow {
