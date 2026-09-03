@@ -346,6 +346,10 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
       next[index].height = undefined;
     }
 
+    if (next[index].type !== 'email') {
+      next[index].reply_to = undefined;
+    }
+
     if (!supportsOptions(next[index].type)) {
       next[index].options = undefined;
     } else if (!next[index].options || next[index].options.length === 0) {
@@ -364,6 +368,15 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
       next[index].upload_folder = next[index].upload_folder || uploadContext?.uploadFolderTemplate || 'forms/{form_slug}/{field_name}/{submission_id}';
     }
 
+    onChange(next);
+  };
+
+  const setReplyToField = (index: number, checked: boolean) => {
+    const next = fields.map((field, currentIndex) => {
+      if (currentIndex === index) return { ...field, reply_to: checked };
+      if (checked && field.type === 'email' && field.reply_to) return { ...field, reply_to: false };
+      return field;
+    });
     onChange(next);
   };
 
@@ -424,6 +437,9 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
                     <Badge variant="outline">{typeLabels[field.type]}</Badge>
                     <Badge variant="outline">{field.name || 'unnamed_field'}</Badge>
                     {field.required && <Badge>{language === 'en' ? 'Required' : 'Pflichtfeld'}</Badge>}
+                    {field.type === 'email' && field.reply_to && (
+                      <Badge variant="secondary">{language === 'en' ? 'Reply-To' : 'Reply-To'}</Badge>
+                    )}
                     {isDisplayOnlyFieldType(field.type) && <Badge variant="secondary">{language === 'en' ? 'Display only' : 'Nur Anzeige'}</Badge>}
                   </div>
                 </div>
@@ -533,6 +549,26 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
                       </Label>
                     </div>
                   )}
+                </div>
+              )}
+
+              {field.type === 'email' && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+                  <div>
+                    <Label htmlFor={`email-reply-to-${field.editorId || index}`}>
+                      {language === 'en' ? 'Direct e-mail replies to this address' : 'E-Mail-Antworten an diese Adresse richten'}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en'
+                        ? 'Notification e-mails for this form use the address entered here as reply-to, overriding the standard reply-to e-mail.'
+                        : 'Benachrichtigungs-E-Mails dieses Formulars verwenden die hier eingegebene Adresse als Reply-To und überschreiben die Standard Reply-To E-Mail.'}
+                    </p>
+                  </div>
+                  <Switch
+                    id={`email-reply-to-${field.editorId || index}`}
+                    checked={field.reply_to || false}
+                    onCheckedChange={(checked) => setReplyToField(index, checked)}
+                  />
                 </div>
               )}
 

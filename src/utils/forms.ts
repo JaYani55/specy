@@ -118,6 +118,14 @@ const parseFieldEntry = (
     field.required = false;
   }
 
+  if (value.reply_to !== undefined) {
+    if (typeof value.reply_to === 'boolean') {
+      field.reply_to = field.type === 'email' ? value.reply_to : undefined;
+    } else {
+      warnings.push(`${path}.reply_to must be a boolean when provided.`);
+    }
+  }
+
   if (value.order !== undefined) {
     if (typeof value.order === 'number' && Number.isFinite(value.order)) {
       field.order = Math.max(0, Math.trunc(value.order));
@@ -262,6 +270,7 @@ export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDef
       width: field.width,
       height: field.height,
       options: field.options && field.options.length > 0 ? field.options : undefined,
+      reply_to: field.type === 'email' && field.reply_to ? true : undefined,
       upload_provider: field.upload_provider || undefined,
       upload_mount: field.upload_mount || undefined,
       upload_bucket: field.upload_bucket || undefined,

@@ -205,7 +205,7 @@ const buildNotificationContent = (input: {
       '</div>',
     ]
     : [];
-  const sourceLine = input.sourceSlug ? `Source: ${input.sourceSlug}` : 'Source: -';
+  const sourceLine = input.sourceSlug ? `Quelle: ${input.sourceSlug}` : 'Quelle: -';
   const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
   const subject = `Neue Formularantwort: ${input.form.name}`;
   const text = [
@@ -213,30 +213,34 @@ const buildNotificationContent = (input: {
     '',
     `fuer das Formular "${input.form.name}" wurde eine neue Antwort gespeichert.`,
     '',
+    'Antworten:',
+    answerSummaryText,
+    ...fileLinksText,
+    '',
+    'Metadaten:',
     `Antwort-ID: ${input.answerId}`,
     `Formular-Slug: ${input.form.slug}`,
     `Eingangskanal: ${input.submittedVia}`,
     sourceLine,
-    '',
-    'Antworten:',
-    answerSummaryText,
-    ...fileLinksText,
   ].join('\n');
   const html = [
     '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">',
     `<p>Hallo ${escapeHtml(input.recipientLabel)},</p>`,
     `<p>fuer das Formular <strong>${escapeHtml(input.form.name)}</strong> wurde eine neue Antwort gespeichert.</p>`,
-    '<table style="border-collapse:collapse;margin:16px 0;">',
-    `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;">Antwort-ID</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(input.answerId)}</td></tr>`,
-    `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;">Formular-Slug</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(input.form.slug)}</td></tr>`,
-    `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;">Eingangskanal</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(input.submittedVia)}</td></tr>`,
-    `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;">Quelle</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${htmlSource}</td></tr>`,
-    '</table>',
     '<table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:720px;">',
     '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Antworten</th></tr></thead>',
     `<tbody>${answerSummaryHtml}</tbody>`,
     '</table>',
     ...fileLinksHtml,
+    '<div style="margin:24px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;">',
+    '<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;margin:0 0 6px 0;">Metadaten</p>',
+    '<table style="border-collapse:collapse;font-size:11px;color:#9ca3af;">',
+    `<tr><td style="padding:2px 12px 2px 0;">Antwort-ID</td><td style="padding:2px 0;">${escapeHtml(input.answerId)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Formular-Slug</td><td style="padding:2px 0;">${escapeHtml(input.form.slug)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Eingangskanal</td><td style="padding:2px 0;">${escapeHtml(input.submittedVia)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Quelle</td><td style="padding:2px 0;">${htmlSource}</td></tr>`,
+    '</table>',
+    '</div>',
     '</div>',
   ].join('');
 
@@ -307,6 +311,18 @@ const resolveStaffRecipients = async (
     .filter((recipient): recipient is NotificationRecipient => recipient !== null);
 };
 
+const resolveNotificationReplyTo = (
+  fields: FormFieldDefinition[],
+  answers: Record<string, FormAnswerValue>,
+): string | null => {
+  const replyToField = fields.find((field) => field.type === 'email' && field.reply_to === true);
+  if (!replyToField) return null;
+
+  const value = answers[replyToField.name];
+  const email = typeof value === 'string' ? value.trim() : '';
+  return isValidEmail(email) ? email : null;
+};
+
 const enqueueFormAnswerNotifications = async (input: {
   env: Env;
   requestUrl: string;
@@ -345,6 +361,8 @@ const enqueueFormAnswerNotifications = async (input: {
   const recipients = [...recipientMap.values()];
   if (recipients.length === 0) return;
 
+  const notificationReplyTo = resolveNotificationReplyTo(input.fields, input.answers);
+
   const notificationContext = await runFormFileNotificationHooks({
     requestUrl: input.requestUrl,
     form: input.form,
@@ -376,6 +394,7 @@ const enqueueFormAnswerNotifications = async (input: {
       payload: {
         html: content.html,
         text: content.text,
+        ...(notificationReplyTo ? { reply_to: notificationReplyTo } : {}),
         formName: input.form.name,
         formSlug: input.form.slug,
         answerId: input.answerId,
@@ -465,6 +484,7 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
       upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
       upload_folder: typeof value.upload_folder === 'string' ? value.upload_folder : undefined,
+      reply_to: (type as FormFieldType) === 'email' && value.reply_to === true ? true : undefined,
     };
 
     if (DISPLAY_ONLY_FIELD_TYPES.has(field.type)) {

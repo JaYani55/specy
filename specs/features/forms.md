@@ -193,6 +193,7 @@ Field properties:
 | `caption` | conditional | Optional caption for `image` blocks |
 | `upload_provider` | conditional | Optional plugin-owned upload adapter, e.g. `pluradash` |
 | `upload_folder` | conditional | Folder template used by the active upload provider |
+| `reply_to` | no | Email-field flag: use the submitted address as notification reply-to (unique per form) |
 
 ---
 
@@ -300,6 +301,21 @@ The Worker API exposes:
 - `POST /api/forms/share/:shareSlug/answers`
 
 Where `:identifier` can be either the form UUID or the internal slug.
+
+---
+
+## Notification Reply-To Resolution
+
+Notification e-mails for form answers resolve the `Reply-To` header in the following precedence:
+
+1. **Form-level override**: If the form schema contains an `email` field with `reply_to: true` and the submission contains a valid address for that field, that address is used.
+2. **Global standard**: Otherwise the global `reply_to_email` from `system_config` (namespace `mail`, edited under *Verwaltung → Verbindungen* as *Standard Reply-To E-Mail*) is used. If unset, no `Reply-To` header is sent and replies go to `from_email`.
+
+The `reply_to` flag is unique per form: only one `email` field may carry it. The form builder enforces this in the UI (enabling it on one email block disables it on the others), and the *Formular-Editor → Benachrichtigungen bei Einreichungen* card exposes the same flag as the option *Antworten an den Absender des Formulares*. Both entry points edit the same schema property.
+
+### Notification E-Mail Layout
+
+The notification e-mail leads with the greeting and the answer summary (plus file download links when present). Technical metadata — `Antwort-ID`, `Formular-Slug`, `Eingangskanal`, `Quelle` — is rendered at the very end under a small `Metadaten` heading in a reduced, unobtrusive font.
 
 ---
 

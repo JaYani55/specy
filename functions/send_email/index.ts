@@ -33,6 +33,7 @@ type SendRequest = {
   subject: string;
   html?: string;
   text?: string;
+  replyTo?: string;
 };
 
 type ProviderSendResult = {
@@ -200,7 +201,7 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
             subject: message.subject,
             html: message.html,
             text: message.text,
-            reply_to: config.replyToEmail || undefined,
+            reply_to: message.replyTo || config.replyToEmail || undefined,
           }),
         });
 
@@ -251,7 +252,7 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
         subject: message.subject,
         html: message.html,
         text: message.text,
-        replyTo: config.replyToEmail || undefined,
+        replyTo: message.replyTo || config.replyToEmail || undefined,
       });
 
       return {
@@ -378,6 +379,7 @@ async function processJob(jobId: string) {
       subject: job.subject,
       html: typeof job.payload.html === 'string' ? job.payload.html : undefined,
       text: typeof job.payload.text === 'string' ? job.payload.text : undefined,
+      replyTo: typeof job.payload.reply_to === 'string' && job.payload.reply_to.trim() ? job.payload.reply_to.trim() : undefined,
     });
 
     const { error: markSentError } = await supabase

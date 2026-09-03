@@ -54,6 +54,7 @@ export interface FormFieldDefinition {
   upload_mount?: string;
   upload_bucket?: string;
   upload_folder?: string;
+  reply_to?: boolean;
 }
 
 export type FormSchemaDefinition = Record<string, Omit<FormFieldDefinition, 'name'>>;

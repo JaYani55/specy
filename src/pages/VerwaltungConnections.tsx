@@ -841,13 +841,15 @@ const VerwaltungConnections: React.FC = () => {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="mail-reply-to">Reply-To</Label>
+                <Label htmlFor="mail-reply-to">Standard Reply-To E-Mail</Label>
                 <Input
                   id="mail-reply-to"
                   value={mailConfig.replyToEmail}
                   onChange={(event) => setMailConfig((current) => ({ ...current, replyToEmail: event.target.value }))}
                   placeholder="support@example.com"
                 />
+                <p className="text-xs text-muted-foreground">\n                  Wird als Reply-To verwendet, sofern kein Formular über einen markierten E-Mail-Block eine eigene Antwort-Adresse setzt.
+                </p>
               </div>
             </div>
 

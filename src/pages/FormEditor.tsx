@@ -194,6 +194,25 @@ const FormEditor = () => {
 
   const parsedSchema = useMemo(() => parseFormSchema(schemaText), [schemaText]);
 
+  const replyToEmailField = builderFields.find((field) => field.type === 'email' && field.reply_to);
+
+  const handleReplyToSubmitterChange = (checked: boolean) => {
+    if (!checked) {
+      if (!replyToEmailField) return;
+      handleBuilderChange(builderFields.map((field) => (field.reply_to ? { ...field, reply_to: false } : field)));
+      return;
+    }
+    const emailFieldIndex = builderFields.findIndex((field) => field.type === 'email');
+    if (emailFieldIndex === -1) {
+      toast.error(language === 'en' ? 'Add an e-mail block to the form first.' : 'Füge zuerst einen E-Mail-Block zum Formular hinzu.');
+      return;
+    }
+    handleBuilderChange(builderFields.map((field, index) => {
+      if (field.type !== 'email') return field;
+      return index === emailFieldIndex ? { ...field, reply_to: true } : { ...field, reply_to: false };
+    }));
+  };
+
   useEffect(() => {
     if (schemaSyncSourceRef.current !== 'json' && schemaSyncSourceRef.current !== 'load') {
       return;
@@ -576,11 +595,30 @@ const FormEditor = () => {
                     <Switch checked={deleteAnswerAfterEmail} onCheckedChange={setDeleteAnswerAfterEmail} />
                   </div>
 
+                  <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
+                    <div>
+                      <Label htmlFor="reply-to-submitter">{language === 'en' ? 'Reply to the form submitter' : 'Antworten an den Absender des Formulares'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {replyToEmailField
+                          ? (language === 'en'
+                            ? `Sets the reply-to of notification e-mails to the address submitted in the "${replyToEmailField.label}" block, overriding the standard reply-to e-mail.`
+                            : `Setzt das Reply-To der Benachrichtigungs-E-Mails auf die im Block "${replyToEmailField.label}" angegebene Adresse und überschreibt die Standard Reply-To E-Mail.`)
+                          : (language === 'en'
+                            ? 'Marks an e-mail block as the sender address. Add an e-mail block and enable "Direct e-mail replies to this address" there.'
+                            : 'Markiert einen E-Mail-Block als Absenderadresse. Aktiviere dafür im E-Mail-Block "E-Mail-Antworten an diese Adresse richten".')}
+                      </p>
+                    </div>
+                    <Switch id="reply-to-submitter" checked={Boolean(replyToEmailField)} onCheckedChange={handleReplyToSubmitterChange} />
+                  </div>
+
                   <div className="flex flex-wrap gap-2">
                     {notifyOwner && <Badge>{language === 'en' ? 'Owner enabled' : 'Besitzer aktiv'}</Badge>}
                     {notifyStaff && <Badge variant="secondary">{staffRecipientIds.length} {language === 'en' ? 'staff selected' : 'Mitarbeiter ausgewählt'}</Badge>}
                     {deleteAnswerAfterEmail && (
                       <Badge variant="outline">{language === 'en' ? 'Auto-delete answers' : 'Antworten automatisch löschen'}</Badge>
+                    )}
+                    {replyToEmailField && (
+                      <Badge variant="secondary">{language === 'en' ? `Reply-To: ${replyToEmailField.name}` : `Reply-To: ${replyToEmailField.name}`}</Badge>
                     )}
                     {!notifyOwner && !notifyStaff && (
                       <Badge variant="outline">{language === 'en' ? 'No e-mail notifications' : 'Keine E-Mail-Benachrichtigungen'}</Badge>
