@@ -1,9 +1,13 @@
-import type { TenantStorageAllocationType } from './tenantStorageMgt';
 import type { VerifiedAuthSession } from './auth';
 
-export type TenantStorageScope = 'media' | 'files';
+export type TenantStorageScope = 'media' | 'files' | 'apps';
 
-/** All scopes accepted by client-facing storage endpoints (upload, list, delete). */
+/**
+ * Scopes accepted by client-facing storage endpoints (upload, list, delete).
+ * 'apps' is engine-managed (PluraDash sync engine) and deliberately NOT
+ * client-writable — it only exists so workspace app files can be categorized
+ * in the catalog while sharing the same quota bucket.
+ */
 export const TENANT_STORAGE_SCOPES: readonly TenantStorageScope[] = ['media', 'files'];
 
 export function isTenantStorageScope(value: unknown): value is TenantStorageScope {
@@ -44,8 +48,6 @@ export interface TenantStoragePolicyContext {
   auth: VerifiedAuthSession;
   tenant: TenantStorageTenant;
   scope: TenantStorageScope;
-  /** Provisioning bucket being checked/provisioned ('files' or 'apps'). */
-  allocationType: TenantStorageAllocationType;
   summary: TenantStorageSummary;
 }
 

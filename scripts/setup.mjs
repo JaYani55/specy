@@ -1022,6 +1022,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202605240006_webapps_multi_tenant.sql',
     '202605250001_tenant_storage_management.sql',
     '202608300001_tenant_storage_allocation_types.sql',
+    '202609030001_tenant_storage_shared_apps_scope.sql',
     'objects.sql',
     '202605310001_markdown_objects.sql',
     '202605310002_markdown_object_share_scope.sql',

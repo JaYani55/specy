@@ -37,10 +37,11 @@ performed by serviceCMS through the GitHub App.
    the tenant ID). Agent accounts carry their default workspace in the JWT
    `tenant_id` claim.
 3. **Storage entitlement.** The acting user needs a provisioned tenant storage
-   allocation (type `apps` — a dedicated quota bucket for workspace app files).
-   Pull/save/deploy are quota-checked against the **net byte delta** of each
-   operation; exceeding the quota fails with `Storage quota exceeded.` (HTTP
-   500 message; treat as a hard stop).
+   allocation (single shared quota bucket — workspace app files carry the
+   `apps` scope in the catalog but count toward the same quota as all other
+   files). Pull/save/deploy are quota-checked against the **net byte delta**
+   of each operation; exceeding the quota fails with `Storage quota exceeded.`
+   (HTTP 500 message; treat as a hard stop).
 
 ## 3. Authentication
 
@@ -382,6 +383,21 @@ these endpoints are a planned follow-up (see the feature doc's roadmap).
 Every endpoint call is logged server-side (`pluradash.sync_logs`) and visible
 to super-admins in the GitHub Apps admin panel — agents do not need to do
 anything for auditing.
+
+### 8.1 MCP tools
+
+The same workflows are also exposed as native MCP server tools registered by
+the PluraDash plugin via the core `mcp.tools` hook (authenticated MCP
+connections only):
+
+`app_sync_list`, `app_sync_pull`, `app_sync_list_files`, `app_sync_read_file`,
+`app_sync_save`, `app_sync_commit`.
+
+`workspaceId` defaults to the agent token's `tenant_id` claim and `repoId`
+to the first assigned repo — repository IDs must be taken from
+`app_sync_list`, never guessed (a wrong `repoId` yields the 404 described in
+§6). Deploy and archive are deliberately not exposed as MCP tools. Tool
+contracts: `plugins/pluradash/specs/app-sync-mcp-tools.md`.
 
 ## Related
 

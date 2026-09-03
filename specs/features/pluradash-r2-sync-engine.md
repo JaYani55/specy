@@ -57,16 +57,16 @@ tenant/{tenantId}/user/{userId}/files/apps/{owner__repo}/
 ```
 
 - Workspace files are **fully tracked** in `tenant_storage_objects` (scope
-  `files`, mount `pluradash`) — quota accounting works like every other file in
+  `apps`, mount `pluradash`) — quota accounting works like every other file in
   the platform, so "user provisioned cloud disk space" is enforced:
   `ensureTenantStorageSummary` + `assertTenantStorageQuota` gate every write
   with the **net byte delta** of the operation.
-- Workspace app files are provisioned against the dedicated
-  **`apps` allocation type** (`public.tenant_storage_allocations.allocation_type`,
-  default 2 GiB) — separate from the generic `files` quota bucket. The usage
-  sync trigger routes catalog changes to the matching bucket by object key
-  (`.../files/apps/%` → `apps`). See
-  [`../agents/r2-file-storage.md`](../agents/r2-file-storage.md) §4.
+- Workspace app files draw from the **shared quota bucket** — there is no
+  dedicated apps allocation. They are distinguished only by
+  `tenant_storage_objects.scope = 'apps'`; the allocation
+  (`tenant_storage_allocations`) is a single row per (tenant, user) covering
+  all scopes. See [`../agents/r2-file-storage.md`](../agents/r2-file-storage.md)
+  §4.
 - `manifest.json` is engine-owned metadata and deliberately NOT registered in
   the catalog (it never counts toward quota and cannot be deleted through the
   file UI; deleting it simply forces a re-pull).

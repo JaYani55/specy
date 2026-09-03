@@ -23,6 +23,11 @@ interface TenantRow extends TenantStorageTenant {
  * - 'files' — generic managed file/media storage (default, existing behavior).
  * - 'apps'  — dedicated quota bucket for workspace app files stored by the
  *             PluraDash sync engine under .../files/apps/... .
+ *
+ * @deprecated The dedicated 'apps' quota bucket was removed
+ * (202609030001_tenant_storage_shared_apps_scope): all scopes now share the
+ * single (tenant_id, user_id) allocation. Workspace app files are
+ * distinguished only via tenant_storage_objects.scope = 'apps'.
  */
 export type TenantStorageAllocationType = 'files' | 'apps';
 
@@ -32,7 +37,6 @@ interface StorageAllocationRow {
   quota_bytes: number;
   used_bytes_cached: number;
   status: 'active' | 'suspended';
-  allocation_type?: TenantStorageAllocationType;
 }
 
 export interface TenantStorageObjectRow {
@@ -151,20 +155,13 @@ async function readTenantStorageUsageBytes(
   env: Env,
   tenantId: string,
   userId: string,
-  allocationType: TenantStorageAllocationType = 'files',
 ): Promise<number> {
   const admin = await createSupabaseAdminClient(env);
-  let query = admin
+  const { data, error } = await admin
     .from('tenant_storage_objects')
     .select('size_bytes, object_key')
     .eq('tenant_id', tenantId)
     .eq('user_id', userId);
-
-  if (allocationType === 'apps') {
-    query = query.like('object_key', `tenant/${tenantId}/user/${userId}/files/apps/%`);
-  }
-
-  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -179,11 +176,10 @@ export async function ensureTenantStorageSummary(
   input: {
     requestedTenantId?: string | null;
     scope: TenantStorageScope;
-    /** Provisioning bucket to check/provision; defaults to 'files'. */
+    /** @deprecated Ignored — a single shared allocation bucket exists since 2026-09-03. */
     allocationType?: TenantStorageAllocationType;
   },
 ): Promise<TenantStorageSummary> {
-  const allocationType: TenantStorageAllocationType = input.allocationType ?? 'files';
   if (!auth.userId) {
     throw new Error('Authenticated user id is required.');
   }
@@ -204,14 +200,13 @@ export async function ensureTenantStorageSummary(
     auth,
     tenant,
     scope: input.scope,
-    allocationType,
     summary: baseSummary,
   });
 
   const configuredSummary = hookContext.summary;
 
   if (configuredSummary.isUnlimited) {
-    const usedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId, allocationType);
+    const usedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId);
     return {
       ...configuredSummary,
       tenantId: tenant.id,
@@ -241,10 +236,9 @@ export async function ensureTenantStorageSummary(
   const admin = await createSupabaseAdminClient(env);
   const { data: existing, error: existingError } = await admin
     .from('tenant_storage_allocations')
-    .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status, allocation_type')
+    .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status')
     .eq('tenant_id', tenant.id)
     .eq('user_id', auth.userId)
-    .eq('allocation_type', allocationType)
     .maybeSingle();
 
   if (existingError) {
@@ -257,20 +251,19 @@ export async function ensureTenantStorageSummary(
   if (!allocation) {
     // Provision the allocation with the usage already recorded for this
     // bucket (existing catalog rows are back-filled on first provisioning).
-    const initialUsedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId, allocationType);
+    const initialUsedBytes = await readTenantStorageUsageBytes(env, tenant.id, auth.userId);
 
     const { data: inserted, error: insertError } = await admin
       .from('tenant_storage_allocations')
       .insert({
         tenant_id: tenant.id,
         user_id: auth.userId,
-        allocation_type: allocationType,
         quota_bytes: configuredQuotaBytes,
         used_bytes_cached: initialUsedBytes,
         status: 'active',
         provisioned_by: auth.userId,
       })
-      .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status, allocation_type')
+      .select('tenant_id, user_id, quota_bytes, used_bytes_cached, status')
       .single();
 
     if (insertError) {
@@ -278,6 +271,22 @@ export async function ensureTenantStorageSummary(
     }
 
     allocation = inserted as StorageAllocationRow;
+  } else if (configuredQuotaBytes > 0 && Number(allocation.quota_bytes ?? 0) === 0) {
+    // Reconcile zero-quota rows with the policy hook. Historical bug source:
+    // rows that came into existence without proper provisioning (e.g. via a
+    // trigger) carried quota 0 and permanently blocked every write with
+    // "Storage quota exceeded.". If a hook grants a quota, apply it.
+    const { error: reconcileError } = await admin
+      .from('tenant_storage_allocations')
+      .update({ quota_bytes: configuredQuotaBytes, updated_at: new Date().toISOString() })
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', auth.userId);
+
+    if (reconcileError) {
+      throw new Error(reconcileError.message);
+    }
+
+    allocation = { ...allocation, quota_bytes: configuredQuotaBytes };
   }
 
   const usedBytes = Number(allocation.used_bytes_cached ?? 0);
