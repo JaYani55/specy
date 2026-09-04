@@ -5,6 +5,7 @@ import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceM
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import { verifyAuthSession } from '../lib/auth';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
+import { hasUsableTemplate, renderTemplateMessage, type TemplateTokenValue } from '../lib/formMessageTemplate';
 
 const forms = new Hono<{ Bindings: Env }>();
 
@@ -181,6 +182,49 @@ const buildAnswerSummaryHtml = (
   .map((field) => `<tr><td style="padding:8px 12px;border:1px solid #d9d9d9;font-weight:600;vertical-align:top;">${escapeHtml(field.label)}</td><td style="padding:8px 12px;border:1px solid #d9d9d9;">${escapeHtml(formatAnswerValue(answers[field.name] ?? null))}</td></tr>`)
   .join('');
 
+const buildFileLinksBlock = (fileLinks: FormFileNotificationLink[]): { html: string; text: string } => {
+  if (fileLinks.length === 0) return { html: '', text: '' };
+  const text = ['', 'PluraDash downloads:', ...fileLinks.map((link) => `- ${link.fieldLabel}: ${link.fileName} (${link.url})`)].join('\n');
+  const html = [
+    '<div style="margin:16px 0;">',
+    '<p style="font-weight:600;margin:0 0 8px 0;">PluraDash downloads</p>',
+    '<ul style="margin:0;padding-left:20px;">',
+    ...fileLinks.map((link) => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.fieldLabel)}: ${escapeHtml(link.fileName)}</a></li>`),
+    '</ul>',
+    '</div>',
+  ].join('');
+  return { html, text };
+};
+
+const buildMetadataBlock = (input: {
+  answerId: string;
+  formSlug: string;
+  submittedVia: 'share' | 'api' | 'page';
+  sourceSlug: string | null;
+}): { html: string; text: string } => {
+  const sourceLine = input.sourceSlug ? `Quelle: ${input.sourceSlug}` : 'Quelle: -';
+  const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
+  const html = [
+    '<span style="display:block;margin:24px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;">',
+    '<span style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;margin:0 0 6px 0;">Metadaten</span>',
+    '<table style="border-collapse:collapse;font-size:11px;color:#9ca3af;">',
+    `<tr><td style="padding:2px 12px 2px 0;">Antwort-ID</td><td style="padding:2px 0;">${escapeHtml(input.answerId)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Formular-Slug</td><td style="padding:2px 0;">${escapeHtml(input.formSlug)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Eingangskanal</td><td style="padding:2px 0;">${escapeHtml(input.submittedVia)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Quelle</td><td style="padding:2px 0;">${htmlSource}</td></tr>`,
+    '</table>',
+    '</span>',
+  ].join('');
+  const text = [
+    'Metadaten:',
+    `Antwort-ID: ${input.answerId}`,
+    `Formular-Slug: ${input.formSlug}`,
+    `Eingangskanal: ${input.submittedVia}`,
+    sourceLine,
+  ].join('\n');
+  return { html, text };
+};
+
 const buildNotificationContent = (input: {
   form: FormRow;
   fields: FormFieldDefinition[];
@@ -193,21 +237,14 @@ const buildNotificationContent = (input: {
 }): { subject: string; text: string; html: string } => {
   const answerSummaryText = buildAnswerSummaryText(input.fields, input.answers);
   const answerSummaryHtml = buildAnswerSummaryHtml(input.fields, input.answers);
-  const fileLinksText = input.fileLinks.length > 0
-    ? ['', 'PluraDash downloads:', ...input.fileLinks.map((link) => `- ${link.fieldLabel}: ${link.fileName} (${link.url})`)]
-    : [];
-  const fileLinksHtml = input.fileLinks.length > 0
-    ? [
-      '<div style="margin:16px 0;">',
-      '<p style="font-weight:600;margin:0 0 8px 0;">PluraDash downloads</p>',
-      '<ul style="margin:0;padding-left:20px;">',
-      ...input.fileLinks.map((link) => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.fieldLabel)}: ${escapeHtml(link.fileName)}</a></li>`),
-      '</ul>',
-      '</div>',
-    ]
-    : [];
-  const sourceLine = input.sourceSlug ? `Quelle: ${input.sourceSlug}` : 'Quelle: -';
-  const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
+  const fileLinksBlock = buildFileLinksBlock(input.fileLinks);
+  const fileLinksText = fileLinksBlock.text ? ['', fileLinksBlock.text] : [];
+  const metadataBlock = buildMetadataBlock({
+    answerId: input.answerId,
+    formSlug: input.form.slug,
+    submittedVia: input.submittedVia,
+    sourceSlug: input.sourceSlug,
+  });
   const subject = `Neue Formularantwort: ${input.form.name}`;
   const text = [
     `Hallo ${input.recipientLabel},`,
@@ -218,11 +255,7 @@ const buildNotificationContent = (input: {
     answerSummaryText,
     ...fileLinksText,
     '',
-    'Metadaten:',
-    `Antwort-ID: ${input.answerId}`,
-    `Formular-Slug: ${input.form.slug}`,
-    `Eingangskanal: ${input.submittedVia}`,
-    sourceLine,
+    metadataBlock.text,
   ].join('\n');
   const html = [
     '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">',
@@ -232,16 +265,8 @@ const buildNotificationContent = (input: {
     '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Antworten</th></tr></thead>',
     `<tbody>${answerSummaryHtml}</tbody>`,
     '</table>',
-    ...fileLinksHtml,
-    '<div style="margin:24px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;">',
-    '<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;margin:0 0 6px 0;">Metadaten</p>',
-    '<table style="border-collapse:collapse;font-size:11px;color:#9ca3af;">',
-    `<tr><td style="padding:2px 12px 2px 0;">Antwort-ID</td><td style="padding:2px 0;">${escapeHtml(input.answerId)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Formular-Slug</td><td style="padding:2px 0;">${escapeHtml(input.form.slug)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Eingangskanal</td><td style="padding:2px 0;">${escapeHtml(input.submittedVia)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Quelle</td><td style="padding:2px 0;">${htmlSource}</td></tr>`,
-    '</table>',
-    '</div>',
+    fileLinksBlock.html,
+    metadataBlock.html,
     '</div>',
   ].join('');
 
@@ -329,6 +354,8 @@ interface FormNotificationSettingsRow {
   notify_staff?: boolean | null;
   send_confirmation_to_submitter?: boolean | null;
   custom_from_name?: string | null;
+  notification_message_html?: string | null;
+  confirmation_message_html?: string | null;
 }
 
 const resolveSenderOverridePayload = (settings: FormNotificationSettingsRow | null): { from_name?: string } => {
@@ -368,6 +395,52 @@ const resolveFormDisplayName = async (
   return form.name;
 };
 
+const buildTemplateTokens = (input: {
+  form: FormRow;
+  fields: FormFieldDefinition[];
+  answers: Record<string, FormAnswerValue>;
+  fileLinks: FormFileNotificationLink[];
+  answerId: string;
+  submittedVia: 'share' | 'api' | 'page';
+  sourceSlug: string | null;
+  recipientName: string;
+}): Record<string, TemplateTokenValue> => {
+  const answerFields = input.fields.filter((field) => !DISPLAY_ONLY_FIELD_TYPES.has(field.type));
+  const fileLinksBlock = buildFileLinksBlock(input.fileLinks);
+  const metadata = buildMetadataBlock({
+    answerId: input.answerId,
+    formSlug: input.form.slug,
+    submittedVia: input.submittedVia,
+    sourceSlug: input.sourceSlug,
+  });
+
+  const tokens: Record<string, TemplateTokenValue> = {
+    submissions: {
+      html: [
+        '<table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:720px;">',
+        '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Antworten</th></tr></thead>',
+        `<tbody>${buildAnswerSummaryHtml(answerFields, input.answers)}</tbody>`,
+        '</table>',
+        fileLinksBlock.html,
+      ].join(''),
+      text: ['Antworten:', buildAnswerSummaryText(answerFields, input.answers), fileLinksBlock.text].filter(Boolean).join('\n'),
+    },
+    metadata,
+    form_name: { html: escapeHtml(input.form.name), text: input.form.name },
+    recipient_name: { html: escapeHtml(input.recipientName), text: input.recipientName },
+    answer_id: { html: escapeHtml(input.answerId), text: input.answerId },
+    submitted_via: { html: escapeHtml(input.submittedVia), text: input.submittedVia },
+    source_slug: { html: escapeHtml(input.sourceSlug ?? '-'), text: input.sourceSlug ?? '-' },
+  };
+
+  for (const field of answerFields) {
+    const value = formatAnswerValue(input.answers[field.name] ?? null);
+    tokens[`field:${field.name}`] = { html: escapeHtml(value), text: value };
+  }
+
+  return tokens;
+};
+
 const buildConfirmationContent = (input: {
   form: FormRow;
   tenantName: string;
@@ -380,8 +453,12 @@ const buildConfirmationContent = (input: {
   const answerFields = input.fields.filter((field) => !DISPLAY_ONLY_FIELD_TYPES.has(field.type));
   const answerSummaryText = buildAnswerSummaryText(answerFields, input.answers);
   const answerSummaryHtml = buildAnswerSummaryHtml(answerFields, input.answers);
-  const sourceLine = input.sourceSlug ? `Quelle: ${input.sourceSlug}` : 'Quelle: -';
-  const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
+  const metadataBlock = buildMetadataBlock({
+    answerId: input.answerId,
+    formSlug: input.form.slug,
+    submittedVia: input.submittedVia,
+    sourceSlug: input.sourceSlug,
+  });
   const subject = `Ihre Anfrage an ${input.tenantName}`;
   const text = [
     'Hallo,',
@@ -391,11 +468,7 @@ const buildConfirmationContent = (input: {
     'Antworten:',
     answerSummaryText,
     '',
-    'Metadaten:',
-    `Antwort-ID: ${input.answerId}`,
-    `Formular-Slug: ${input.form.slug}`,
-    `Eingangskanal: ${input.submittedVia}`,
-    sourceLine,
+    metadataBlock.text,
   ].join('\n');
   const html = [
     '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">',
@@ -405,15 +478,7 @@ const buildConfirmationContent = (input: {
     '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Ihre Antworten</th></tr></thead>',
     `<tbody>${answerSummaryHtml}</tbody>`,
     '</table>',
-    '<div style="margin:24px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;">',
-    '<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;margin:0 0 6px 0;">Metadaten</p>',
-    '<table style="border-collapse:collapse;font-size:11px;color:#9ca3af;">',
-    `<tr><td style="padding:2px 12px 2px 0;">Antwort-ID</td><td style="padding:2px 0;">${escapeHtml(input.answerId)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Formular-Slug</td><td style="padding:2px 0;">${escapeHtml(input.form.slug)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Eingangskanal</td><td style="padding:2px 0;">${escapeHtml(input.submittedVia)}</td></tr>`,
-    `<tr><td style="padding:2px 12px 2px 0;">Quelle</td><td style="padding:2px 0;">${htmlSource}</td></tr>`,
-    '</table>',
-    '</div>',
+    metadataBlock.html,
     '</div>',
   ].join('');
 
@@ -432,19 +497,34 @@ const enqueueFormConfirmationCopy = async (input: {
   sourceSlug: string | null;
   submitterEmail: string;
   senderOverride: { from_name?: string };
+  customMessageHtml: string | null;
 }): Promise<void> => {
   const admin = await createSupabaseAdminClient(input.env);
   const displayName = await resolveFormDisplayName(admin, input.form);
 
-  const content = buildConfirmationContent({
-    form: input.form,
-    tenantName: displayName,
-    fields: input.fields,
-    answers: input.answers,
-    answerId: input.answerId,
-    submittedVia: input.submittedVia,
-    sourceSlug: input.sourceSlug,
-  });
+  const content = input.customMessageHtml
+    ? {
+      subject: `Ihre Anfrage an ${displayName}`,
+      ...renderTemplateMessage(input.customMessageHtml, buildTemplateTokens({
+        form: input.form,
+        fields: input.fields,
+        answers: input.answers,
+        fileLinks: [],
+        answerId: input.answerId,
+        submittedVia: input.submittedVia,
+        sourceSlug: input.sourceSlug,
+        recipientName: '',
+      })),
+    }
+    : buildConfirmationContent({
+      form: input.form,
+      tenantName: displayName,
+      fields: input.fields,
+      answers: input.answers,
+      answerId: input.answerId,
+      submittedVia: input.submittedVia,
+      sourceSlug: input.sourceSlug,
+    });
 
   const { data: job, error: jobError } = await admin
     .from('mail_delivery_jobs')
@@ -512,7 +592,7 @@ const enqueueFormAnswerNotifications = async (input: {
   const admin = await createSupabaseAdminClient(input.env);
   const { data: settings, error: settingsError } = await admin
     .from('form_notification_settings')
-    .select('notify_owner, notify_staff, send_confirmation_to_submitter, custom_from_name')
+    .select('notify_owner, notify_staff, send_confirmation_to_submitter, custom_from_name, notification_message_html, confirmation_message_html')
     .eq('form_id', input.form.id)
     .maybeSingle();
 
@@ -537,6 +617,7 @@ const enqueueFormAnswerNotifications = async (input: {
         sourceSlug: input.sourceSlug,
         submitterEmail: notificationReplyTo,
         senderOverride,
+        customMessageHtml: hasUsableTemplate(settings.confirmation_message_html) ? (settings.confirmation_message_html as string) : null,
       });
     }
   }
@@ -560,6 +641,10 @@ const enqueueFormAnswerNotifications = async (input: {
   const recipients = [...recipientMap.values()];
   if (recipients.length === 0) return;
 
+  const notificationTemplateHtml = hasUsableTemplate(settings.notification_message_html)
+    ? (settings.notification_message_html as string)
+    : null;
+
   const notificationContext = await runFormFileNotificationHooks({
     requestUrl: input.requestUrl,
     form: input.form,
@@ -570,16 +655,30 @@ const enqueueFormAnswerNotifications = async (input: {
   });
 
   const jobsToInsert = recipients.map((recipient) => {
-    const content = buildNotificationContent({
-      form: input.form,
-      fields: input.fields,
-      answers: input.answers,
-      fileLinks: notificationContext.fileLinks,
-      answerId: input.answerId,
-      submittedVia: input.submittedVia,
-      sourceSlug: input.sourceSlug,
-      recipientLabel: recipient.label,
-    });
+    const content = notificationTemplateHtml
+      ? {
+        subject: `Neue Formularantwort: ${input.form.name}`,
+        ...renderTemplateMessage(notificationTemplateHtml, buildTemplateTokens({
+          form: input.form,
+          fields: input.fields,
+          answers: input.answers,
+          fileLinks: notificationContext.fileLinks,
+          answerId: input.answerId,
+          submittedVia: input.submittedVia,
+          sourceSlug: input.sourceSlug,
+          recipientName: recipient.label,
+        })),
+      }
+      : buildNotificationContent({
+        form: input.form,
+        fields: input.fields,
+        answers: input.answers,
+        fileLinks: notificationContext.fileLinks,
+        answerId: input.answerId,
+        submittedVia: input.submittedVia,
+        sourceSlug: input.sourceSlug,
+        recipientLabel: recipient.label,
+      });
 
     return {
       event_type: 'form_answer_notification',

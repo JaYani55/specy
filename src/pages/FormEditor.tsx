@@ -17,10 +17,12 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
+import { NotificationMessageEditor } from '@/components/forms/NotificationMessageEditor';
 import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from '@/services/formService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { type FormFieldDefinition, type FormNotificationStaffOption, type FormRecord } from '@/types/forms';
 import { formFieldsToSchema, formatFormSchema, parseFormSchema } from '@/utils/forms';
+import { DEFAULT_CONFIRMATION_TEMPLATE_HTML, DEFAULT_NOTIFICATION_TEMPLATE_HTML } from '@/utils/formNotificationTemplates';
 
 const DEFAULT_SCHEMA = {
   first_name: {
@@ -96,6 +98,9 @@ const FormEditor = () => {
   const [sendConfirmation, setSendConfirmation] = useState(false);
   const [overrideSender, setOverrideSender] = useState(false);
   const [customFromName, setCustomFromName] = useState('');
+  const [notificationMessageHtml, setNotificationMessageHtml] = useState<string | null>(null);
+  const [confirmationMessageHtml, setConfirmationMessageHtml] = useState<string | null>(null);
+  const [messageEditorTarget, setMessageEditorTarget] = useState<'notification' | 'confirmation' | null>(null);
   const [staffRecipientIds, setStaffRecipientIds] = useState<string[]>([]);
   const [staffOptions, setStaffOptions] = useState<FormNotificationStaffOption[]>([]);
   const [staffSearch, setStaffSearch] = useState('');
@@ -186,6 +191,8 @@ const FormEditor = () => {
         setSendConfirmation(Boolean(form.notification_settings?.send_confirmation_to_submitter));
         setOverrideSender(Boolean(form.notification_settings?.custom_from_name));
         setCustomFromName(form.notification_settings?.custom_from_name ?? '');
+        setNotificationMessageHtml(form.notification_settings?.notification_message_html ?? null);
+        setConfirmationMessageHtml(form.notification_settings?.confirmation_message_html ?? null);
         setStaffRecipientIds(form.notification_settings?.recipients.map((recipient) => recipient.staff_id) ?? []);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load form.');
@@ -294,6 +301,8 @@ const FormEditor = () => {
           delete_answer_after_email: deleteAnswerAfterEmail,
           send_confirmation_to_submitter: sendConfirmation,
           custom_from_name: overrideSender ? customFromName : null,
+          notification_message_html: notificationMessageHtml,
+          confirmation_message_html: confirmationMessageHtml,
           staff_recipient_ids: staffRecipientIds,
         },
       };
@@ -634,6 +643,33 @@ const FormEditor = () => {
                   </div>
 
                   <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
+                    <div className="min-w-0">
+                      <Label>{language === 'en' ? 'Notification message' : 'Benachrichtigungstext'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {notificationMessageHtml
+                          ? (language === 'en' ? 'Custom message active for the owner/staff notification.' : 'Eigener Text für die Benachrichtigung an Besitzer/Mitarbeiter aktiv.')
+                          : (language === 'en' ? 'The standard notification message is used.' : 'Es wird der Standard-Benachrichtigungstext verwendet.')}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {notificationMessageHtml && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setNotificationMessageHtml(null)}
+                          title={language === 'en' ? 'Reset to the standard message' : 'Auf den Standardtext zurücksetzen'}
+                        >
+                          {language === 'en' ? 'Reset' : 'Zurücksetzen'}
+                        </Button>
+                      )}
+                      <Button type="button" variant="outline" size="sm" onClick={() => setMessageEditorTarget('notification')}>
+                        {language === 'en' ? 'Edit' : 'Anpassen'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
                     <div>
                       <Label htmlFor="send-confirmation-copy">{language === 'en' ? 'Send confirmation copy to the form submitter' : 'Bestätigungskopie an den Absender des Formulares senden'}</Label>
                       <p className="text-xs text-muted-foreground">
@@ -647,6 +683,39 @@ const FormEditor = () => {
                       </p>
                     </div>
                     <Switch id="send-confirmation-copy" checked={sendConfirmation} onCheckedChange={setSendConfirmation} />
+                  </div>
+
+                  <div className={`flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 ${sendConfirmation ? '' : 'opacity-60'}`}>
+                    <div className="min-w-0">
+                      <Label>{language === 'en' ? 'Confirmation message' : 'Bestätigungstext'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {confirmationMessageHtml
+                          ? (language === 'en' ? 'Custom message active for the confirmation copy to the submitter.' : 'Eigener Text für die Bestätigungskopie an den Absender aktiv.')
+                          : (language === 'en' ? 'The standard confirmation message is used.' : 'Es wird der Standard-Bestätigungstext verwendet.')}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {confirmationMessageHtml && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmationMessageHtml(null)}
+                          title={language === 'en' ? 'Reset to the standard message' : 'Auf den Standardtext zurücksetzen'}
+                        >
+                          {language === 'en' ? 'Reset' : 'Zurücksetzen'}
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!sendConfirmation}
+                        onClick={() => setMessageEditorTarget('confirmation')}
+                      >
+                        {language === 'en' ? 'Edit' : 'Anpassen'}
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
@@ -961,6 +1030,31 @@ const FormEditor = () => {
           </AdminCard>
         </div>
       </div>
+
+      <NotificationMessageEditor
+        open={messageEditorTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setMessageEditorTarget(null);
+        }}
+        title={messageEditorTarget === 'confirmation'
+          ? (language === 'en' ? 'Edit confirmation message' : 'Bestätigungstext anpassen')
+          : (language === 'en' ? 'Edit notification message' : 'Benachrichtigungstext anpassen')}
+        description={messageEditorTarget === 'confirmation'
+          ? (language === 'en' ? 'Compose the confirmation copy that is sent to the form submitter. Use blocks for dynamic content such as the answer table or individual fields.' : 'Gestalte die Bestätigungskopie, die an den Absender des Formulares gesendet wird. Nutze Blöcke für dynamische Inhalte wie die Antworttabelle oder einzelne Formularfelder.')
+          : (language === 'en' ? 'Compose the notification e-mail for owner and staff recipients. Use blocks for dynamic content such as the answer table or individual fields.' : 'Gestalte die Benachrichtigungs-E-Mail für Besitzer und Mitarbeiter-Empfänger. Nutze Blöcke für dynamische Inhalte wie die Antworttabelle oder einzelne Formularfelder.')}
+        initialHtml={messageEditorTarget === 'confirmation'
+          ? (confirmationMessageHtml ?? DEFAULT_CONFIRMATION_TEMPLATE_HTML)
+          : (notificationMessageHtml ?? DEFAULT_NOTIFICATION_TEMPLATE_HTML)}
+        defaultHtml={messageEditorTarget === 'confirmation' ? DEFAULT_CONFIRMATION_TEMPLATE_HTML : DEFAULT_NOTIFICATION_TEMPLATE_HTML}
+        fields={builderFields}
+        onSave={(html) => {
+          if (messageEditorTarget === 'confirmation') {
+            setConfirmationMessageHtml(html);
+          } else {
+            setNotificationMessageHtml(html);
+          }
+        }}
+      />
     </AdminPageLayout>
   );
 };

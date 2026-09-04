@@ -460,6 +460,23 @@ body.mobile-menu-open {
   @apply text-blue-700 decoration-blue-700;
 }
 
+/* Template token chips (form notification message editor) */
+.template-token {
+  @apply inline-flex cursor-grab items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 align-baseline text-xs font-medium text-amber-800 select-none;
+}
+
+.dark .template-token {
+  @apply border-amber-700 bg-amber-950/60 text-amber-200;
+}
+
+.template-token-preview {
+  @apply mr-2;
+}
+
+.ProseMirror img {
+  @apply max-w-full h-auto rounded;
+}
+
 .dark .ProseMirror a:hover {
   @apply text-blue-300 decoration-blue-200;
 }

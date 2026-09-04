@@ -321,6 +321,22 @@ The notification e-mail leads with the greeting and the answer summary (plus fil
 
 Each form can override the global standard sender **name** for its notification e-mails. The form editor's *Benachrichtigungen bei Einreichungen* card exposes the *Absender überschreiben* switch with a single `Absendername` input. The value is stored in `form_notification_settings.custom_from_name` and copied into each mail job's `payload.from_name`. The `send_email` Edge Function combines the overridden name with the global standard from e-mail from `system_config` (namespace `mail`, edited under *Verwaltung → Verbindungen*) — the `from` **address** can never be overridden per form, so it is always a sender domain verified with the mail provider (e.g. Resend). With no override configured, the global standard sender is used unchanged.
 
+### Custom Message Templates (Tiptap Editor)
+
+Both form e-mails — the **owner/staff notification** and the **confirmation copy to the submitter** — can be customized per form with a rich text editor (`NotificationMessageEditor`, opened in a modal from the *Benachrichtigungen bei Einreichungen* card via *Benachrichtigungstext* / *Bestätigungstext* → *Anpassen*).
+
+- **Storage**: `form_notification_settings.notification_message_html` / `confirmation_message_html`. `NULL` always falls back to the built-in default templates (hardcoded server-side, byte-identical to the original layout).
+- **Editor**: Tiptap with bold/italic, headings 1–3, lists, links (normalized like the page-builder editor), and images inserted through the existing `ImageUploader` media picker.
+- **Template tokens**: dynamic content is inserted as chips (inline atom nodes, stored as `<span data-token="…">`). Available via a dropdown ("Blöcke") and draggable into the text:
+  - `$submissions` — the answer table incl. PluraDash file download links (staff notification only; the confirmation copy omits download links)
+  - `$metadata` — the metadata block (Antwort-ID, Formular-Slug, Eingangskanal, Quelle)
+  - `$form_name`, `$recipient_name`, `$answer_id`, `$submitted_via`, `$source_slug`
+  - `$<field_name>` — one chip per fillable form block (`field:<name>` internally); unknown/renamed fields render as `-`
+- **Server-side rendering** (`api/lib/formMessageTemplate.ts`): editor HTML is sanitized against a strict allowlist (p, h1–h3, lists, strong/em/u/code, a with safe hrefs, img with safe src, token spans; all else dropped — XSS protection), tokens are replaced, basic nodes receive inline styles for e-mail clients, and a plain-text fallback is derived for the mail job payload. Unknown tokens render as `-`.
+- **Default editing**: opening the editor with no custom message pre-fills the default layout (expressed with tokens via `src/utils/formNotificationTemplates.ts`). *Standard wiederherstellen* restores it; applying without further changes saves `NULL` (default) again. The card rows show whether a custom text is active and offer a reset.
+
+The mail subjects are not customizable yet. Note that images embedded via the media picker must resolve publicly for e-mail clients (see media picker hint in the editor).
+
 ### Confirmation Copy to the Submitter
 
 When *Bestätigungskopie an den Absender des Formulares senden* is enabled (`form_notification_settings.send_confirmation_to_submitter`), each submission triggers a second, separate e-mail to the address stored in the `reply_to`-flagged e-mail field. This e-mail uses its own template:

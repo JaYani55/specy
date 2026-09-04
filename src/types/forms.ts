@@ -73,6 +73,8 @@ export interface FormNotificationSettings {
   delete_answer_after_email: boolean;
   send_confirmation_to_submitter: boolean;
   custom_from_name: string | null;
+  notification_message_html: string | null;
+  confirmation_message_html: string | null;
   recipients: FormNotificationRecipient[];
 }
 
