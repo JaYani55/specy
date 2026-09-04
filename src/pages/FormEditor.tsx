@@ -93,6 +93,9 @@ const FormEditor = () => {
   const [notifyOwner, setNotifyOwner] = useState(false);
   const [notifyStaff, setNotifyStaff] = useState(false);
   const [deleteAnswerAfterEmail, setDeleteAnswerAfterEmail] = useState(false);
+  const [sendConfirmation, setSendConfirmation] = useState(false);
+  const [overrideSender, setOverrideSender] = useState(false);
+  const [customFromName, setCustomFromName] = useState('');
   const [staffRecipientIds, setStaffRecipientIds] = useState<string[]>([]);
   const [staffOptions, setStaffOptions] = useState<FormNotificationStaffOption[]>([]);
   const [staffSearch, setStaffSearch] = useState('');
@@ -180,6 +183,9 @@ const FormEditor = () => {
         setNotifyOwner(Boolean(form.notification_settings?.notify_owner));
         setNotifyStaff(Boolean(form.notification_settings?.notify_staff));
         setDeleteAnswerAfterEmail(Boolean(form.notification_settings?.delete_answer_after_email));
+        setSendConfirmation(Boolean(form.notification_settings?.send_confirmation_to_submitter));
+        setOverrideSender(Boolean(form.notification_settings?.custom_from_name));
+        setCustomFromName(form.notification_settings?.custom_from_name ?? '');
         setStaffRecipientIds(form.notification_settings?.recipients.map((recipient) => recipient.staff_id) ?? []);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load form.');
@@ -245,6 +251,20 @@ const FormEditor = () => {
       return;
     }
 
+    if (sendConfirmation && !replyToEmailField) {
+      toast.error(
+        language === 'en'
+          ? 'Add an e-mail block marked as the sender address first.'
+          : 'Füge zuerst einen als Absenderadresse markierten E-Mail-Block hinzu.',
+      );
+      return;
+    }
+
+    if (overrideSender && !customFromName.trim()) {
+      toast.error(language === 'en' ? 'The custom sender name is required.' : 'Der eigene Absendername ist erforderlich.');
+      return;
+    }
+
     if (tenantOptions.length > 0 && !tenantId) {
       toast.error(language === 'en' ? 'Select a workspace first.' : 'Bitte zuerst einen Workspace auswählen.');
       return;
@@ -272,6 +292,8 @@ const FormEditor = () => {
           notify_owner: notifyOwner,
           notify_staff: notifyStaff,
           delete_answer_after_email: deleteAnswerAfterEmail,
+          send_confirmation_to_submitter: sendConfirmation,
+          custom_from_name: overrideSender ? customFromName : null,
           staff_recipient_ids: staffRecipientIds,
         },
       };
@@ -611,6 +633,48 @@ const FormEditor = () => {
                     <Switch id="reply-to-submitter" checked={Boolean(replyToEmailField)} onCheckedChange={handleReplyToSubmitterChange} />
                   </div>
 
+                  <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
+                    <div>
+                      <Label htmlFor="send-confirmation-copy">{language === 'en' ? 'Send confirmation copy to the form submitter' : 'Bestätigungskopie an den Absender des Formulares senden'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {replyToEmailField
+                          ? (language === 'en'
+                            ? `Sends a summary of the submission as a confirmation copy to the address in the "${replyToEmailField.label}" block.`
+                            : `Sendet eine Zusammenfassung der Einreichung als Bestätigungskopie an die Adresse im Block "${replyToEmailField.label}".`)
+                          : (language === 'en'
+                            ? 'Requires an e-mail block marked as the sender address. Add an e-mail block and enable "Direct e-mail replies to this address" there.'
+                            : 'Benötigt einen als Absenderadresse markierten E-Mail-Block. Aktiviere dafür im E-Mail-Block "E-Mail-Antworten an diese Adresse richten".')}
+                      </p>
+                    </div>
+                    <Switch id="send-confirmation-copy" checked={sendConfirmation} onCheckedChange={setSendConfirmation} />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
+                    <div>
+                      <Label htmlFor="override-sender">{language === 'en' ? 'Override sender name' : 'Absender überschreiben'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'en'
+                          ? 'Replaces the standard sender name of notification e-mails for this form. The sender e-mail always stays the standard configured under Administration → Connections.'
+                          : 'Ersetzt den Standard-Absendernamen der Benachrichtigungs-E-Mails dieses Formulares. Die Absender-E-Mail bleibt immer der unter Verwaltung → Verbindungen konfigurierte Standard.'}
+                      </p>
+                    </div>
+                    <Switch id="override-sender" checked={overrideSender} onCheckedChange={setOverrideSender} />
+                  </div>
+
+                  {overrideSender && (
+                    <div className="grid gap-3 rounded-lg border bg-background/60 p-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="custom-from-name">{language === 'en' ? 'Sender name' : 'Absendername'}</Label>
+                        <Input
+                          id="custom-from-name"
+                          value={customFromName}
+                          onChange={(event) => setCustomFromName(event.target.value)}
+                          placeholder={language === 'en' ? 'e.g. Acme Support' : 'z.B. Acme Support'}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-2">
                     {notifyOwner && <Badge>{language === 'en' ? 'Owner enabled' : 'Besitzer aktiv'}</Badge>}
                     {notifyStaff && <Badge variant="secondary">{staffRecipientIds.length} {language === 'en' ? 'staff selected' : 'Mitarbeiter ausgewählt'}</Badge>}
@@ -619,6 +683,16 @@ const FormEditor = () => {
                     )}
                     {replyToEmailField && (
                       <Badge variant="secondary">{language === 'en' ? `Reply-To: ${replyToEmailField.name}` : `Reply-To: ${replyToEmailField.name}`}</Badge>
+                    )}
+                    {sendConfirmation && (
+                      <Badge variant="secondary">{language === 'en' ? 'Confirmation copy enabled' : 'Bestätigungskopie aktiv'}</Badge>
+                    )}
+                    {overrideSender && customFromName.trim() && (
+                      <Badge variant="outline">
+                        {language === 'en' ? 'Sender name:' : 'Absendername:'}
+                        {' '}
+                        {customFromName.trim()}
+                      </Badge>
                     )}
                     {!notifyOwner && !notifyStaff && (
                       <Badge variant="outline">{language === 'en' ? 'No e-mail notifications' : 'Keine E-Mail-Benachrichtigungen'}</Badge>

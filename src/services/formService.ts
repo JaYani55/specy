@@ -63,7 +63,7 @@ const getFormNotificationSettings = async (formId: string): Promise<FormNotifica
   const [{ data: settingsRow, error: settingsError }, { data: recipientRows, error: recipientsError }] = await Promise.all([
     supabase
       .from('form_notification_settings')
-      .select('notify_owner, notify_staff, delete_answer_after_email')
+      .select('notify_owner, notify_staff, delete_answer_after_email, send_confirmation_to_submitter, custom_from_name')
       .eq('form_id', formId)
       .maybeSingle(),
     supabase
@@ -104,6 +104,8 @@ const getFormNotificationSettings = async (formId: string): Promise<FormNotifica
     notify_owner: Boolean(settingsRow?.notify_owner),
     notify_staff: Boolean(settingsRow?.notify_staff),
     delete_answer_after_email: Boolean(settingsRow?.delete_answer_after_email),
+    send_confirmation_to_submitter: Boolean(settingsRow?.send_confirmation_to_submitter),
+    custom_from_name: (settingsRow?.custom_from_name as string | null | undefined) ?? null,
     recipients,
   };
 };
@@ -133,6 +135,8 @@ interface SaveFormInput {
     notify_owner: boolean;
     notify_staff: boolean;
     delete_answer_after_email: boolean;
+    send_confirmation_to_submitter: boolean;
+    custom_from_name?: string | null;
     staff_recipient_ids: string[];
   };
 }
@@ -177,6 +181,8 @@ const syncFormNotificationSettings = async (formId: string, notificationSettings
     notify_owner: Boolean(notificationSettings?.notify_owner),
     notify_staff: Boolean(notificationSettings?.notify_staff),
     delete_answer_after_email: Boolean(notificationSettings?.delete_answer_after_email),
+    send_confirmation_to_submitter: Boolean(notificationSettings?.send_confirmation_to_submitter),
+    custom_from_name: notificationSettings?.custom_from_name?.trim() || null,
     staff_recipient_ids: [...new Set((notificationSettings?.staff_recipient_ids ?? []).filter(Boolean))],
   };
 
@@ -187,6 +193,8 @@ const syncFormNotificationSettings = async (formId: string, notificationSettings
       notify_owner: normalized.notify_owner,
       notify_staff: normalized.notify_staff,
       delete_answer_after_email: normalized.delete_answer_after_email,
+      send_confirmation_to_submitter: normalized.send_confirmation_to_submitter,
+      custom_from_name: normalized.custom_from_name,
     }, { onConflict: 'form_id' });
 
   if (upsertSettingsError) throw new Error(upsertSettingsError.message);

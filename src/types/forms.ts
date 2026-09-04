@@ -71,6 +71,8 @@ export interface FormNotificationSettings {
   notify_owner: boolean;
   notify_staff: boolean;
   delete_answer_after_email: boolean;
+  send_confirmation_to_submitter: boolean;
+  custom_from_name: string | null;
   recipients: FormNotificationRecipient[];
 }
 

@@ -34,6 +34,7 @@ type SendRequest = {
   html?: string;
   text?: string;
   replyTo?: string;
+  from?: string;
 };
 
 type ProviderSendResult = {
@@ -155,8 +156,8 @@ async function getMailConfig(): Promise<MailConfig> {
   };
 }
 
-function formatFromAddress(config: MailConfig): string {
-  const name = config.fromName.trim();
+function formatFromAddress(config: MailConfig, fromName?: string): string {
+  const name = fromName?.trim() || config.fromName.trim();
   return name ? `${name} <${config.fromEmail}>` : config.fromEmail;
 }
 
@@ -196,7 +197,7 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: formatFromAddress(config),
+            from: message.from || formatFromAddress(config),
             to: [message.to],
             subject: message.subject,
             html: message.html,
@@ -247,7 +248,7 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
     },
     async send(message) {
       const info = await transport.sendMail({
-        from: formatFromAddress(config),
+        from: message.from || formatFromAddress(config),
         to: message.to,
         subject: message.subject,
         html: message.html,
@@ -374,12 +375,16 @@ async function processJob(jobId: string) {
   });
 
   try {
+    const overrideFromName = typeof job.payload.from_name === 'string' && job.payload.from_name.trim()
+      ? job.payload.from_name.trim()
+      : '';
     const result = await provider.send({
       to: job.recipient_email,
       subject: job.subject,
       html: typeof job.payload.html === 'string' ? job.payload.html : undefined,
       text: typeof job.payload.text === 'string' ? job.payload.text : undefined,
       replyTo: typeof job.payload.reply_to === 'string' && job.payload.reply_to.trim() ? job.payload.reply_to.trim() : undefined,
+      from: formatFromAddress(config, overrideFromName),
     });
 
     const { error: markSentError } = await supabase

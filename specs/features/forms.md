@@ -317,6 +317,21 @@ The `reply_to` flag is unique per form: only one `email` field may carry it. The
 
 The notification e-mail leads with the greeting and the answer summary (plus file download links when present). Technical metadata — `Antwort-ID`, `Formular-Slug`, `Eingangskanal`, `Quelle` — is rendered at the very end under a small `Metadaten` heading in a reduced, unobtrusive font.
 
+### Sender Name Override (per form)
+
+Each form can override the global standard sender **name** for its notification e-mails. The form editor's *Benachrichtigungen bei Einreichungen* card exposes the *Absender überschreiben* switch with a single `Absendername` input. The value is stored in `form_notification_settings.custom_from_name` and copied into each mail job's `payload.from_name`. The `send_email` Edge Function combines the overridden name with the global standard from e-mail from `system_config` (namespace `mail`, edited under *Verwaltung → Verbindungen*) — the `from` **address** can never be overridden per form, so it is always a sender domain verified with the mail provider (e.g. Resend). With no override configured, the global standard sender is used unchanged.
+
+### Confirmation Copy to the Submitter
+
+When *Bestätigungskopie an den Absender des Formulares senden* is enabled (`form_notification_settings.send_confirmation_to_submitter`), each submission triggers a second, separate e-mail to the address stored in the `reply_to`-flagged e-mail field. This e-mail uses its own template:
+
+- **Subject**: `Ihre Anfrage an <Name>` — resolved as the PluraDash organization name (`pluradash.organizations.name`) of the form's tenant, falling back to the workspace name (`tenants.name`) when no organization is registered, and finally to the form name
+- **Greeting + intro**: `Hallo,` / `hier ist eine Zusammenfassung Ihrer Nachricht.`
+- **Tabular answer summary** (`Ihre Antworten`), display-only blocks excluded
+- **Metadata small print** at the end (`Antwort-ID`, `Formular-Slug`, `Eingangskanal`, `Quelle`)
+
+The confirmation copy is queued as `mail_delivery_jobs` event type `form_answer_confirmation` and is independent of the owner/staff notification switches. It requires a valid submitter address in the `reply_to`-flagged e-mail field; otherwise the copy is skipped with a warning. The per-form sender override (see above) also applies to the confirmation copy. The confirmation e-mail itself has no `Reply-To` override and falls back to the global standard reply-to.
+
 ---
 
 ## Poll Feature

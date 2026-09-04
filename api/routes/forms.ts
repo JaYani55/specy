@@ -324,6 +324,180 @@ const resolveNotificationReplyTo = (
   return isValidEmail(email) ? email : null;
 };
 
+interface FormNotificationSettingsRow {
+  notify_owner?: boolean | null;
+  notify_staff?: boolean | null;
+  send_confirmation_to_submitter?: boolean | null;
+  custom_from_name?: string | null;
+}
+
+const resolveSenderOverridePayload = (settings: FormNotificationSettingsRow | null): { from_name?: string } => {
+  const fromName = typeof settings?.custom_from_name === 'string' ? settings.custom_from_name.trim() : '';
+  return fromName ? { from_name: fromName } : {};
+};
+
+const resolveFormDisplayName = async (
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  form: FormRow,
+): Promise<string> => {
+  if (form.tenant_id) {
+    // Preferred: the PluraDash organization name of the tenant. The pluradash schema
+    // only exists when the plugin is installed, so any error falls through gracefully.
+    const { data: organization, error: organizationError } = await admin
+      .schema('pluradash')
+      .from('organizations')
+      .select('name')
+      .eq('tenant_id', form.tenant_id)
+      .maybeSingle();
+
+    if (!organizationError && typeof organization?.name === 'string' && organization.name.trim()) {
+      return organization.name.trim();
+    }
+
+    const { data: tenant, error: tenantError } = await admin
+      .from('tenants')
+      .select('name')
+      .eq('id', form.tenant_id)
+      .maybeSingle();
+
+    if (!tenantError && typeof tenant?.name === 'string' && tenant.name.trim()) {
+      return tenant.name.trim();
+    }
+  }
+
+  return form.name;
+};
+
+const buildConfirmationContent = (input: {
+  form: FormRow;
+  tenantName: string;
+  fields: FormFieldDefinition[];
+  answers: Record<string, FormAnswerValue>;
+  answerId: string;
+  submittedVia: 'share' | 'api' | 'page';
+  sourceSlug: string | null;
+}): { subject: string; text: string; html: string } => {
+  const answerFields = input.fields.filter((field) => !DISPLAY_ONLY_FIELD_TYPES.has(field.type));
+  const answerSummaryText = buildAnswerSummaryText(answerFields, input.answers);
+  const answerSummaryHtml = buildAnswerSummaryHtml(answerFields, input.answers);
+  const sourceLine = input.sourceSlug ? `Quelle: ${input.sourceSlug}` : 'Quelle: -';
+  const htmlSource = input.sourceSlug ? escapeHtml(input.sourceSlug) : '-';
+  const subject = `Ihre Anfrage an ${input.tenantName}`;
+  const text = [
+    'Hallo,',
+    '',
+    'hier ist eine Zusammenfassung Ihrer Nachricht.',
+    '',
+    'Antworten:',
+    answerSummaryText,
+    '',
+    'Metadaten:',
+    `Antwort-ID: ${input.answerId}`,
+    `Formular-Slug: ${input.form.slug}`,
+    `Eingangskanal: ${input.submittedVia}`,
+    sourceLine,
+  ].join('\n');
+  const html = [
+    '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;">',
+    '<p>Hallo,</p>',
+    '<p>hier ist eine Zusammenfassung Ihrer Nachricht.</p>',
+    '<table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:720px;">',
+    '<thead><tr><th colspan="2" style="text-align:left;padding:8px 12px;border:1px solid #d9d9d9;background:#f3f4f6;">Ihre Antworten</th></tr></thead>',
+    `<tbody>${answerSummaryHtml}</tbody>`,
+    '</table>',
+    '<div style="margin:24px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;">',
+    '<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;margin:0 0 6px 0;">Metadaten</p>',
+    '<table style="border-collapse:collapse;font-size:11px;color:#9ca3af;">',
+    `<tr><td style="padding:2px 12px 2px 0;">Antwort-ID</td><td style="padding:2px 0;">${escapeHtml(input.answerId)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Formular-Slug</td><td style="padding:2px 0;">${escapeHtml(input.form.slug)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Eingangskanal</td><td style="padding:2px 0;">${escapeHtml(input.submittedVia)}</td></tr>`,
+    `<tr><td style="padding:2px 12px 2px 0;">Quelle</td><td style="padding:2px 0;">${htmlSource}</td></tr>`,
+    '</table>',
+    '</div>',
+    '</div>',
+  ].join('');
+
+  return { subject, text, html };
+};
+
+const enqueueFormConfirmationCopy = async (input: {
+  env: Env;
+  requestUrl: string;
+  form: FormRow;
+  fields: FormFieldDefinition[];
+  answers: Record<string, FormAnswerValue>;
+  answerId: string;
+  submittedBy: string | null;
+  submittedVia: 'share' | 'api' | 'page';
+  sourceSlug: string | null;
+  submitterEmail: string;
+  senderOverride: { from_name?: string };
+}): Promise<void> => {
+  const admin = await createSupabaseAdminClient(input.env);
+  const displayName = await resolveFormDisplayName(admin, input.form);
+
+  const content = buildConfirmationContent({
+    form: input.form,
+    tenantName: displayName,
+    fields: input.fields,
+    answers: input.answers,
+    answerId: input.answerId,
+    submittedVia: input.submittedVia,
+    sourceSlug: input.sourceSlug,
+  });
+
+  const { data: job, error: jobError } = await admin
+    .from('mail_delivery_jobs')
+    .insert({
+      event_type: 'form_answer_confirmation',
+      status: 'pending',
+      form_id: input.form.id,
+      answer_id: input.answerId,
+      recipient_email: input.submitterEmail,
+      subject: content.subject,
+      payload: {
+        html: content.html,
+        text: content.text,
+        ...input.senderOverride,
+        formName: input.form.name,
+        formSlug: input.form.slug,
+        answerId: input.answerId,
+        submittedVia: input.submittedVia,
+        sourceSlug: input.sourceSlug,
+        recipientKind: 'submitter',
+        recipientLabel: 'Form submitter',
+      },
+      queued_by: input.submittedBy,
+    })
+    .select('id')
+    .single();
+
+  if (jobError) throw new Error(jobError.message);
+  if (!job) return;
+
+  const { error: eventsError } = await admin
+    .from('mail_delivery_events')
+    .insert({
+      job_id: (job as MailDeliveryJobRow).id,
+      event_type: 'queued',
+      message: 'Queued form answer confirmation copy for delivery.',
+      metadata: {
+        formId: input.form.id,
+        answerId: input.answerId,
+      },
+    });
+
+  if (eventsError) throw new Error(eventsError.message);
+
+  const result = await admin.functions.invoke('send_email', {
+    body: { mode: 'deliver-job', jobId: (job as MailDeliveryJobRow).id },
+  });
+
+  if (result.error) {
+    console.error(`Failed to invoke send_email for confirmation job ${(job as MailDeliveryJobRow).id}: ${result.error.message}`);
+  }
+};
+
 const enqueueFormAnswerNotifications = async (input: {
   env: Env;
   requestUrl: string;
@@ -338,11 +512,35 @@ const enqueueFormAnswerNotifications = async (input: {
   const admin = await createSupabaseAdminClient(input.env);
   const { data: settings, error: settingsError } = await admin
     .from('form_notification_settings')
-    .select('notify_owner, notify_staff')
+    .select('notify_owner, notify_staff, send_confirmation_to_submitter, custom_from_name')
     .eq('form_id', input.form.id)
     .maybeSingle();
 
   if (settingsError) throw new Error(settingsError.message);
+
+  const senderOverride = resolveSenderOverridePayload(settings);
+  const notificationReplyTo = resolveNotificationReplyTo(input.fields, input.answers);
+
+  if (settings?.send_confirmation_to_submitter) {
+    if (!notificationReplyTo) {
+      console.warn(`Confirmation copy for form ${input.form.id} requested but no valid submitter address found in the reply-to field.`);
+    } else {
+      await enqueueFormConfirmationCopy({
+        env: input.env,
+        requestUrl: input.requestUrl,
+        form: input.form,
+        fields: input.fields,
+        answers: input.answers,
+        answerId: input.answerId,
+        submittedBy: input.submittedBy,
+        submittedVia: input.submittedVia,
+        sourceSlug: input.sourceSlug,
+        submitterEmail: notificationReplyTo,
+        senderOverride,
+      });
+    }
+  }
+
   if (!settings?.notify_owner && !settings?.notify_staff) return;
 
   const recipientMap = new Map<string, NotificationRecipient>();
@@ -361,8 +559,6 @@ const enqueueFormAnswerNotifications = async (input: {
 
   const recipients = [...recipientMap.values()];
   if (recipients.length === 0) return;
-
-  const notificationReplyTo = resolveNotificationReplyTo(input.fields, input.answers);
 
   const notificationContext = await runFormFileNotificationHooks({
     requestUrl: input.requestUrl,
@@ -396,6 +592,7 @@ const enqueueFormAnswerNotifications = async (input: {
         html: content.html,
         text: content.text,
         ...(notificationReplyTo ? { reply_to: notificationReplyTo } : {}),
+        ...senderOverride,
         formName: input.form.name,
         formSlug: input.form.slug,
         answerId: input.answerId,
