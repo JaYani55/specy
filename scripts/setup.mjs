@@ -1000,6 +1000,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202609050001_forms_confirmation_and_sender_override.sql',
     '202609050002_remove_custom_from_email.sql',
     '202609050003_form_notification_message.sql',
+    '202609060001_form_notification_subject.sql',
     'mail_delivery.sql',
     'forms_published_default.sql',
     'plugins.sql',

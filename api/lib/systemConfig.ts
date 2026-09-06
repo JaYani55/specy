@@ -466,7 +466,7 @@ export async function upsertMediaSourceMounts(env: Env, mounts: MediaSourceMount
 
   const legacyStorage: StorageConfigValues = defaultNativeMount
     ? {
-        provider: defaultNativeMount.type,
+        provider: defaultNativeMount.type as 'supabase' | 'r2',
         bucket: defaultNativeMount.bucket,
         r2PublicUrl: defaultNativeMount.type === 'r2' ? trimString(defaultNativeMount.publicUrl) : '',
       }

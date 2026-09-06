@@ -5,7 +5,7 @@ import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceM
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
 import { verifyAuthSession } from '../lib/auth';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
-import { hasUsableTemplate, renderTemplateMessage, type TemplateTokenValue } from '../lib/formMessageTemplate';
+import { hasUsableSubject, hasUsableTemplate, renderTemplateMessage, renderTemplateSubject, type TemplateTokenValue } from '../lib/formMessageTemplate';
 
 const forms = new Hono<{ Bindings: Env }>();
 
@@ -404,6 +404,7 @@ const buildTemplateTokens = (input: {
   submittedVia: 'share' | 'api' | 'page';
   sourceSlug: string | null;
   recipientName: string;
+  workspaceName?: string;
 }): Record<string, TemplateTokenValue> => {
   const answerFields = input.fields.filter((field) => !DISPLAY_ONLY_FIELD_TYPES.has(field.type));
   const fileLinksBlock = buildFileLinksBlock(input.fileLinks);
@@ -427,6 +428,7 @@ const buildTemplateTokens = (input: {
     },
     metadata,
     form_name: { html: escapeHtml(input.form.name), text: input.form.name },
+    workspace_name: { html: escapeHtml(input.workspaceName ?? input.form.name), text: input.workspaceName ?? input.form.name },
     recipient_name: { html: escapeHtml(input.recipientName), text: input.recipientName },
     answer_id: { html: escapeHtml(input.answerId), text: input.answerId },
     submitted_via: { html: escapeHtml(input.submittedVia), text: input.submittedVia },
@@ -498,23 +500,31 @@ const enqueueFormConfirmationCopy = async (input: {
   submitterEmail: string;
   senderOverride: { from_name?: string };
   customMessageHtml: string | null;
+  customSubject: string | null;
 }): Promise<void> => {
   const admin = await createSupabaseAdminClient(input.env);
   const displayName = await resolveFormDisplayName(admin, input.form);
 
+  // The submitter copy is replying to the form owner, NOT to the submitter —
+  // so it must not fall back to the global system reply-to address.
+  const ownerRecipient = await resolveOwnerRecipient(admin, input.form);
+
+  const templateTokens = buildTemplateTokens({
+    form: input.form,
+    fields: input.fields,
+    answers: input.answers,
+    fileLinks: [],
+    answerId: input.answerId,
+    submittedVia: input.submittedVia,
+    sourceSlug: input.sourceSlug,
+    recipientName: '',
+    workspaceName: displayName,
+  });
+
   const content = input.customMessageHtml
     ? {
       subject: `Ihre Anfrage an ${displayName}`,
-      ...renderTemplateMessage(input.customMessageHtml, buildTemplateTokens({
-        form: input.form,
-        fields: input.fields,
-        answers: input.answers,
-        fileLinks: [],
-        answerId: input.answerId,
-        submittedVia: input.submittedVia,
-        sourceSlug: input.sourceSlug,
-        recipientName: '',
-      })),
+      ...renderTemplateMessage(input.customMessageHtml, templateTokens),
     }
     : buildConfirmationContent({
       form: input.form,
@@ -525,6 +535,7 @@ const enqueueFormConfirmationCopy = async (input: {
       submittedVia: input.submittedVia,
       sourceSlug: input.sourceSlug,
     });
+  const subject = input.customSubject ? renderTemplateSubject(input.customSubject, templateTokens) : content.subject;
 
   const { data: job, error: jobError } = await admin
     .from('mail_delivery_jobs')
@@ -534,10 +545,11 @@ const enqueueFormConfirmationCopy = async (input: {
       form_id: input.form.id,
       answer_id: input.answerId,
       recipient_email: input.submitterEmail,
-      subject: content.subject,
+      subject,
       payload: {
         html: content.html,
         text: content.text,
+        ...(ownerRecipient ? { reply_to: ownerRecipient.email } : {}),
         ...input.senderOverride,
         formName: input.form.name,
         formSlug: input.form.slug,
@@ -592,7 +604,7 @@ const enqueueFormAnswerNotifications = async (input: {
   const admin = await createSupabaseAdminClient(input.env);
   const { data: settings, error: settingsError } = await admin
     .from('form_notification_settings')
-    .select('notify_owner, notify_staff, send_confirmation_to_submitter, custom_from_name, notification_message_html, confirmation_message_html')
+    .select('notify_owner, notify_staff, send_confirmation_to_submitter, custom_from_name, notification_message_html, confirmation_message_html, notification_subject, confirmation_subject')
     .eq('form_id', input.form.id)
     .maybeSingle();
 
@@ -618,6 +630,7 @@ const enqueueFormAnswerNotifications = async (input: {
         submitterEmail: notificationReplyTo,
         senderOverride,
         customMessageHtml: hasUsableTemplate(settings.confirmation_message_html) ? (settings.confirmation_message_html as string) : null,
+        customSubject: hasUsableSubject(settings.confirmation_subject) ? (settings.confirmation_subject as string) : null,
       });
     }
   }
@@ -644,6 +657,11 @@ const enqueueFormAnswerNotifications = async (input: {
   const notificationTemplateHtml = hasUsableTemplate(settings.notification_message_html)
     ? (settings.notification_message_html as string)
     : null;
+  const customNotificationSubject = hasUsableSubject(settings.notification_subject)
+    ? (settings.notification_subject as string)
+    : null;
+
+  const workspaceName = await resolveFormDisplayName(admin, input.form);
 
   const notificationContext = await runFormFileNotificationHooks({
     requestUrl: input.requestUrl,
@@ -655,19 +673,21 @@ const enqueueFormAnswerNotifications = async (input: {
   });
 
   const jobsToInsert = recipients.map((recipient) => {
+    const templateTokens = buildTemplateTokens({
+      form: input.form,
+      fields: input.fields,
+      answers: input.answers,
+      fileLinks: notificationContext.fileLinks,
+      answerId: input.answerId,
+      submittedVia: input.submittedVia,
+      sourceSlug: input.sourceSlug,
+      recipientName: recipient.label,
+      workspaceName,
+    });
     const content = notificationTemplateHtml
       ? {
         subject: `Neue Formularantwort: ${input.form.name}`,
-        ...renderTemplateMessage(notificationTemplateHtml, buildTemplateTokens({
-          form: input.form,
-          fields: input.fields,
-          answers: input.answers,
-          fileLinks: notificationContext.fileLinks,
-          answerId: input.answerId,
-          submittedVia: input.submittedVia,
-          sourceSlug: input.sourceSlug,
-          recipientName: recipient.label,
-        })),
+        ...renderTemplateMessage(notificationTemplateHtml, templateTokens),
       }
       : buildNotificationContent({
         form: input.form,
@@ -679,6 +699,9 @@ const enqueueFormAnswerNotifications = async (input: {
         sourceSlug: input.sourceSlug,
         recipientLabel: recipient.label,
       });
+    const subject = customNotificationSubject
+      ? renderTemplateSubject(customNotificationSubject, templateTokens)
+      : content.subject;
 
     return {
       event_type: 'form_answer_notification',
@@ -686,7 +709,7 @@ const enqueueFormAnswerNotifications = async (input: {
       form_id: input.form.id,
       answer_id: input.answerId,
       recipient_email: recipient.email,
-      subject: content.subject,
+      subject,
       payload: {
         html: content.html,
         text: content.text,

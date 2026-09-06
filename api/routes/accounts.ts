@@ -74,7 +74,7 @@ accounts.get('/', async (c) => {
   }
 
   const rolesByUser = new Map<string, RoleRow[]>();
-  for (const row of (userRoles ?? []) as UserRoleRow[]) {
+  for (const row of (userRoles ?? []) as unknown as UserRoleRow[]) {
     if (!rolesByUser.has(row.user_id)) {
       rolesByUser.set(row.user_id, []);
     }

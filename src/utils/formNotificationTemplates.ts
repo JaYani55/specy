@@ -25,10 +25,14 @@ export interface TemplateTokenDescriptor {
   description: string;
 }
 
+export const DEFAULT_NOTIFICATION_SUBJECT = 'Neue Formularantwort: $form_name';
+export const DEFAULT_CONFIRMATION_SUBJECT = 'Ihre Anfrage an $workspace_name';
+
 export const SYSTEM_TOKENS: TemplateTokenDescriptor[] = [
   { token: 'submissions', label: '$submissions', description: 'Tabelle mit allen Formularantworten (inkl. Datei-Downloads)' },
   { token: 'metadata', label: '$metadata', description: 'Metadaten-Block (Antwort-ID, Formular-Slug, Kanal, Quelle)' },
   { token: 'form_name', label: '$form_name', description: 'Name des Formulars' },
+  { token: 'workspace_name', label: '$workspace_name', description: 'Name des Workspaces (bzw. der Organisation)' },
   { token: 'recipient_name', label: '$recipient_name', description: 'Name des Empfängers der E-Mail' },
 ];
 

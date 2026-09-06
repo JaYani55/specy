@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
@@ -37,6 +38,9 @@ const DRAG_TOKEN_MIME = 'text/template-token';
 
 const FILLABLE_FIELD_TYPES = new Set(['help-text', 'image']);
 
+// Block-level tokens (tables/metadata blocks) make no sense in a subject line.
+const SUBJECT_EXCLUDED_TOKENS = new Set(['submissions', 'metadata']);
+
 interface NotificationMessageEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,8 +48,10 @@ interface NotificationMessageEditorProps {
   description: string;
   initialHtml: string;
   defaultHtml: string;
+  initialSubject: string;
+  defaultSubject: string;
   fields: FormFieldDefinition[];
-  onSave: (html: string | null) => void;
+  onSave: (result: { html: string | null; subject: string | null }) => void;
 }
 
 const EditorToolbarButton: React.FC<{
@@ -75,6 +81,8 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
   description,
   initialHtml,
   defaultHtml,
+  initialSubject,
+  defaultSubject,
   fields,
   onSave,
 }) => {
@@ -82,10 +90,13 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [imageSectionOpen, setImageSectionOpen] = useState(false);
+  const [subject, setSubject] = useState(initialSubject);
+  const subjectInputRef = useRef<HTMLInputElement | null>(null);
   const restoredRef = useRef(false);
   const lastSavedContentRef = useRef<string>(initialHtml);
 
   const fillableFields = fields.filter((field) => !FILLABLE_FIELD_TYPES.has(field.type));
+  const subjectTokens = SYSTEM_TOKENS.filter((descriptor) => !SUBJECT_EXCLUDED_TOKENS.has(descriptor.token));
 
   const editor = useEditor({
     extensions: [
@@ -138,9 +149,10 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
     restoredRef.current = false;
     lastSavedContentRef.current = initialHtml;
     editor.commands.setContent(initialHtml, { emitUpdate: false });
+    setSubject(initialSubject);
     setImageSectionOpen(false);
     setLinkPopoverOpen(false);
-  }, [open, editor, initialHtml]);
+  }, [open, editor, initialHtml, initialSubject]);
 
   const insertToken = (targetEditor: Editor, token: string): void => {
     targetEditor
@@ -148,6 +160,24 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
       .focus()
       .insertContent({ type: 'templateToken', attrs: { token } })
       .run();
+  };
+
+  // The subject is plain text: tokens are inserted in their `$token` notation.
+  const insertSubjectToken = (token: string): void => {
+    const label = tokenDisplayLabel(token);
+    const input = subjectInputRef.current;
+    if (!input) {
+      setSubject((current) => `${current}${label}`);
+      return;
+    }
+    const start = input.selectionStart ?? subject.length;
+    const end = input.selectionEnd ?? start;
+    const next = subject.slice(0, start) + label + subject.slice(end);
+    setSubject(next);
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(start + label.length, start + label.length);
+    });
   };
 
   const applyLink = (): void => {
@@ -175,15 +205,17 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
 
   const handleSave = (): void => {
     if (!editor) return;
+    const trimmedSubject = subject.trim();
+    const subjectResult = !trimmedSubject || trimmedSubject === defaultSubject ? null : trimmedSubject;
     if (restoredRef.current) {
-      onSave(null);
+      onSave({ html: null, subject: subjectResult });
     } else {
       const html = editor.getHTML();
       if (!html.trim() || html === '<p></p>') {
         toast.error(language === 'en' ? 'The message must not be empty.' : 'Der Nachrichtentext darf nicht leer sein.');
         return;
       }
-      onSave(html);
+      onSave({ html, subject: subjectResult });
     }
     onOpenChange(false);
   };
@@ -192,9 +224,10 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
     if (!editor) return;
     restoredRef.current = true;
     editor.commands.setContent(defaultHtml, { emitUpdate: false });
+    setSubject(defaultSubject);
     toast.info(language === 'en'
-      ? 'Standard text restored. Apply to save it as the default again.'
-      : 'Standardtext wiederhergestellt. Mit Übernehmen wird wieder der Standard gespeichert.');
+      ? 'Default subject and text restored. Apply to save them as the default again.'
+      : 'Standard-Betreff und Standardtext wiederhergestellt. Mit Übernehmen wird wieder der Standard gespeichert.');
   };
 
   if (!editor) {
@@ -210,6 +243,65 @@ export const NotificationMessageEditor: React.FC<NotificationMessageEditorProps>
         </DialogHeader>
 
         <div className="space-y-2">
+          <div className="flex items-end gap-2 rounded-md border bg-muted/20 p-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label htmlFor="notification-subject">{language === 'en' ? 'Subject' : 'Betreff'}</Label>
+              <Input
+                id="notification-subject"
+                ref={subjectInputRef}
+                value={subject}
+                maxLength={500}
+                onChange={(event) => setSubject(event.target.value)}
+                placeholder={defaultSubject}
+              />
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'Leave empty to use the standard subject.'
+                  : 'Leer lassen, um den Standard-Betreff zu verwenden.'}
+              </p>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="mb-5 shrink-0 gap-1" title={language === 'en' ? 'Insert dynamic blocks into the subject' : 'Dynamische Blöcke in den Betreff einfügen'}>
+                  {language === 'en' ? 'Blocks' : 'Blöcke'}
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+                {subjectTokens.map((descriptor) => (
+                  <DropdownMenuItem
+                    key={descriptor.token}
+                    onSelect={() => insertSubjectToken(descriptor.token)}
+                  >
+                    <div className="min-w-0">
+                      <span className="template-token template-token-preview">{descriptor.label}</span>
+                      <p className="truncate text-xs text-muted-foreground">{descriptor.description}</p>
+                    </div>
+                  </DropdownMenuItem>
+                ))}
+                {fillableFields.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {fillableFields.map((field) => {
+                      const token = `field:${field.name}`;
+                      return (
+                        <DropdownMenuItem
+                          key={field.name}
+                          onSelect={() => insertSubjectToken(token)}
+                        >
+                          <div className="min-w-0">
+                            <span className="template-token template-token-preview">{tokenDisplayLabel(token)}</span>
+                            <p className="truncate text-xs text-muted-foreground">{field.label}</p>
+                          </div>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <div className="flex flex-wrap items-center gap-1 rounded-md border bg-muted/40 p-1">
             <EditorToolbarButton
               onClick={() => editor.chain().focus().toggleBold().run()}

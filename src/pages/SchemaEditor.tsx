@@ -280,6 +280,7 @@ const parseSchemaFieldEntry = (
   if (field.type === 'array') {
     if (rawType === 'string[]') {
       field.items = {
+        editorId: createEditorFieldId(),
         name: 'item',
         type: 'string',
         description: '',

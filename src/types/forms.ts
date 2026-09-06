@@ -75,6 +75,8 @@ export interface FormNotificationSettings {
   custom_from_name: string | null;
   notification_message_html: string | null;
   confirmation_message_html: string | null;
+  notification_subject: string | null;
+  confirmation_subject: string | null;
   recipients: FormNotificationRecipient[];
 }
 

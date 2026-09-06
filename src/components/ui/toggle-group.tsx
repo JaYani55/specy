@@ -49,7 +49,7 @@ const ToggleGroupItem = React.forwardRef<
         }),
         className
       )}
-      aria-pressed={props.pressed}
+      aria-pressed={props['aria-pressed'] as boolean | undefined}
       {...props}
     >
       {children}

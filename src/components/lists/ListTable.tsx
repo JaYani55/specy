@@ -1,6 +1,6 @@
 import React from "react";
 import { Event } from "@/types/event";
-import type { User } from "@/types/auth";
+import type { User as UserType } from "@/types/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
@@ -42,7 +42,7 @@ interface ListTableProps {
   isLoadingEvents: boolean;
   filteredEvents: Event[];
   language: string;
-  user: User | null;
+  user: UserType | null;
   isMentor: boolean;
   sortBy: keyof Event;
   sortDirection: "asc" | "desc";

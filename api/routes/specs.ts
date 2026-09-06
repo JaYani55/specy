@@ -237,7 +237,18 @@ specs.post('/', async (c) => {
 
     const { data, error } = await supabase
       .from('global_llm_specs')
-      .update(updateData)
+      .update({
+        slug: body.slug,
+        name: body.name,
+        description: body.description ?? null,
+        definition: body.definition,
+        llm_instructions: body.llm_instructions ?? null,
+        status: normalizeStatus(body.status),
+        is_public: Boolean(body.is_public),
+        is_main_template: Boolean(body.is_main_template),
+        tags: normalizeStringArray(body.tags),
+        metadata: body.metadata ?? {},
+      })
       .eq('id', c.req.param('id'))
       .select('*')
       .single();

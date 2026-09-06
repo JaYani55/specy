@@ -74,7 +74,7 @@ export function validateSchemaContentContract(
   if (!path.ok) return { ok: false, error: path.error || 'Invalid page_target.host_path' };
   return {
     ok: true,
-    contract: { ...contract, page_target: { ...target, host_path: path.normalized, is_primary: true, enabled: true } },
+    contract: { ...contract, page_target: { ...target, host_path: path.normalized as string, is_primary: true, enabled: true } },
   };
 }
 

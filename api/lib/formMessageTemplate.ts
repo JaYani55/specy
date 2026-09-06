@@ -312,6 +312,29 @@ export const renderTemplateMessage = (
 };
 
 /**
+ * Renders a plain-text subject template by replacing `$token` / `$field:<name>`
+ * occurrences with the token's text value (unknown tokens render as "-").
+ * The result is single-line, whitespace-normalized and capped at 500 chars
+ * (matching the DB length constraint on the subject columns).
+ */
+export const renderTemplateSubject = (
+  rawSubject: string,
+  tokens: TemplateTokenMap,
+): string => {
+  const rendered = rawSubject.replace(/\$([a-zA-Z0-9_]+(?::[a-zA-Z0-9_]+)?)/g, (match, token: string) => (
+    Object.prototype.hasOwnProperty.call(tokens, token) ? (tokens[token].text || '-') : '-'
+  ));
+  return rendered.replace(/\s+/g, ' ').trim().slice(0, 500);
+};
+
+/**
+ * True when a stored subject template should be used (non-empty after trimming).
+ */
+export const hasUsableSubject = (rawSubject: string | null | undefined): boolean => (
+  typeof rawSubject === 'string' && rawSubject.trim().length > 0
+);
+
+/**
  * True when a stored template should be used (non-empty after sanitizing).
  */
 export const hasUsableTemplate = (rawTemplateHtml: string | null | undefined): boolean => {

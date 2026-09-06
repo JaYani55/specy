@@ -46,6 +46,8 @@ interface ProfileUser {
   id: string;
   Username?: string;
   pfp_url?: string;
+  email?: string;
+  role?: string;
   [key: string]: unknown;
 }
 

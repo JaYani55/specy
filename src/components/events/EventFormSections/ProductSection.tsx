@@ -1,6 +1,6 @@
 import React from "react";
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
-import type { Control, FieldValues } from "react-hook-form";
+import type { Control, FieldValues, Path } from "react-hook-form";
 import { ProductCombobox } from "../ProductCombobox";
 import { Sparkles, Sparkle } from "lucide-react"; // Sparkle for trait separator
 import { Product } from '@/components/products/types';
@@ -47,7 +47,7 @@ export function ProductSection<TFieldValues extends FieldValues = FieldValues>({
       </div>
       <FormField
         control={form.control}
-        name="product_id"
+        name={"product_id" as Path<TFieldValues>}
         render={({ field }) => (
           <FormItem>
             <FormControl>

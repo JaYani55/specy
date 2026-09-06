@@ -27,9 +27,7 @@ export interface IsibotFlowTypeDescriptor {
 
 const DEFAULT_HOOK_ORDER = 100;
 
-function sortDescriptors(
-  hooks: Array<Pick<PluginHookContribution, 'order' | 'handler'>>,
-): Array<Pick<PluginHookContribution, 'order' | 'handler'>> {
+function sortDescriptors<T extends { order?: number }>(hooks: T[]): T[] {
   return [...hooks].sort((left, right) => (left.order ?? DEFAULT_HOOK_ORDER) - (right.order ?? DEFAULT_HOOK_ORDER));
 }
 

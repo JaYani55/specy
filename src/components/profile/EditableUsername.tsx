@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Pencil, Check, X, AlertCircle, Info, UserRoundMinus } from 'lucide-react'; // <-- NEU: Info, UserRoundMinus
 import { usePermissions } from '@/hooks/usePermissions';
+import { isUsernameTakenError, validateUsername } from '@/utils/usernameUtils';
 
 interface EditableUsernameProps {
   username: string;
@@ -44,16 +45,9 @@ export const EditableUsername: React.FC<EditableUsernameProps> = ({
       return;
     }
 
-    if (trimmedEditValue.length < 2) {
-      setError(language === 'de' ? 'Anzeigename muss mindestens 2 Zeichen lang sein' : 'Username must be at least 2 characters long');
-      return;
-    }
-    if (trimmedEditValue.length > 50) {
-      setError(language === 'de' ? 'Anzeigename muss weniger als 50 Zeichen haben' : 'Username must be less than 50 characters');
-      return;
-    }
-    if (!/^[a-zA-Z0-9_\s-]+$/.test(trimmedEditValue)) {
-      setError(language === 'de' ? 'Anzeigename darf nur Buchstaben, Zahlen, Leerzeichen, Bindestriche und Unterstriche enthalten' : 'Username can only contain letters, numbers, spaces, hyphens, and underscores');
+    const ruleError = validateUsername(trimmedEditValue);
+    if (ruleError) {
+      setError(language === 'de' ? ruleError.de : ruleError.en);
       return;
     }
 
@@ -68,7 +62,7 @@ export const EditableUsername: React.FC<EditableUsernameProps> = ({
       }
     } catch (error: unknown) {
       console.error('Error updating username:', error);
-      if (error instanceof Error && (error.message === 'USERNAME_ALREADY_TAKEN' || error.message.includes('unique') || error.message.includes('duplicate'))) {
+      if (isUsernameTakenError(error)) {
         setError(language === 'de' ? 'Dieser Anzeigename ist bereits vergeben. Bitte wählen Sie einen anderen.' : 'This username is already taken. Please choose a different one.');
       } else {
         setError(language === 'de' ? 'Fehler beim Aktualisieren des Anzeigenamens. Bitte versuchen Sie es erneut.' : 'Failed to update username. Please try again.');

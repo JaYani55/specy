@@ -134,7 +134,7 @@ const VerwaltungAllMentors = () => {
   const handleTraitUpdate = async () => {
     try {
       // Reload traits after update
-      const traits = await fetchMentorGroups();
+      const traits = await fetchStaffTraits();
       setAvailableTraits(traits);
     } catch (error) {
       console.error('Error refreshing traits:', error);

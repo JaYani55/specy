@@ -118,7 +118,7 @@ const PollResultsPage = () => {
       // For charts: counts
       const counts: Record<string, number> = {};
       // For tables: list of all entries
-      const entries: Array<{ name: string; value: unknown; reason?: string; timestamp: string }> = [];
+      const entries: Array<{ name: string; value: string; reason?: string; timestamp: string }> = [];
 
       data.responses.forEach(resp => {
         const val = resp.answers[key];
@@ -148,11 +148,12 @@ const PollResultsPage = () => {
 
         // Handle consent-vote structure
         if (typeof val === 'object' && 'position' in val) {
-          const pos = val.position || 'Unknown';
+          const vote = val as { position?: string; reason?: string };
+          const pos = vote.position || 'Unknown';
           const posConfig = CONSENT_VOTE_MAP[pos] || { label: { en: pos, de: pos }, color: '' };
           const displayVal = posConfig.label[language];
           counts[displayVal] = (counts[displayVal] || 0) + 1;
-          entries.push({ name: subName, value: displayVal, reason: val.reason, timestamp: resp.created_at });
+          entries.push({ name: subName, value: displayVal, reason: vote.reason, timestamp: resp.created_at });
           return;
         }
 

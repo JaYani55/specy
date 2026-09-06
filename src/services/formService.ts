@@ -63,7 +63,7 @@ const getFormNotificationSettings = async (formId: string): Promise<FormNotifica
   const [{ data: settingsRow, error: settingsError }, { data: recipientRows, error: recipientsError }] = await Promise.all([
     supabase
       .from('form_notification_settings')
-      .select('notify_owner, notify_staff, delete_answer_after_email, send_confirmation_to_submitter, custom_from_name, notification_message_html, confirmation_message_html')
+      .select('notify_owner, notify_staff, delete_answer_after_email, send_confirmation_to_submitter, custom_from_name, notification_message_html, confirmation_message_html, notification_subject, confirmation_subject')
       .eq('form_id', formId)
       .maybeSingle(),
     supabase
@@ -108,6 +108,8 @@ const getFormNotificationSettings = async (formId: string): Promise<FormNotifica
     custom_from_name: (settingsRow?.custom_from_name as string | null | undefined) ?? null,
     notification_message_html: (settingsRow?.notification_message_html as string | null | undefined) ?? null,
     confirmation_message_html: (settingsRow?.confirmation_message_html as string | null | undefined) ?? null,
+    notification_subject: (settingsRow?.notification_subject as string | null | undefined) ?? null,
+    confirmation_subject: (settingsRow?.confirmation_subject as string | null | undefined) ?? null,
     recipients,
   };
 };
@@ -141,6 +143,8 @@ interface SaveFormInput {
     custom_from_name?: string | null;
     notification_message_html?: string | null;
     confirmation_message_html?: string | null;
+    notification_subject?: string | null;
+    confirmation_subject?: string | null;
     staff_recipient_ids: string[];
   };
 }
@@ -189,6 +193,8 @@ const syncFormNotificationSettings = async (formId: string, notificationSettings
     custom_from_name: notificationSettings?.custom_from_name?.trim() || null,
     notification_message_html: notificationSettings?.notification_message_html?.trim() || null,
     confirmation_message_html: notificationSettings?.confirmation_message_html?.trim() || null,
+    notification_subject: notificationSettings?.notification_subject?.trim() || null,
+    confirmation_subject: notificationSettings?.confirmation_subject?.trim() || null,
     staff_recipient_ids: [...new Set((notificationSettings?.staff_recipient_ids ?? []).filter(Boolean))],
   };
 
@@ -203,6 +209,8 @@ const syncFormNotificationSettings = async (formId: string, notificationSettings
       custom_from_name: normalized.custom_from_name,
       notification_message_html: normalized.notification_message_html,
       confirmation_message_html: normalized.confirmation_message_html,
+      notification_subject: normalized.notification_subject,
+      confirmation_subject: normalized.confirmation_subject,
     }, { onConflict: 'form_id' });
 
   if (upsertSettingsError) throw new Error(upsertSettingsError.message);

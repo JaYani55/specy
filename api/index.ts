@@ -105,7 +105,7 @@ app.use('*', cors({
 
 // Root — single entry point for agents, links to discovery + MCP
 app.get('/', (c) => {
-  return getPublicUrlConfig(c.env, new URL(c.req.url).origin).then(({ publicUrl }) => c.json({
+  return getPublicUrlConfig(c.env, new URL(c.req.url).origin).then(({ publicUrl: baseUrl }) => c.json({
     service: 'specy-api',
     status: 'ok',
     timestamp: new Date().toISOString(),

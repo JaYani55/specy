@@ -22,7 +22,7 @@ import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { type FormFieldDefinition, type FormNotificationStaffOption, type FormRecord } from '@/types/forms';
 import { formFieldsToSchema, formatFormSchema, parseFormSchema } from '@/utils/forms';
-import { DEFAULT_CONFIRMATION_TEMPLATE_HTML, DEFAULT_NOTIFICATION_TEMPLATE_HTML } from '@/utils/formNotificationTemplates';
+import { DEFAULT_CONFIRMATION_SUBJECT, DEFAULT_CONFIRMATION_TEMPLATE_HTML, DEFAULT_NOTIFICATION_SUBJECT, DEFAULT_NOTIFICATION_TEMPLATE_HTML } from '@/utils/formNotificationTemplates';
 
 const DEFAULT_SCHEMA = {
   first_name: {
@@ -100,6 +100,8 @@ const FormEditor = () => {
   const [customFromName, setCustomFromName] = useState('');
   const [notificationMessageHtml, setNotificationMessageHtml] = useState<string | null>(null);
   const [confirmationMessageHtml, setConfirmationMessageHtml] = useState<string | null>(null);
+  const [notificationSubject, setNotificationSubject] = useState<string | null>(null);
+  const [confirmationSubject, setConfirmationSubject] = useState<string | null>(null);
   const [messageEditorTarget, setMessageEditorTarget] = useState<'notification' | 'confirmation' | null>(null);
   const [staffRecipientIds, setStaffRecipientIds] = useState<string[]>([]);
   const [staffOptions, setStaffOptions] = useState<FormNotificationStaffOption[]>([]);
@@ -193,6 +195,8 @@ const FormEditor = () => {
         setCustomFromName(form.notification_settings?.custom_from_name ?? '');
         setNotificationMessageHtml(form.notification_settings?.notification_message_html ?? null);
         setConfirmationMessageHtml(form.notification_settings?.confirmation_message_html ?? null);
+        setNotificationSubject(form.notification_settings?.notification_subject ?? null);
+        setConfirmationSubject(form.notification_settings?.confirmation_subject ?? null);
         setStaffRecipientIds(form.notification_settings?.recipients.map((recipient) => recipient.staff_id) ?? []);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load form.');
@@ -303,6 +307,8 @@ const FormEditor = () => {
           custom_from_name: overrideSender ? customFromName : null,
           notification_message_html: notificationMessageHtml,
           confirmation_message_html: confirmationMessageHtml,
+          notification_subject: notificationSubject,
+          confirmation_subject: confirmationSubject,
           staff_recipient_ids: staffRecipientIds,
         },
       };
@@ -646,19 +652,22 @@ const FormEditor = () => {
                     <div className="min-w-0">
                       <Label>{language === 'en' ? 'Notification message' : 'Benachrichtigungstext'}</Label>
                       <p className="text-xs text-muted-foreground">
-                        {notificationMessageHtml
-                          ? (language === 'en' ? 'Custom message active for the owner/staff notification.' : 'Eigener Text für die Benachrichtigung an Besitzer/Mitarbeiter aktiv.')
+                        {notificationMessageHtml || notificationSubject
+                          ? (language === 'en' ? 'Custom subject or message active for the owner/staff notification.' : 'Eigener Betreff oder Text für die Benachrichtigung an Besitzer/Mitarbeiter aktiv.')
                           : (language === 'en' ? 'The standard notification message is used.' : 'Es wird der Standard-Benachrichtigungstext verwendet.')}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {notificationMessageHtml && (
+                      {(notificationMessageHtml || notificationSubject) && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => setNotificationMessageHtml(null)}
-                          title={language === 'en' ? 'Reset to the standard message' : 'Auf den Standardtext zurücksetzen'}
+                          onClick={() => {
+                            setNotificationMessageHtml(null);
+                            setNotificationSubject(null);
+                          }}
+                          title={language === 'en' ? 'Reset to the standard subject and message' : 'Auf Standard-Betreff und -text zurücksetzen'}
                         >
                           {language === 'en' ? 'Reset' : 'Zurücksetzen'}
                         </Button>
@@ -689,19 +698,22 @@ const FormEditor = () => {
                     <div className="min-w-0">
                       <Label>{language === 'en' ? 'Confirmation message' : 'Bestätigungstext'}</Label>
                       <p className="text-xs text-muted-foreground">
-                        {confirmationMessageHtml
-                          ? (language === 'en' ? 'Custom message active for the confirmation copy to the submitter.' : 'Eigener Text für die Bestätigungskopie an den Absender aktiv.')
+                        {confirmationMessageHtml || confirmationSubject
+                          ? (language === 'en' ? 'Custom subject or message active for the confirmation copy to the submitter.' : 'Eigener Betreff oder Text für die Bestätigungskopie an den Absender aktiv.')
                           : (language === 'en' ? 'The standard confirmation message is used.' : 'Es wird der Standard-Bestätigungstext verwendet.')}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {confirmationMessageHtml && (
+                      {(confirmationMessageHtml || confirmationSubject) && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => setConfirmationMessageHtml(null)}
-                          title={language === 'en' ? 'Reset to the standard message' : 'Auf den Standardtext zurücksetzen'}
+                          onClick={() => {
+                            setConfirmationMessageHtml(null);
+                            setConfirmationSubject(null);
+                          }}
+                          title={language === 'en' ? 'Reset to the standard subject and message' : 'Auf Standard-Betreff und -text zurücksetzen'}
                         >
                           {language === 'en' ? 'Reset' : 'Zurücksetzen'}
                         </Button>
@@ -1046,12 +1058,18 @@ const FormEditor = () => {
           ? (confirmationMessageHtml ?? DEFAULT_CONFIRMATION_TEMPLATE_HTML)
           : (notificationMessageHtml ?? DEFAULT_NOTIFICATION_TEMPLATE_HTML)}
         defaultHtml={messageEditorTarget === 'confirmation' ? DEFAULT_CONFIRMATION_TEMPLATE_HTML : DEFAULT_NOTIFICATION_TEMPLATE_HTML}
+        initialSubject={messageEditorTarget === 'confirmation'
+          ? (confirmationSubject ?? DEFAULT_CONFIRMATION_SUBJECT)
+          : (notificationSubject ?? DEFAULT_NOTIFICATION_SUBJECT)}
+        defaultSubject={messageEditorTarget === 'confirmation' ? DEFAULT_CONFIRMATION_SUBJECT : DEFAULT_NOTIFICATION_SUBJECT}
         fields={builderFields}
-        onSave={(html) => {
+        onSave={({ html, subject }) => {
           if (messageEditorTarget === 'confirmation') {
             setConfirmationMessageHtml(html);
+            setConfirmationSubject(subject);
           } else {
             setNotificationMessageHtml(html);
+            setNotificationSubject(subject);
           }
         }}
       />

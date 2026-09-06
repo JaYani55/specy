@@ -18,7 +18,7 @@ export const searchEmployers = async (query: string): Promise<Employer[]> => {
     console.log("Searching with query:", query);
     
     const { data, error } = await supabase
-      .from<Employer>('employers')
+      .from('employers')
       .select('id, name, logo_url')
       .ilike('name', `%${query.trim()}%`)
       .limit(10);
@@ -41,7 +41,7 @@ export const getEmployerById = async (id: string): Promise<Employer | null> => {
 
   try {
     const { data, error } = await supabase
-      .from<Employer>('employers')
+      .from('employers')
       .select('id, name, logo_url')
       .eq('id', id)
       .single();
@@ -69,7 +69,7 @@ export const testDirectEmployerQuery = async (): Promise<EmployerQueryTestResult
   try {
     // Test basic connection and permissions
     const { data, error } = await supabase
-      .from<EmployerSummary>('employers')
+      .from('employers')
       .select('id, name')
       .limit(3);
     

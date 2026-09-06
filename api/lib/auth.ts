@@ -98,7 +98,7 @@ export async function verifyAuthSession(env: Env, token: string): Promise<Verifi
 export function unauthorizedWithChallenge(
   c: Context<{ Bindings: Env }>,
   message: string,
-): Response {
+): Promise<Response> {
   const requestOrigin = new URL(c.req.url).origin;
   return getPublicUrlConfig(c.env, requestOrigin).then(({ publicUrl }) => c.json({ error: message }, 401, {
     'WWW-Authenticate': `Bearer resource_metadata="${publicUrl}/.well-known/oauth-protected-resource"`,

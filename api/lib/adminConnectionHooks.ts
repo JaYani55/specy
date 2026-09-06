@@ -15,7 +15,7 @@
  */
 
 import { getRegisteredApiPluginHooks } from '../plugin-hooks';
-import type { PluginHookContribution } from '../../../src/types/plugin';
+import type { PluginHookContribution } from '@/types/plugin';
 
 // ─── Hook Target ─────────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ export async function collectAdminConnectionSections(
   let current = context;
   for (const hook of hooks) {
     try {
-      current = await hook.handler(current);
+      current = (await hook.handler(current)) as AdminConnectionsSectionContext;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[adminConnectionHooks] Hook "${hook.key}" failed: ${message}`);

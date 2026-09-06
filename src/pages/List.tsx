@@ -283,7 +283,7 @@ const EventList = () => {
           open={requestsModalOpen}
           onOpenChange={setRequestsModalOpen}
           onSuccess={async () => {
-            await fetchEvents();
+            await refetchEvents();
             setRequestsModalOpen(false);
           }}
         />

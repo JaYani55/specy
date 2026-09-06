@@ -142,7 +142,7 @@ export const fetchAccounts = async (): Promise<AccountUser[]> => {
 
   // Build a map of user_id → roles
   const rolesByUser = new Map<string, Role[]>();
-  for (const ur of (userRoles ?? []) as UserRoleRow[]) {
+  for (const ur of (userRoles ?? []) as unknown as UserRoleRow[]) {
     const userId = ur.user_id;
     if (!rolesByUser.has(userId)) {
       rolesByUser.set(userId, []);
