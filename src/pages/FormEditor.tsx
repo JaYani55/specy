@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Bell, CheckCircle2, ClipboardList, Loader2, Save, Users, Wand2, Clock, BarChart4, Plus } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bell, CheckCircle2, ClipboardList, Copy, Check, Loader2, Save, Users, Wand2, Clock, BarChart4, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { FormSchemaBuilder } from '@/components/forms/FormSchemaBuilder';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
@@ -21,7 +21,9 @@ import { NotificationMessageEditor } from '@/components/forms/NotificationMessag
 import { createForm, getForm, getFormNotificationStaffOptions, updateForm } from '@/services/formService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import { type FormFieldDefinition, type FormNotificationStaffOption, type FormRecord } from '@/types/forms';
-import { formFieldsToSchema, formatFormSchema, parseFormSchema } from '@/utils/forms';
+import { formFieldsToSchema, formatFormSchema, parseFormSchema, generateFormSlug } from '@/utils/forms';
+import { API_URL } from '@/lib/apiUrl';
+import { normalizeTenantNameSegment } from '@/services/tenantService';
 import { DEFAULT_CONFIRMATION_SUBJECT, DEFAULT_CONFIRMATION_TEMPLATE_HTML, DEFAULT_NOTIFICATION_SUBJECT, DEFAULT_NOTIFICATION_TEMPLATE_HTML } from '@/utils/formNotificationTemplates';
 
 const DEFAULT_SCHEMA = {
@@ -85,6 +87,8 @@ const FormEditor = () => {
   const [shareSlug, setShareSlug] = useState('');
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [apiEnabled, setApiEnabled] = useState(true);
+  const [formSlug, setFormSlug] = useState('');
+  const [endpointCopied, setEndpointCopied] = useState(false);
   const [allowAnonymous, setAllowAnonymous] = useState(false);
   const [votingMode, setVotingMode] = useState<FormRecord['voting_mode']>('live');
   const [deadlineAt, setDeadlineAt] = useState<string>('');
@@ -125,6 +129,22 @@ const FormEditor = () => {
       return [nameField, ...fields];
     }
     return fields;
+  };
+
+  const activeTenantSegment = normalizeTenantNameSegment(
+    tenantOptions.find((option) => option.id === tenantId)?.tenant_name ?? '',
+  );
+  const answerEndpointUrl = `${API_URL}/api/forms/${activeTenantSegment}/${formSlug || generateFormSlug(name) || 'formular-slug'}/answers`;
+
+  const copyAnswerEndpoint = async () => {
+    try {
+      await navigator.clipboard.writeText(answerEndpointUrl);
+      setEndpointCopied(true);
+      setTimeout(() => setEndpointCopied(false), 2000);
+      toast.success(language === 'en' ? 'Endpoint URL copied' : 'Endpunkt-URL kopiert');
+    } catch {
+      toast.error(language === 'en' ? 'Could not copy URL' : 'URL konnte nicht kopiert werden');
+    }
   };
 
   useEffect(() => {
@@ -180,6 +200,7 @@ const FormEditor = () => {
         setStatus(form.status);
         setShareEnabled(form.share_enabled);
         setShareSlug(form.share_slug ?? '');
+        setFormSlug(form.slug ?? '');
         setRequiresAuth(form.requires_auth);
         setApiEnabled(form.api_enabled);
         setAllowAnonymous(form.allow_anonymous);
@@ -574,6 +595,50 @@ const FormEditor = () => {
                   </div>
                   <Switch checked={requiresAuth} onCheckedChange={setRequiresAuth} />
                 </div>
+
+                {apiEnabled && (
+                  <div className="space-y-2 rounded-md bg-muted/40 p-3">
+                    <div>
+                      <Label>{language === 'en' ? 'API answer endpoint' : 'API-Antwort-Endpunkt'}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'en'
+                          ? 'Send answers via POST with { "answers": { … } } to connect any frontend.'
+                          : 'Antworten per POST mit { "answers": { … } } senden, um ein beliebiges Frontend anzubinden.'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        readOnly
+                        value={answerEndpointUrl}
+                        className="font-mono text-xs"
+                        onFocus={(event) => event.currentTarget.select()}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => void copyAnswerEndpoint()}
+                        aria-label={language === 'en' ? 'Copy endpoint URL' : 'Endpunkt-URL kopieren'}
+                      >
+                        {endpointCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    {!formId && (
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'en'
+                          ? 'The slug is finalized when the form is saved.'
+                          : 'Der Slug wird beim Speichern des Formulars final festgelegt.'}
+                      </p>
+                    )}
+                    {requiresAuth && (
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'en'
+                          ? 'Requires an Authorization: Bearer token because authentication is enabled.'
+                          : 'Erfordert einen Authorization-Bearer-Token, da Authentifizierung aktiviert ist.'}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -963,6 +1028,7 @@ const FormEditor = () => {
                   fields={builderFields}
                   language={language}
                   tenantId={tenantId || null}
+                  formType={type}
                   onChange={handleBuilderChange}
                 />
               </div>

@@ -3,6 +3,8 @@ import { supabase } from '@/lib/supabase';
 export interface TenantOption {
   id: string;
   name: string;
+  /** Raw `tenants.name` — what the API tenant matching validates against. */
+  tenant_name: string;
   organization_name: string | null;
   slug: string;
   organization_slug: string | null;
@@ -39,9 +41,15 @@ export interface TenantMembershipRecord {
   updated_at: string;
 }
 
-const generateTenantSlug = (value: string): string => (
+/**
+ * Normalizes a workspace name into a URL segment — mirrors
+ * `normalizeTenantNameSegment` in api/routes/forms.ts so URLs built from the
+ * workspace name match the server-side tenant validation.
+ */
+export const normalizeTenantNameSegment = (value: string): string => (
   value
     .toLowerCase()
+    .trim()
     .replace(/ä/g, 'ae')
     .replace(/ö/g, 'oe')
     .replace(/ü/g, 'ue')
@@ -49,8 +57,11 @@ const generateTenantSlug = (value: string): string => (
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'workspace'
+    .replace(/^-|-$/g, '')
+    || 'workspace'
 );
+
+const generateTenantSlug = (value: string): string => normalizeTenantNameSegment(value);
 
 const getCurrentUserId = async (): Promise<string | null> => {
   const { data, error } = await supabase.auth.getUser();
@@ -163,6 +174,7 @@ export const getTenantOptions = async (): Promise<TenantOption[]> => {
       return {
         id: tenant.id,
         name: tenant.organization_name ?? tenant.name,
+        tenant_name: tenant.name,
         organization_name: tenant.organization_name,
         slug: tenant.slug,
         organization_slug: tenant.organization_slug,

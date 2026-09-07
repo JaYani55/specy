@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { FormFieldDefinition, FormFieldType } from '@/types/forms';
 import { generateFormSlug } from '@/utils/forms';
+import { isFieldPresetSelectable, uniqueFormFieldName, type FormBuilderMode } from '@/utils/formFieldPresets';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
 import { useAuth } from '@/contexts/AuthContext';
@@ -28,6 +29,8 @@ interface FormSchemaBuilderProps {
   fields: FormFieldDefinition[];
   language: 'en' | 'de';
   tenantId?: string | null;
+  /** 'form' | 'poll' — poll-only blocks (consent poll/vote, participant name) are selectable exclusively in polls. */
+  formType?: FormBuilderMode;
   onChange: (fields: FormFieldDefinition[]) => void;
 }
 
@@ -36,6 +39,12 @@ type BuilderPreset = {
   description: { en: string; de: string };
   type: FormFieldType;
   icon: typeof Rows3;
+  /** Poll-exclusive preset — hidden in the plain form builder. */
+  pollOnly?: boolean;
+  /** Label-level alias over `text` — not a distinct field type, excluded from the type dropdown. */
+  participantName?: boolean;
+  /** Extra defaults applied on top of createField when this preset is added. */
+  build?: Partial<FormFieldDefinition>;
 };
 
 const BUILDER_PRESETS: BuilderPreset[] = [
@@ -104,12 +113,14 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     description: { en: 'Standard 4-option sentiment poll.', de: 'Standard 4-Optionen Stimmungsbild.' },
     type: 'consent-poll',
     icon: ListChecks,
+    pollOnly: true,
   },
   {
     label: { en: 'Consent Vote', de: 'Einwilligungs-Votum' },
     description: { en: 'Official 4-position consensus voting.', de: 'Offizielle 4-Positionen Konsens-Abstimmung.' },
     type: 'consent-vote',
     icon: SquareCheckBig,
+    pollOnly: true,
   },
   {
     label: { en: 'Date', de: 'Datum' },
@@ -122,6 +133,14 @@ const BUILDER_PRESETS: BuilderPreset[] = [
     description: { en: 'Standard field for poll participant names.', de: 'Standardfeld für Namen von Umfrage-Teilnehmern.' },
     type: 'text',
     icon: Users,
+    pollOnly: true,
+    participantName: true,
+    build: {
+      name: 'participant_name',
+      label: 'Participant Name',
+      required: true,
+      placeholder: 'e.g. Max Mustermann',
+    },
   },
 ];
 
@@ -262,10 +281,18 @@ const OptionTagInput = ({ options, language, onChange }: OptionTagInputProps) =>
   );
 };
 
-export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: FormSchemaBuilderProps) => {
+export const FormSchemaBuilder = ({ fields, language, tenantId, formType = 'form', onChange }: FormSchemaBuilderProps) => {
   const { roles } = useAuth();
   const [mediaSources, setMediaSources] = useState<MediaSourceInfo[]>([]);
   const [uploadContext, setUploadContext] = useState<FormFileUploadBuilderContext | null>(null);
+
+  // Preset cards: poll-only blocks are hidden in plain forms.
+  const selectablePresets = BUILDER_PRESETS.filter((preset) => isFieldPresetSelectable(preset.type, formType));
+
+  // Field-type dropdown: same filtering, but the "Participant Name" preset is
+  // a label-level alias over `text` (not a distinct type) — it must not appear
+  // as a second entry with value "text" alongside "Short Text".
+  const typeDropdownPresets = selectablePresets.filter((preset) => !preset.participantName);
 
   const storageMountWarning = mediaSources.length === 0
     ? (language === 'en' ? 'No File Storage configured' : 'Kein Dateispeicher konfiguriert')
@@ -393,8 +420,16 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
     onChange(fields.filter((_, currentIndex) => currentIndex !== index));
   };
 
-  const addField = (type: FormFieldType) => {
+  const addField = (type: FormFieldType, preset?: BuilderPreset) => {
     const nextField = createField(type, fields.length);
+    if (preset?.build) {
+      Object.assign(nextField, preset.build);
+    }
+
+    // Keep schema keys unique — the index-based default name can collide with
+    // existing fields after deletions or with fixed preset keys.
+    nextField.name = uniqueFormFieldName(nextField.name, fields.map((field) => field.name));
+
     if (type === 'file-upload') {
       nextField.upload_provider = uploadContext?.uploadProvider || undefined;
       nextField.upload_folder = uploadContext?.uploadFolderTemplate || nextField.upload_folder;
@@ -405,11 +440,11 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
   return (
     <div className="space-y-6">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {BUILDER_PRESETS.map((preset) => (
+        {selectablePresets.map((preset) => (
           <button
-            key={preset.type}
+            key={preset.label.en}
             type="button"
-            onClick={() => addField(preset.type)}
+            onClick={() => addField(preset.type, preset)}
             className="rounded-2xl border bg-gradient-to-br from-white to-muted/30 p-4 text-left transition hover:border-primary/40 hover:shadow-md dark:from-slate-950 dark:to-slate-900"
           >
             <div className="mb-3 flex items-center gap-3">
@@ -475,9 +510,14 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, onChange }: Form
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {BUILDER_PRESETS.map((preset) => (
+                      {typeDropdownPresets.map((preset) => (
                         <SelectItem key={preset.type} value={preset.type}>{preset.label[language]}</SelectItem>
                       ))}
+                      {!typeDropdownPresets.some((preset) => preset.type === field.type) && (
+                        <SelectItem key={field.type} value={field.type}>
+                          {typeLabels[field.type] ?? field.type}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>

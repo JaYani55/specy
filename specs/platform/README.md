@@ -8,3 +8,4 @@ Cross-cutting platform concerns: hosting, tenancy, core extensions.
 | [`multi-tenancy.md`](multi-tenancy.md) | Multi-tenancy model and RLS policies |
 | [`feature-flags.md`](feature-flags.md) | Client-side feature flags (Beta Features, Developer Mode) — localStorage contract, settings UI, plugin gating |
 | [`core-extension-audio-queues-secrets.md`](core-extension-audio-queues-secrets.md) | AudioBlock content type, Cloudflare Queues, Secrets Store injection, programmatic object creation |
+| [`email-delivery-queue.md`](email-delivery-queue.md) | Mail delivery queue: hybrid instant send + queue fallback, retry/backoff contract, pg_cron scheduling, tenant mail log |

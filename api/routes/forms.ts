@@ -1,5 +1,5 @@
 import { AwsClient } from 'aws4fetch';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { runFormFileNotificationHooks, runFormFileUploadHooks, type FormFileNotificationLink } from '../lib/formFileUploadHooks';
 import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig } from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
@@ -1334,17 +1334,54 @@ const getFormByShareSlug = async (
   const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
 
   for (const form of forms) {
-    if (!form.tenant_id) continue;
+    if (formMatchesTenantSegment(form, requestedTenantSegment)) return form;
+  }
 
-    const resolvedTenantName = form.tenants?.name;
-    const resolvedTenantSlug = form.tenants?.slug;
-    const resolvedOrganizationSlug = form.tenants?.organization_slug;
+  return null;
+};
 
-    const matchesTenant = [resolvedTenantName, resolvedTenantSlug, resolvedOrganizationSlug]
-      .filter((v): v is string => Boolean(v))
-      .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
+/**
+ * True when the form's workspace (tenant) matches the requested URL segment —
+ * by tenant name, tenant slug, or organization slug (all normalized the same
+ * way tenant name segments are built).
+ */
+const formMatchesTenantSegment = (form: FormWithTenantRow, requestedTenantSegment: string): boolean => {
+  if (!form.tenant_id) return false;
 
-    if (matchesTenant) return form;
+  const resolvedTenantName = form.tenants?.name;
+  const resolvedTenantSlug = form.tenants?.slug;
+  const resolvedOrganizationSlug = form.tenants?.organization_slug;
+
+  return [resolvedTenantName, resolvedTenantSlug, resolvedOrganizationSlug]
+    .filter((v): v is string => Boolean(v))
+    .some((v) => normalizeTenantNameSegment(v) === requestedTenantSegment);
+};
+
+/**
+ * Tenant-scoped resolution for the agent/REST API: matches the form slug AND
+ * validates that the workspace segment in the URL belongs to the form. Unlike
+ * the share resolver this does not require share_enabled — API access is
+ * governed by the route-level api_enabled/requires_auth checks.
+ */
+const getApiFormByTenantAndSlug = async (
+  env: Env,
+  tenantNameSegment: string,
+  slug: string,
+): Promise<FormRow | null> => {
+  const admin = await createSupabaseAdminClient(env);
+  const { data, error } = await admin
+    .from('forms')
+    .select('*, tenants (name, slug, organization_slug)')
+    .eq('slug', slug)
+    .neq('status', 'archived')
+    .limit(20);
+
+  if (error) throw error;
+  const forms = (data as FormWithTenantRow[] | null) ?? [];
+  const requestedTenantSegment = normalizeTenantNameSegment(tenantNameSegment);
+
+  for (const form of forms) {
+    if (formMatchesTenantSegment(form, requestedTenantSegment)) return form;
   }
 
   return null;
@@ -1536,95 +1573,50 @@ forms.post('/s/:tenantName/:shareSlug/upload', async (c) => {
 
 forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
 
-  const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
-  if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
-
-  // Poll deadline check
-  if (form.type === 'poll' && form.deadline_at) {
-    const deadline = new Date(form.deadline_at);
-    if (deadline < new Date()) {
-      return c.json({ error: 'This poll has closed.' }, 403);
-    }
-  }
-
-  const body = await c.req.json().catch(() => null);
-  if (!body || !isPlainObject(body)) return c.json({ error: 'Invalid JSON body.' }, 400);
-
-  const { errors, normalizedAnswers } = validateAnswers(fields, body.answers);
-  if (errors.length > 0) return c.json({ error: 'Validation failed.', details: errors }, 400);
-
-  let submittedBy: string | null = null;
-  if (token) {
-    const auth = await verifyAuthSession(c.env, token);
-    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
-    submittedBy = auth.userId;
-  }
-
-  const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.share_slug;
-  let submitterName = typeof body.submitter_name === 'string' ? body.submitter_name : null;
-
-  // Fallback to participant_name from JSON if provided at that level
-  if (!submitterName && normalizedAnswers.participant_name) {
-    submitterName = String(normalizedAnswers.participant_name);
-  }
-
-  const answerId = crypto.randomUUID();
-  const { error } = await supabase
-    .from('forms_answers')
-    .insert({
-      id: answerId,
-      form_id: form.id,
-      submitted_by: submittedBy,
-      submitter_name: submitterName,
-      answers: normalizedAnswers,
-      source_slug: sourceSlug,
-      submitted_via: 'share',
-      ip_address: c.req.header('cf-connecting-ip') ?? null,
-      user_agent: c.req.header('user-agent') ?? null,
-    })
-    ;
-
-  if (error) return c.json({ error: 'Failed to save answers.', detail: error.message }, 500);
-
-  try {
-    await enqueueFormAnswerNotifications({
-      env: c.env,
-      requestUrl: c.req.url,
-      form,
-      fields,
-      answers: normalizedAnswers,
-      answerId,
-      submittedBy,
-      submittedVia: 'share',
-      sourceSlug,
-    });
-  } catch (notificationError) {
-    console.error(`Failed to queue form answer notifications for ${answerId}:`, notificationError);
-  }
-
-  return c.json({ success: true, answer_id: answerId });
+  return submitFormAnswers(c, { form, token, submittedVia: 'share', defaultSourceSlug: form.share_slug });
 });
 
 forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
 
+  return submitFormAnswers(c, { form, token, submittedVia: 'share', defaultSourceSlug: form.share_slug });
+});
+
+interface AnswerSubmissionOptions {
+  form: FormRow;
+  token: string | undefined;
+  submittedVia: 'api' | 'share';
+  defaultSourceSlug: string | null;
+}
+
+/**
+ * Shared answer submission pipeline for all REST variants (identifier, share
+ * and tenant-scoped routes): schema validation, poll-deadline enforcement,
+ * answer validation, insert and notification enqueueing.
+ */
+const submitFormAnswers = async (
+  c: Context<{ Bindings: Env }>,
+  options: AnswerSubmissionOptions,
+): Promise<Response> => {
+  const { form, token, submittedVia: defaultSubmittedVia, defaultSourceSlug } = options;
+  const supabase = await createSupabaseClient(c.env, token);
+
   const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
   if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
 
-  // Poll deadline check
+  // Poll deadline applies to every submission channel — a closed poll must not
+  // accept answers through the agent/REST API either.
   if (form.type === 'poll' && form.deadline_at) {
     const deadline = new Date(form.deadline_at);
     if (deadline < new Date()) {
@@ -1645,7 +1637,10 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
     submittedBy = auth.userId;
   }
 
-  const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.share_slug;
+  const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : defaultSourceSlug;
+  // Page-embedded submissions may declare themselves via the body; API is the default for the identifier route.
+  const submittedVia: 'api' | 'share' | 'page' =
+    defaultSubmittedVia === 'api' && body.submitted_via === 'page' ? 'page' : defaultSubmittedVia;
   let submitterName = typeof body.submitter_name === 'string' ? body.submitter_name : null;
 
   // Fallback to participant_name from JSON if provided at that level
@@ -1663,7 +1658,7 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
       submitter_name: submitterName,
       answers: normalizedAnswers,
       source_slug: sourceSlug,
-      submitted_via: 'share',
+      submitted_via: submittedVia,
       ip_address: c.req.header('cf-connecting-ip') ?? null,
       user_agent: c.req.header('user-agent') ?? null,
     })
@@ -1680,7 +1675,7 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
       answers: normalizedAnswers,
       answerId,
       submittedBy,
-      submittedVia: 'share',
+      submittedVia,
       sourceSlug,
     });
   } catch (notificationError) {
@@ -1688,6 +1683,52 @@ forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
   }
 
   return c.json({ success: true, answer_id: answerId });
+};
+
+forms.get('/:tenantName/:formSlug', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+
+  // Workspace-scoped resolution: the tenant segment must belong to the form.
+  const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
+  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+
+  const { fields, errors } = normalizeSchema(form.schema || {});
+  if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
+
+  return c.json(serializeForm(form, fields));
+});
+
+forms.post('/:tenantName/:formSlug/upload', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
+  const formData = await c.req.formData().catch(() => null);
+
+  if (!formData) return c.json({ error: 'Invalid multipart body.' }, 400);
+
+  const response = await handleFormUploadRequest({
+    env: c.env,
+    requestUrl: c.req.url,
+    form,
+    shareMode: false,
+    token,
+    formData,
+  });
+
+  return response;
+});
+
+forms.post('/:tenantName/:formSlug/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+
+  // Workspace-scoped resolution: the tenant segment must belong to the form.
+  const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
+  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+
+  return submitFormAnswers(c, { form, token, submittedVia: 'api', defaultSourceSlug: form.slug });
 });
 
 forms.get('/:identifier', async (c) => {
@@ -1734,58 +1775,7 @@ forms.post('/:identifier/answers', async (c) => {
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
   if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
 
-  const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
-  if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
-
-  const body = await c.req.json().catch(() => null);
-  if (!body || !isPlainObject(body)) return c.json({ error: 'Invalid JSON body.' }, 400);
-
-  const { errors, normalizedAnswers } = validateAnswers(fields, body.answers);
-  if (errors.length > 0) return c.json({ error: 'Validation failed.', details: errors }, 400);
-
-  let submittedBy: string | null = null;
-  if (token) {
-    const auth = await verifyAuthSession(c.env, token);
-    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
-    submittedBy = auth.userId;
-  }
-
-  const submittedVia = body.submitted_via === 'page' ? 'page' : 'api';
-  const sourceSlug = typeof body.source_slug === 'string' ? body.source_slug : form.slug;
-  const answerId = crypto.randomUUID();
-  const { error } = await supabase
-    .from('forms_answers')
-    .insert({
-      id: answerId,
-      form_id: form.id,
-      submitted_by: submittedBy,
-      answers: normalizedAnswers,
-      source_slug: sourceSlug,
-      submitted_via: submittedVia,
-      ip_address: c.req.header('cf-connecting-ip') ?? null,
-      user_agent: c.req.header('user-agent') ?? null,
-    })
-    ;
-
-  if (error) return c.json({ error: 'Failed to save answers.', detail: error.message }, 500);
-
-  try {
-    await enqueueFormAnswerNotifications({
-      env: c.env,
-      requestUrl: c.req.url,
-      form,
-      fields,
-      answers: normalizedAnswers,
-      answerId,
-      submittedBy,
-      submittedVia,
-      sourceSlug,
-    });
-  } catch (notificationError) {
-    console.error(`Failed to queue form answer notifications for ${answerId}:`, notificationError);
-  }
-
-  return c.json({ success: true, answer_id: answerId });
+  return submitFormAnswers(c, { form, token, submittedVia: 'api', defaultSourceSlug: form.slug });
 });
 
 

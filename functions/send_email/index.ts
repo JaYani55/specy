@@ -1,6 +1,12 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
+import {
+  computeMailRetryDecision,
+  isRateLimitStatus,
+  parseRetryAfterHeader,
+  type MailRetryDecision,
+} from './retryPolicy.ts';
 
 type MailProvider = 'smtp' | 'resend';
 type JobStatus = 'pending' | 'processing' | 'sent' | 'failed';
@@ -26,7 +32,30 @@ type MailJob = {
   subject: string;
   payload: Record<string, unknown>;
   attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
 };
+
+/**
+ * Error thrown by provider adapters on a failed HTTP send. Carries the
+ * transport-level details needed for the queue fallback (retry-after hint,
+ * rate-limit flag) so failed sends can be requeued instead of dead-ending.
+ */
+class ProviderSendError extends Error {
+  httpStatus: number | null;
+  retryAfterSeconds: number | null;
+
+  constructor(message: string, options: { httpStatus?: number | null; retryAfterSeconds?: number | null } = {}) {
+    super(message);
+    this.name = 'ProviderSendError';
+    this.httpStatus = options.httpStatus ?? null;
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+  }
+
+  get rateLimited(): boolean {
+    return isRateLimitStatus(this.httpStatus);
+  }
+}
 
 type SendRequest = {
   to: string;
@@ -208,7 +237,11 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
 
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-          throw new Error(`Resend send failed: HTTP ${response.status} ${JSON.stringify(payload)}`);
+          const retryAfterSeconds = parseRetryAfterHeader(response.headers.get('Retry-After'));
+          throw new ProviderSendError(
+            `Resend send failed: HTTP ${response.status} ${JSON.stringify(payload)}`,
+            { httpStatus: response.status, retryAfterSeconds },
+          );
         }
 
         return {
@@ -269,7 +302,7 @@ async function createProvider(config: MailConfig): Promise<ProviderAdapter> {
   };
 }
 
-async function appendDeliveryEvent(jobId: string, eventType: 'queued' | 'testing' | 'sending' | 'sent' | 'failed', message: string, metadata: Record<string, unknown> = {}) {
+async function appendDeliveryEvent(jobId: string, eventType: 'queued' | 'testing' | 'sending' | 'sent' | 'requeued' | 'failed', message: string, metadata: Record<string, unknown> = {}) {
   const { error } = await supabase.from('mail_delivery_events').insert({
     job_id: jobId,
     event_type: eventType,
@@ -339,10 +372,23 @@ async function maybeDeleteDeliveredAnswer(job: MailJob) {
   });
 }
 
-async function processJob(jobId: string) {
+interface MailDeliveryResult {
+  jobId: string;
+  provider: MailProvider;
+  status: 'sent' | 'pending' | 'failed';
+  sent: boolean;
+  requeued: boolean;
+  terminalFailed: boolean;
+  rateLimited: boolean;
+  messageId: string | null;
+  nextAttemptAt: string | null;
+  error: string | null;
+}
+
+async function processJob(jobId: string): Promise<MailDeliveryResult> {
   const { data, error } = await supabase
     .from('mail_delivery_jobs')
-    .select('id, form_id, answer_id, provider, status, recipient_email, subject, payload, attempt_count')
+    .select('id, form_id, answer_id, provider, status, recipient_email, subject, payload, attempt_count, max_attempts, next_attempt_at')
     .eq('id', jobId)
     .single();
 
@@ -372,6 +418,8 @@ async function processJob(jobId: string) {
   await appendDeliveryEvent(job.id, 'sending', 'Starting outbound mail delivery.', {
     provider: provider.provider,
     recipientEmail: job.recipient_email,
+    attempt: job.attempt_count + 1,
+    maxAttempts: job.max_attempts,
   });
 
   try {
@@ -395,6 +443,7 @@ async function processJob(jobId: string) {
         provider_message_id: result.messageId,
         sent_at: new Date().toISOString(),
         last_error: null,
+        next_attempt_at: null,
       })
       .eq('id', job.id);
 
@@ -411,35 +460,148 @@ async function processJob(jobId: string) {
     await maybeDeleteDeliveredAnswer(job);
 
     return {
-      success: true,
       jobId: job.id,
       provider: result.provider,
+      status: 'sent',
+      sent: true,
+      requeued: false,
+      terminalFailed: false,
+      rateLimited: false,
       messageId: result.messageId,
+      nextAttemptAt: null,
+      error: null,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await supabase
+    const httpStatus = error instanceof ProviderSendError ? error.httpStatus : null;
+    const retryAfterSeconds = error instanceof ProviderSendError ? error.retryAfterSeconds : null;
+    const rateLimited = error instanceof ProviderSendError ? error.rateLimited : false;
+
+    const attempt = job.attempt_count + 1;
+    const decision: MailRetryDecision = computeMailRetryDecision(
+      attempt,
+      job.max_attempts,
+      retryAfterSeconds,
+    );
+
+    const { error: updateError } = await supabase
       .from('mail_delivery_jobs')
       .update({
-        status: 'failed',
+        status: decision.status,
         last_error: message,
+        next_attempt_at: decision.nextAttemptAt,
       })
       .eq('id', job.id);
 
-    await appendDeliveryEvent(job.id, 'failed', 'Outbound mail delivery failed.', {
-      provider: provider.provider,
-      error: message,
-    });
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
 
-    throw error;
+    if (decision.retryable) {
+      await appendDeliveryEvent(job.id, 'requeued',
+        rateLimited
+          ? `Provider rate limit hit (HTTP ${httpStatus ?? 429}). Delivery requeued for retry in ${decision.backoffSeconds}s.`
+          : `Delivery failed. Requeued for retry in ${decision.backoffSeconds}s (attempt ${attempt} of ${job.max_attempts}).`,
+        {
+          provider: provider.provider,
+          error: message,
+          attempt,
+          maxAttempts: job.max_attempts,
+          rateLimited,
+          httpStatus,
+          retryAfterSeconds,
+          backoffSeconds: decision.backoffSeconds,
+          nextAttemptAt: decision.nextAttemptAt,
+        });
+    } else {
+      await appendDeliveryEvent(job.id, 'failed',
+        `Delivery failed permanently after ${attempt} attempts. The job is kept in the delivery log and can be re-dispatched manually.`,
+        {
+          provider: provider.provider,
+          error: message,
+          attempt,
+          maxAttempts: job.max_attempts,
+          rateLimited,
+          httpStatus,
+          retryAfterSeconds,
+        });
+    }
+
+    return {
+      jobId: job.id,
+      provider: provider.provider,
+      status: decision.status,
+      sent: false,
+      requeued: decision.retryable,
+      terminalFailed: !decision.retryable,
+      rateLimited,
+      messageId: null,
+      nextAttemptAt: decision.nextAttemptAt,
+      error: message,
+    };
   }
 }
 
-async function processPendingJobs(limit: number) {
+/** Jobs stuck in `processing` for longer than this are reclaimed as pending. */
+const PROCESSING_STALE_MS = 5 * 60 * 1000;
+
+/** Pause between sequential sends within a batch, to spread provider load. */
+const BATCH_INTER_JOB_DELAY_MS = 300;
+
+async function reclaimStaleProcessingJobs(): Promise<string[]> {
+  const cutoff = new Date(Date.now() - PROCESSING_STALE_MS).toISOString();
+  const { data, error } = await supabase
+    .from('mail_delivery_jobs')
+    .select('id, attempt_count, max_attempts')
+    .eq('status', 'processing')
+    .lt('last_attempt_at', cutoff);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const stale = (data ?? []) as Array<{ id: string; attempt_count: number; max_attempts: number }>;
+  for (const job of stale) {
+    const { error: updateError } = await supabase
+      .from('mail_delivery_jobs')
+      .update({
+        status: 'pending',
+        next_attempt_at: new Date().toISOString(),
+        last_error: 'Reclaimed after being stuck in processing (possible worker crash).',
+      })
+      .eq('id', job.id);
+
+    if (updateError) {
+      console.error(`Failed to reclaim stale job ${job.id}: ${updateError.message}`);
+      continue;
+    }
+
+    await appendDeliveryEvent(job.id, 'requeued',
+      'Job was stuck in processing and has been reclaimed for retry.',
+      { attemptCount: job.attempt_count, maxAttempts: job.max_attempts });
+  }
+
+  return stale.map((job) => job.id);
+}
+
+interface BatchSummary {
+  processed: number;
+  sent: number;
+  requeued: number;
+  failed: number;
+  rateLimited: boolean;
+  results: MailDeliveryResult[];
+}
+
+async function processPendingJobs(limit: number): Promise<BatchSummary> {
+  // Recover jobs whose worker crashed mid-send before picking up new work.
+  const reclaimed = await reclaimStaleProcessingJobs();
+
   const { data, error } = await supabase
     .from('mail_delivery_jobs')
     .select('id')
     .eq('status', 'pending')
+    .or('next_attempt_at.is.null,next_attempt_at.lte.' + new Date().toISOString())
     .order('created_at', { ascending: true })
     .limit(limit);
 
@@ -447,12 +609,41 @@ async function processPendingJobs(limit: number) {
     throw new Error(error.message);
   }
 
-  const results = [];
+  const summary: BatchSummary = {
+    processed: 0,
+    sent: 0,
+    requeued: 0,
+    failed: 0,
+    rateLimited: false,
+    results: [],
+  };
+
+  // Sequential processing — parallel sends are exactly what trips provider
+  // rate limits. When a send is rate-limited, the batch stops immediately and
+  // the remaining (untouched) jobs wait for the next cron tick.
   for (const row of data ?? []) {
-    results.push(await processJob(row.id as string));
+    const result = await processJob(row.id as string);
+    summary.processed += 1;
+    if (result.sent) summary.sent += 1;
+    if (result.requeued) summary.requeued += 1;
+    if (result.terminalFailed) summary.failed += 1;
+    if (result.rateLimited) {
+      summary.rateLimited = true;
+      summary.results.push(result);
+      break;
+    }
+    summary.results.push(result);
+
+    if ((data ?? []).indexOf(row) < (data ?? []).length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, BATCH_INTER_JOB_DELAY_MS));
+    }
   }
 
-  return results;
+  if (reclaimed.length > 0) {
+    console.log(`Reclaimed ${reclaimed.length} stale processing job(s).`);
+  }
+
+  return summary;
 }
 
 serve(async (request) => {
@@ -477,13 +668,13 @@ serve(async (request) => {
       }
 
       const result = await processJob(body.jobId);
-      return json(result);
+      return json({ success: result.sent, ...result });
     }
 
     if (mode === 'process-pending') {
       const limit = typeof body.limit === 'number' && body.limit > 0 ? Math.min(body.limit, 25) : 10;
-      const results = await processPendingJobs(limit);
-      return json({ success: true, processed: results.length, results });
+      const summary = await processPendingJobs(limit);
+      return json({ success: true, ...summary, reclaimedOnly: summary.processed === 0 });
     }
 
     return json({ error: `Unsupported mode: ${mode}` }, 400);

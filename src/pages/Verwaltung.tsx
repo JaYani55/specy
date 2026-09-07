@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Unplug,
   Waypoints,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Mail
 } from 'lucide-react';
 import { AdminCard } from '@/components/admin/ui/AdminCard'; // Add this import
 
@@ -152,6 +153,16 @@ const Verwaltung = () => {
       permission: 'canManageAccounts',
       isSuperAdmin: true,
       color: 'from-cyan-600 to-slate-800',
+    },
+    {
+      title: language === 'de' ? 'E-Mail-Verlauf' : 'Mail',
+      description: language === 'de'
+        ? 'Zustellungsprotokoll aller ausgehenden Benachrichtigungen. Fehlgeschlagene E-Mails werden automatisch wiederholt und koennen manuell erneut versendet werden.'
+        : 'Delivery log for all outgoing notifications. Failed e-mails are retried automatically and can be re-dispatched manually.',
+      icon: Mail,
+      href: '/admin/mail',
+      permission: 'canAccessVerwaltung',
+      color: 'from-rose-500 to-rose-700',
     },
     {
       title: 'Branding',

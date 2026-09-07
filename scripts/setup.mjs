@@ -1022,6 +1022,8 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     '202605240002_multi_tenant_backfill_and_ownership.sql',
     '202605240003_multi_tenant_rls_hardening.sql',
     '202605240004_tenant_assignment_rls_fix.sql',
+    '202609070001_mail_queue_retry.sql',
+    '202609070002_mail_queue_tenant_scoping.sql',
     '202605240005_console_visibility_hardening.sql',
     '202605240006_webapps_multi_tenant.sql',
     '202605250001_tenant_storage_management.sql',
@@ -1095,6 +1097,34 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   }
 
   log.success('Migrations complete.');
+
+  // ── 3b. Configure the mail queue cron trigger ─────────────────────────
+  // The 202609070001_mail_queue_retry.sql migration creates a pg_cron job that
+  // invokes the send_email edge function once per minute (rate-limit-aware
+  // queue processing). The deployment-specific function URL is stored in
+  // system_config (namespace `mail`). The API key stays unset: send_email is
+  // deployed with verify_jwt = false, and operators can optionally add a
+  // publishable key via mail.edge_function_key for defense in depth.
+  const cronCfg = spinner();
+  cronCfg.start('Configuring mail queue cron trigger (system_config)…');
+  try {
+    const functionUrl = `${supabaseUrl.trim().replace(/\/+$/, '')}/functions/v1/send_email`;
+    const escapeLiteral = (value) => value.replace(/'/g, "''");
+    const cronSql = [
+      "insert into public.system_config (namespace, key, value) values",
+      `  ('mail', 'edge_function_url', '${escapeLiteral(functionUrl)}')`,
+      "on conflict (namespace, key) do update set value = excluded.value, updated_at = now();",
+    ].join('\n');
+    await runSqlQuery(projectRef, pat.trim(), cronSql);
+    cronCfg.stop(pc.green(`Mail queue cron configured (edge_function_url = ${functionUrl}) ✓`));
+  } catch (err) {
+    cronCfg.stop(pc.yellow(`Mail queue cron configuration failed: ${err.message}`));
+    log.warn(
+      'Queued mail will still be retried on manual re-dispatch, but the automatic\n' +
+      '  minute-by-minute cron needs system_config mail.edge_function_url to point at\n' +
+      `  ${supabaseUrl.trim()}/functions/v1/send_email. Set it via the Connections page or SQL.`,
+    );
+  }
 
   // ── 4. Register the JWT claims hook in Supabase Auth ───────────────────
   // The function was just created by Auth/Access_hook.sql.

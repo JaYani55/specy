@@ -1,4 +1,4 @@
-import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2 } from "lucide-react"
+import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -87,6 +87,11 @@ export function AppSidebar() {
         title: language === "en" ? "Objects" : "Objekte",
         url: "/objects",
         icon: Box,
+      },
+      {
+        title: language === "en" ? "Mail" : "E-Mail",
+        url: "/admin/mail",
+        icon: Mail,
       },
       {
         title: "MCP",

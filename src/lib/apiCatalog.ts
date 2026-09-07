@@ -858,6 +858,52 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     tables: ['forms', 'forms_answers', 'form_notification_settings', 'form_notification_recipients', 'mail_delivery_jobs', 'mail_delivery_events'],
   },
   {
+    id: 'forms-api-submit-tenant',
+    tag: 'Forms',
+    method: 'POST',
+    path: '/api/forms/:tenantName/:formSlug/answers',
+    summary: 'Submit answers to an API-enabled form (workspace-scoped)',
+    description: 'Workspace-bound variant of the machine-facing submission endpoint. The tenant segment must match the form\'s workspace (tenant name, slug, or organization slug) — a mismatch returns 404. Otherwise behaves identically to /api/forms/:identifier/answers, including the poll deadline enforcement. Companion endpoints: GET /api/forms/:tenantName/:formSlug (schema) and POST /api/forms/:tenantName/:formSlug/upload (multipart).',
+    auth: 'bearer-optional',
+    mountsAt: '/api/forms',
+    sourceFile: 'api/routes/forms.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'tenantName', in: 'path', required: true, type: 'string', description: 'Workspace name, slug, or organization slug.' },
+      { name: 'formSlug', in: 'path', required: true, type: 'string', description: 'Form slug.' },
+      { name: 'answers', in: 'body', required: true, type: 'object', description: 'Field-value map keyed by schema field name.' },
+      { name: 'source_slug', in: 'body', required: false, type: 'string', description: 'Source surface slug or origin label.' },
+      { name: 'Authorization', in: 'header', required: false, type: 'Bearer token', description: 'Required when the form requires authentication.' },
+    ],
+    requestExample: `{
+  "answers": {
+    "email": "agent@example.com",
+    "team_size": 15,
+    "topics": ["Migration"]
+  },
+  "source_slug": "agent-workflow"
+}`,
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Submission stored.',
+        example: `{
+  "success": true,
+  "answer_id": "uuid"
+}`,
+      },
+      {
+        status: 404,
+        description: 'Form not found or workspace segment does not belong to the form.',
+        example: `{
+  "error": "Form not found."
+}`,
+      },
+    ],
+    sideEffects: ['Inserts one row into forms_answers with submitted_via=api.', 'Enqueues mail_delivery_jobs and queued mail_delivery_events when form notifications are configured.', 'Deletes the saved forms_answers row after all notification e-mails are sent when the form enables auto-deletion.'],
+    tables: ['forms', 'forms_answers', 'form_notification_settings', 'form_notification_recipients', 'mail_delivery_jobs', 'mail_delivery_events'],
+  },
+  {
     id: 'secrets-list',
     tag: 'Secrets',
     method: 'GET',
@@ -1234,6 +1280,135 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
       },
     ],
     notes: ['Super-admin only.', 'Delegates to the Supabase edge function send_email.'],
+  },
+  {
+    id: 'mail-jobs-list',
+    tag: 'Mail',
+    method: 'GET',
+    path: '/api/mail/jobs',
+    summary: 'List tenant mail delivery jobs',
+    description: 'Returns the mail delivery log (jobs with their event history) scoped to the caller\'s tenant via RLS. Global admins and super-admins see all jobs.',
+    auth: 'bearer-required',
+    mountsAt: '/api/mail',
+    sourceFile: 'api/routes/mail.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'status', in: 'query', required: false, type: 'pending|processing|sent|failed', description: 'Optional status filter.' },
+      { name: 'form_id', in: 'query', required: false, type: 'uuid', description: 'Optional form filter.' },
+      { name: 'limit', in: 'query', required: false, type: 'number', description: 'Maximum jobs to return (1-200, default 100).' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Bearer token of any authenticated user (tenant-scoped via RLS).' },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Delivery log entries.',
+        example: `{
+  "jobs": [
+    {
+      "id": "…",
+      "status": "failed",
+      "recipient_email": "user@example.com",
+      "subject": "Neue Formularantwort: Kontakt",
+      "attempt_count": 3,
+      "max_attempts": 3,
+      "last_error": "Resend send failed: HTTP 429 …",
+      "mail_delivery_events": [ { "event_type": "failed", "message": "…" } ]
+    }
+  ]
+}`,
+      },
+    ],
+    tables: ['mail_delivery_jobs', 'mail_delivery_events'],
+  },
+  {
+    id: 'mail-jobs-retry',
+    tag: 'Mail',
+    method: 'POST',
+    path: '/api/mail/jobs/:id/retry',
+    summary: 'Re-dispatch a failed mail job',
+    description: 'Resets a failed mail delivery job back to the queue (attempt counter reset) and triggers an immediate delivery attempt via the send_email edge function. Failures fall back to the rate-limit-aware queue processor. Tenant-scoped via RLS.',
+    auth: 'bearer-required',
+    mountsAt: '/api/mail',
+    sourceFile: 'api/routes/mail.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'id', in: 'path', required: true, type: 'uuid', description: 'Mail delivery job id.' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Bearer token of any authenticated user (tenant-scoped via RLS).' },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Delivery succeeded immediately or the job was requeued.',
+        example: `{
+  "success": true,
+  "sent": true,
+  "requeued": false,
+  "instantDelivery": true
+}`,
+      },
+      {
+        status: 404,
+        description: 'Job not visible to the caller\'s tenant.',
+        example: `{ "error": "Mail job not found." }`,
+      },
+    ],
+    sideEffects: ['Resets the job row (status pending, attempt_count 0).', 'Writes a requeued mail_delivery_events entry.', 'Invokes the send_email edge function in deliver-job mode.'],
+    tables: ['mail_delivery_jobs', 'mail_delivery_events'],
+  },
+  {
+    id: 'mail-jobs-delete',
+    tag: 'Mail',
+    method: 'DELETE',
+    path: '/api/mail/jobs/:id',
+    summary: 'Delete a tenant mail delivery job',
+    description: 'Permanently deletes a mail delivery job (event history cascades). Tenant visibility is verified through the caller JWT (RLS); jobs currently in delivery are rejected with 409.',
+    auth: 'bearer-required',
+    mountsAt: '/api/mail',
+    sourceFile: 'api/routes/mail.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'id', in: 'path', required: true, type: 'uuid', description: 'Mail delivery job id.' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Bearer token of any authenticated user (tenant-scoped via RLS).' },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Job deleted.',
+        example: `{ "success": true, "deleted": 1 }`,
+      },
+      {
+        status: 404,
+        description: 'Job not visible to the caller\'s tenant.',
+        example: `{ "error": "Mail job not found." }`,
+      },
+    ],
+    sideEffects: ['Deletes the job row and cascades its mail_delivery_events entries.'],
+    tables: ['mail_delivery_jobs', 'mail_delivery_events'],
+  },
+  {
+    id: 'mail-jobs-clear-all',
+    tag: 'Mail',
+    method: 'DELETE',
+    path: '/api/mail/jobs',
+    summary: 'Clear tenant mail delivery log',
+    description: 'Deletes every mail delivery job visible to the caller\'s tenant (up to 1000 per call; event history cascades). Optionally filtered by status. Jobs currently in delivery are skipped. Tenant visibility is resolved through the caller JWT (RLS).',
+    auth: 'bearer-required',
+    mountsAt: '/api/mail',
+    sourceFile: 'api/routes/mail.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'status', in: 'query', required: false, type: 'pending|processing|sent|failed', description: 'Optional status filter (e.g. clear only failed jobs).' },
+      { name: 'Authorization', in: 'header', required: true, type: 'Bearer token', description: 'Bearer token of any authenticated user (tenant-scoped via RLS).' },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Jobs deleted.',
+        example: `{ "success": true, "deleted": 12 }`,
+      },
+    ],
+    sideEffects: ['Deletes job rows and cascades their mail_delivery_events entries.'],
+    tables: ['mail_delivery_jobs', 'mail_delivery_events'],
   },
   {
     id: 'mcp-stream',
