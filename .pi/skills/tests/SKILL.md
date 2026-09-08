@@ -39,6 +39,22 @@ check for undefined identifiers first.
 - `prebuild` regenerates the plugin registries (`ensure-registry.mjs`), then
   typecheck runs, then `vite build`. Must succeed end to end.
 
+### 4. Migration order — when touching migrations
+
+- **Whenever you add a migration to `scripts/lib/migration-order.mjs` (or edit
+  any file in `migrations/`), `tests/coreMigrations.test.mjs` is part of
+  `npm test` and must pass.** It enforces:
+  - every ordered file exists in `migrations/` (no dangling entries),
+  - no duplicates, `preamble.sql` first,
+  - **dependency ordering**: any migration referencing `public.<table>` must
+    have that table created in the same or an earlier migration (creators are
+    derived from `CREATE TABLE` and `ALTER TABLE … RENAME TO`),
+  - `storage.sql` stays last and only applies to the `supabase` provider.
+- Place a new migration AFTER everything it references (tables, functions,
+  types). If the test fails, the assertion message names the offending file
+  and the missing table — move the migration (or its dependency), don't
+  disable the test.
+
 ## When to add tests
 
 Add tests to `tests/*.test.mjs` (Node `node:test` + `node:assert/strict`) for:
@@ -53,6 +69,9 @@ Add tests to `tests/*.test.mjs` (Node `node:test` + `node:assert/strict`) for:
   tokens").
 - **Bug fixes**: first write a test that reproduces the bug (red), then fix
   (green). Keep the test as a regression guard.
+- **Migration ordering**: every new entry in
+  `scripts/lib/migration-order.mjs` is validated by `tests/coreMigrations.test.mjs`
+  (see gate 4 above) — no extra test file needed, but make sure it passes.
 
 Do not add tests for trivial JSX/markup, generated files
 (`src/plugins/registry.ts`, `api/plugin-routes.ts`, …) or plugin-internal code

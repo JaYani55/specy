@@ -13,6 +13,29 @@
 const HEX32 = '[0-9a-fA-F]{32}';
 
 /**
+ * Find a secret's ID in `wrangler secrets-store secret list <store-id>` output.
+ * Matches table rows like `│ SUPABASE_SECRET_KEY │ e99a…6947 │ … │`.
+ *
+ * @param {string} raw Combined stdout of the list command.
+ * @param {string} name Secret name to look up (case-insensitive).
+ * @returns {string | null} The 32-hex secret ID, or null when not found.
+ */
+export function findSecretIdInTable(raw, name) {
+  if (!raw) return null;
+  const rowRe = new RegExp(
+    `\\u2502\\s*([^\\u2502]*?)\\s*\\u2502\\s*(${HEX32})\\s*\\u2502`,
+    'g',
+  );
+  let match;
+  while ((match = rowRe.exec(String(raw))) !== null) {
+    if (match[1].trim().toLowerCase() === name.trim().toLowerCase()) {
+      return match[2].toLowerCase();
+    }
+  }
+  return null;
+}
+
+/**
  * Parse Secrets Store list output into an array of { name, id }.
  *
  * @param {string} raw Combined stdout of `wrangler secrets-store store list`

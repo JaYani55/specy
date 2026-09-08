@@ -44,7 +44,9 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import { DEFAULT_WORKER_NAME, validateWorkerName } from './lib/worker-name.mjs';
-import { parseSecretsStoreList } from './lib/secrets-stores.mjs';
+import { parseSecretsStoreList, findSecretIdInTable } from './lib/secrets-stores.mjs';
+import { removeSecretsStoreBinding } from './lib/wrangler-config.mjs';
+import { getMigrationOrder } from './lib/migration-order.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT      = join(__dirname, '..');
@@ -297,11 +299,122 @@ async function putSecretsStoreSecret(storeId, name, value) {
 
   if (result.status !== 0) {
     const detail = (result.stderr || result.stdout || '').trim();
+    if (detail.includes('secret_name_already_exists') || detail.includes('[code: 1003]')) {
+      return resolveSecretsStoreConflict(storeId, name, value);
+    }
     log.warn(
       `Could not store ${pc.cyan(name)} — set it manually via the /verwaltung/connections UI.\n` +
       (detail ? `  wrangler said: ${detail}` : ''),
     );
     return false;
+  }
+  return true;
+}
+
+/**
+ * Find the Cloudflare secret ID of a named secret within a Secrets Store.
+ */
+function findSecretsStoreSecretId(storeId, name) {
+  const raw = wranglerSilent('secrets-store', 'secret', 'list', storeId, '--remote');
+  return findSecretIdInTable(raw || '', name);
+}
+
+/**
+ * Overwrite an existing Secrets Store secret's value via
+ * `wrangler secrets-store secret update` (requires the secret's ID).
+ */
+async function updateSecretsStoreSecret(storeId, name, value) {
+  const s = spinner();
+  s.start(`Looking up ${name} in the Secrets Store…`);
+  const secretId = findSecretsStoreSecretId(storeId, name);
+  if (!secretId) {
+    s.stop(pc.yellow(`Could not find ${name} in the Secrets Store listing.`));
+    log.warn(
+      `Could not overwrite ${pc.cyan(name)} — update it manually via the /verwaltung/connections UI.`,
+    );
+    return false;
+  }
+  s.start(`Updating ${name} in the Secrets Store…`);
+  const result = spawnSync(
+    'npx',
+    [
+      'wrangler', 'secrets-store', 'secret', 'update', storeId,
+      '--secret-id', secretId,
+      '--value',     value.trim(),
+      '--scopes',    'workers',
+      '--remote',
+    ],
+    {
+      cwd:      ROOT,
+      encoding: 'utf8',
+      stdio:    ['ignore', 'pipe', 'pipe'],
+      shell:    true,
+    },
+  );
+  s.stop('');
+
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || '').trim();
+    log.warn(
+      `Could not update ${pc.cyan(name)} — set it manually via the /verwaltung/connections UI.\n` +
+      (detail ? `  wrangler said: ${detail}` : ''),
+    );
+    return false;
+  }
+  log.success(`Secrets Store secret ${pc.cyan(name)} updated ✓`);
+  return true;
+}
+
+/**
+ * A secret with this name already exists in the Secrets Store (API code 1003).
+ * Ask how to proceed. Default: store as a Worker secret instead — useful for
+ * a dev instance pointing at a different Supabase project than production.
+ */
+async function resolveSecretsStoreConflict(storeId, name, value) {
+  log.warn(`A secret named ${pc.cyan(name)} already exists in the Secrets Store.`);
+  const choice = bailOnCancel(
+    await select({
+      message: 'How should the secret be stored?',
+      options: [
+        {
+          label: `${pc.bold('Worker secret')} — store on this Worker only ${pc.dim('(wrangler secret put)')}`,
+          value: 'worker',
+        },
+        {
+          label: `${pc.bold('Secrets Store')} — overwrite the existing value`,
+          value: 'overwrite',
+        },
+        {
+          label: 'Keep the existing Secrets Store value (skip)',
+          value: 'keep',
+        },
+      ],
+      initialValue: 'worker',
+    }),
+  );
+
+  if (choice === 'keep') {
+    log.info(`Keeping the existing Secrets Store value for ${pc.cyan(name)}.`);
+    return true;
+  }
+
+  if (choice === 'overwrite') {
+    return updateSecretsStoreSecret(storeId, name, value);
+  }
+
+  // choice === 'worker'
+  const ok = putWorkerSecret(name, value);
+  if (!ok) return false;
+  // The runtime prefers the Secrets Store binding (SS_<NAME>) over the plain
+  // Worker secret — remove the binding so the Worker secret takes effect.
+  const cfgPath = join(ROOT, 'wrangler.jsonc');
+  const { text, removed } = removeSecretsStoreBinding(readFileSync(cfgPath, 'utf8'), `SS_${name}`);
+  if (removed) {
+    writeFileSync(cfgPath, text, 'utf8');
+    log.info(
+      `Removed the ${pc.cyan('SS_' + name)} binding from wrangler.jsonc so the Worker secret takes effect.\n` +
+      `  Note: the /verwaltung/connections UI tracks this secret only via the Secrets Store — it will show as unset.`,
+    );
   }
   return true;
 }
@@ -975,106 +1088,12 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   }
 
   // ── 3. Ordered migration files ─────────────────────────────────────────
-  // Dependency order (each file must come after everything it references):
-  //
-  //  preamble.sql              — app_enum type + all trigger functions
-  //  user_profile.sql          — no deps
-  //  roles.sql                 — needs app_enum (preamble)
-  //  employers.sql             — legacy employer table, still used by auth helpers
-  //  companies.sql             — needs user_profile + employers (legacy backfill)
-  //  user_roles.sql            — needs roles + user_profile
-  //  mentor_groups.sql         — no deps
-  //  staff_registry.sql        — needs roles + user_roles + user_profile + mentor_groups
-  //  products.sql              — needs set_current_timestamp_updated_at (preamble)
-  //  page_schemas.sql          — needs set_current_timestamp_updated_at (preamble)
-  //  forms.sql                 — needs set_current_timestamp_updated_at (preamble)
-  //  forms_answers.sql         — needs forms
-  //  forms_published_default.sql — converts legacy drafts and updates forms status default/check
-  //  plugins.sql               — needs set_current_timestamp_updated_at (preamble)
-  //  plugins_config_schema.sql — additive update for existing installations
-  //  mentorbooking_products.sql — needs products (FK)
-  //  llm_specs.sql             — standalone spec registry table
-  //  page_schema_specs.sql     — needs page_schemas + llm_specs
-  //  llm_specs_default_specy_schema_docs.sql — seeds the global Specy schema-authoring MCP spec
-  //  pages.sql                 — renames products→pages; renames FK on mentorbooking_products
-  //                              (must run AFTER mentorbooking_products so the FK to rename exists)
-  //  mentorbooking_events.sql  — needs companies + staff_registry + mentorbooking_products + event functions
-  //  mentorbooking_events_archive.sql — needs companies + staff_registry + mentorbooking_products
-  //  mentorbooking_notifications.sql  — needs user_profile
-  //  agent_logs.sql            — needs page_schemas
-  //  agent_logs_hardening.sql  — tightens agent_logs RLS after base table setup
-  //  objects.sql               — standalone; needs preamble trigger function only
-  //  Auth/Access_hook.sql      — needs roles + user_roles (last)
-  // Storage RLS policies are only needed for Supabase Storage.
-  // Cloudflare R2 manages its own permissions outside of Supabase.
-  const MIGRATION_ORDER = [
-    'preamble.sql',
-    'user_profile.sql',
-    'roles.sql',
-    'employers.sql',
-    'user_roles.sql',
-    'mentor_groups.sql',
-    'companies.sql',
-    'staff_registry.sql',
-    'products.sql',
-    'page_schemas.sql',
-    'page_schema_templates.sql',
-    'managed_secrets.sql',
-    'system_config.sql',
-    'forms.sql',
-    'forms_answers.sql',
-    'forms_notifications.sql',
-    'forms_notification_recipient_rls_fix.sql',
-    '202609050001_forms_confirmation_and_sender_override.sql',
-    '202609050002_remove_custom_from_email.sql',
-    '202609050003_form_notification_message.sql',
-    '202609060001_form_notification_subject.sql',
-    'mail_delivery.sql',
-    'forms_published_default.sql',
-    'plugins.sql',
-    'plugins_config_schema.sql',
-    'mentorbooking_products.sql',
-    'llm_specs.sql',
-    '202608030002_frontend_prompt_specs.sql',
-    '202608030003_global_llm_specs.sql',
-    '202608030004_global_llm_specs_super_admin_policy.sql',
-    'page_schema_specs.sql',
-    'llm_specs_default_specy_schema_docs.sql',
-    'pages.sql',
-    'mentorbooking_events.sql',
-    'mentorbooking_events_archive.sql',
-    'mentorbooking_notifications.sql',
-    'agent_logs.sql',
-    'agent_logs_hardening.sql',
-    '202605240001_multi_tenant_foundation.sql',
-    '202605240002_multi_tenant_backfill_and_ownership.sql',
-    '202605240003_multi_tenant_rls_hardening.sql',
-    '202605240004_tenant_assignment_rls_fix.sql',
-    '202609070001_mail_queue_retry.sql',
-    '202609070002_mail_queue_tenant_scoping.sql',
-    '202605240005_console_visibility_hardening.sql',
-    '202605240006_webapps_multi_tenant.sql',
-    '202605250001_tenant_storage_management.sql',
-    '202608300001_tenant_storage_allocation_types.sql',
-    '202609030001_tenant_storage_shared_apps_scope.sql',
-    'objects.sql',
-    '202605310001_markdown_objects.sql',
-    '202605310002_markdown_object_share_scope.sql',
-    '202606050001_poll_extensions.sql',
-    '202606050002_poll_participant_config.sql',
-    '202606200001_page_schema_visibility_fix.sql',
-    '202608020001_schema_frontend_targets.sql',
-    '202608020002_schema_frontend_target_rpc.sql',
-    '202608020003_schema_frontend_target_precedence.sql',
-    '202608020004_schema_content_scope.sql',
-    '202608030001_page_publication_timestamp.sql',
-    '202608050001_tenant_organization_alias.sql',
-    'Auth/Access_hook.sql',
-    'Auth/Access_hook_oauth_claims.sql',
-    // storage.sql is generated from storage.default.sql at runtime using the
-    // user-chosen bucket name — only applies when STORAGE_PROVIDER = 'supabase'.
-    ...(storageProvider === 'supabase' ? ['storage.sql'] : []),
-  ];
+  // The ordered list lives in scripts/lib/migration-order.mjs (shared with
+  // tests/coreMigrations.test.mjs, which enforces existence, uniqueness and
+  // cross-referenced dependency ordering). Storage RLS policies (storage.sql)
+  // are only needed for Supabase Storage — Cloudflare R2 manages its own
+  // permissions outside of Supabase.
+  const MIGRATION_ORDER = getMigrationOrder(storageProvider);
 
   const migrationsDir = join(ROOT, 'migrations');
   const ms = spinner();
@@ -1109,18 +1128,49 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     } catch (err) {
       ms.stop(pc.red(`  ${file} — failed: ${err.message}`));
 
-      const keepGoing = await confirm({
-        message: `Migration ${pc.yellow(file)} failed. Continue with remaining migrations?`,
-        initialValue: false,
-      });
-      if (isCancel(keepGoing) || !keepGoing) {
-        aborted = true;
+      // Offer retry/skip/abort so a single failing migration does not force
+      // re-running the whole setup. Retry loops until the migration succeeds,
+      // the user skips, or aborts — the SQL is already loaded and migrations
+      // are idempotent, so retrying after a manual fix is safe.
+      let resolved = false;
+      while (!resolved) {
+        const action = bailOnCancel(
+          await select({
+            message: `Migration ${pc.yellow(file)} failed. What do you want to do?`,
+            options: [
+              { label: 'Retry this migration (fix the cause first, e.g. in the Supabase SQL editor)', value: 'retry' },
+              { label: 'Skip and continue with the remaining migrations', value: 'skip' },
+              { label: 'Abort the migration step', value: 'abort' },
+            ],
+            initialValue: 'retry',
+          }),
+        );
+
+        if (action === 'abort') {
+          aborted = true;
+          resolved = true;
+        } else if (action === 'skip') {
+          log.warn(`Skipped ${pc.yellow(file)} — later migrations may fail if they depend on it.`);
+          resolved = true;
+        } else {
+          ms.start(`Retrying ${pc.yellow(file)}…`);
+          try {
+            await runSqlQuery(projectRef, pat.trim(), sql);
+            ms.stop(pc.green(`  ${file} ✓ (retry succeeded)`));
+            resolved = true;
+          } catch (retryErr) {
+            ms.stop(pc.red(`  ${file} — retry failed: ${retryErr.message}`));
+          }
+        }
       }
     }
   }
 
   if (aborted) {
-    log.warn('Migrations aborted. Fix the failing migration and re-run  npm run setup.');
+    log.warn(
+      'Migration step aborted. Applied migrations persist (all are idempotent) —\n' +
+      '  re-run  npm run setup  to continue from where it stopped.',
+    );
     return;
   }
 

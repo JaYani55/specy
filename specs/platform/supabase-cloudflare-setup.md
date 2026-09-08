@@ -77,12 +77,17 @@ Step 4  Patch wrangler.jsonc         Copies wrangler.default.jsonc → wrangler.
 Step 5  CF_API_TOKEN                 wrangler secret put CF_API_TOKEN (Worker secret)
 Step 6  Supabase credentials         Collects URL, publishable key, secret key, storage config
         ↳ Store SUPABASE_PUBLISHABLE_KEY  wrangler secret put (Worker secret)
-        ↳ Store SUPABASE_SECRET_KEY       Cloudflare Secrets Store
+        ↳ Store SUPABASE_SECRET_KEY       Cloudflare Secrets Store — on a name conflict
+                                     (code 1003) the wizard asks: Worker secret (default,
+                                     removes the SS binding from wrangler.jsonc),
+                                     overwrite the store value, or keep it
         ↳ Write .env                      VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY
         ↳ Patch wrangler.jsonc vars       SUPABASE_URL, STORAGE_PROVIDER, STORAGE_BUCKET
 Step 7  Database migrations          Supabase Management API — ordered SQL files, plus
                                      storage RLS policies (Supabase provider only, generated
                                      from storage.default.sql with your bucket name)
+                                     On failure: Retry / Skip / Abort prompt (migrations are
+                                     idempotent — a retry after fixing the cause is safe)
         ↳ Register Auth hook              PATCH /v1/projects/{ref}/config/auth
 Step 8  Edge Function sync + deploy  Syncs Supabase function secrets, stages the top-level
                                      function sources into a temporary Supabase CLI layout,
