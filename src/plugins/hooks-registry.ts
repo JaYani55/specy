@@ -5,10 +5,10 @@
 
 import type { PluginHookContribution } from '@/types/plugin';
 
-import plugin0 from '../../plugins/pluradash/src/index';
+// (no workspace plugins found)
 
 const registeredHooks: PluginHookContribution[] = [
-  ...(plugin0.hooks ?? []),
+  // (no plugin hooks found)
 ];
 
 export default registeredHooks;

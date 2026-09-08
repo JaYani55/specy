@@ -1,5 +1,7 @@
 {
-  "name": "service-cms",
+  // Worker name — set by the setup wizard (default: specy). Run a second
+  // instance (e.g. dev) by choosing a different name during setup.
+  "name": "specy",
   "main": "api/index.ts",
   "compatibility_date": "2026-02-19",
   "compatibility_flags": ["nodejs_compat"],

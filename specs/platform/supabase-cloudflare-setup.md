@@ -67,11 +67,13 @@ The wizard leaves the terminal window open after completion so you can review th
 ## 3. What the Wizard Does — Step by Step
 
 ```
+Step 0  Worker name                 Prompts for the wrangler project name (default: specy)
 Step 1  Cloudflare authentication    wrangler login (skipped if already authenticated)
 Step 2  Account ID                   Select from wrangler whoami memberships, or enter manually
 Step 3  Secrets Store                List / create / select a Cloudflare Secrets Store
 Step 4  Patch wrangler.jsonc         Copies wrangler.default.jsonc → wrangler.jsonc,
-                                     substitutes CF_ACCOUNT_ID + SECRETS_STORE_ID
+                                     substitutes CF_ACCOUNT_ID + SECRETS_STORE_ID and
+                                     sets the worker name
 Step 5  CF_API_TOKEN                 wrangler secret put CF_API_TOKEN (Worker secret)
 Step 6  Supabase credentials         Collects URL, publishable key, secret key, storage config
         ↳ Store SUPABASE_PUBLISHABLE_KEY  wrangler secret put (Worker secret)
@@ -126,6 +128,12 @@ Specy uses three different storage mechanisms depending on the sensitivity and a
 
 `wrangler.default.jsonc` is the **committed template** — it contains human-readable placeholder strings and is safe to push to git. `wrangler.jsonc` is the **generated runtime config** — it is git-ignored and must never be committed.
 
+### Worker name
+
+The wizard prompts for the **Worker name** (the wrangler project name, used by `wrangler deploy`) before any Cloudflare interaction. The default is `specy` (`DEFAULT_WORKER_NAME` in `scripts/lib/worker-name.mjs`). To run a second, parallel instance (e.g. a dev instance alongside production), re-run the wizard and choose a different name — the name is written into the `"name"` field of the generated `wrangler.jsonc`, so the deploy targets a separate Worker. Validation rules: lowercase letters, digits, hyphens or underscores, must start with a letter, max 58 characters (`validateWorkerName` in `scripts/lib/worker-name.mjs`, covered by `tests/workerName.test.mjs`).
+
+Note: the Worker name is independent of the Secrets Store name (always created as `specy` in Step 3) — a renamed Worker can reuse an existing Secrets Store.
+
 ### Placeholders in `wrangler.default.jsonc`
 
 | Placeholder | Replaced with |
@@ -136,7 +144,9 @@ Specy uses three different storage mechanisms depending on the sensitivity and a
 | `REPLACE_WITH_STORAGE_PROVIDER` | `supabase` or `r2` (Step 6) |
 | `REPLACE_WITH_STORAGE_BUCKET` | Bucket/folder name (Step 6) |
 
-The wizard calls `patchWranglerJsonc()` after Step 3 for the CF values, then `patchWranglerVars()` after Step 6 for the Supabase/storage values. The file is updated in two passes so each function can be called independently.
+The `"name"` field of `wrangler.default.jsonc` (default `specy`) is not a placeholder — the wizard overwrites it directly with the prompted worker name in `patchWranglerJsonc()`.
+
+The wizard calls `patchWranglerJsonc()` after Step 3 for the CF values (and the worker name), then `patchWranglerVars()` after Step 6 for the Supabase/storage values. The file is updated in two passes so each function can be called independently.
 
 ### `secrets_store_secrets` binding
 

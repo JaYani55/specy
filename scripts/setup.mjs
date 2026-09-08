@@ -5,6 +5,7 @@
  * Interactive first-time setup wizard for service-cms on Cloudflare Workers.
  *
  * Steps:
+ *  0. Worker name      (wrangler project name — default: specy)
  *  1. Cloudflare login  (wrangler login)
  *  2. Account ID        (auto-detected or manual)
  *  3. Secrets Store     (list existing / create / enter manually)
@@ -42,6 +43,8 @@ import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
+import { DEFAULT_WORKER_NAME, validateWorkerName } from './lib/worker-name.mjs';
+import { parseSecretsStoreList } from './lib/secrets-stores.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT      = join(__dirname, '..');
@@ -202,13 +205,19 @@ async function detectAccountId() {
 async function stepSecretsStore() {
   const s = spinner();
   s.start('Fetching Secrets Stores…');
-  const raw = wranglerSilent('secrets-store', 'store', 'list', '--remote', '--json');
+  // Older wrangler versions emit JSON for `--json`; newer ones (>= 4.x) reject
+  // the flag with "Unknown argument: json" and only print a table — in that
+  // case re-run without the flag and parse the table instead. Note that the
+  // failing invocation still exits 0 while printing the error to stderr, so a
+  // non-JSON-looking result means the flag was rejected, not that the account
+  // has no stores.
+  let raw = wranglerSilent('secrets-store', 'store', 'list', '--remote', '--json');
+  if (!raw || !/^\s*[[{]/.test(raw)) {
+    raw = wranglerSilent('secrets-store', 'store', 'list', '--remote');
+  }
   s.stop('');
 
-  let stores = [];
-  if (raw) {
-    try { stores = JSON.parse(raw); } catch { /* ignore */ }
-  }
+  const stores = parseSecretsStoreList(raw);
 
   if (stores.length > 0) {
     const choice = bailOnCancel(
@@ -509,12 +518,31 @@ async function stepSupabaseSecrets(storeId) {
   };
 }
 
-function patchWranglerJsonc(accountId, storeId) {
+/**
+ * Prompt for the Worker name (wrangler project name).
+ * Defaults to 'specy'. Validated against Cloudflare Worker naming rules.
+ */
+async function promptWorkerName() {
+  const name = bailOnCancel(
+    await text({
+      message: 'Worker name (wrangler project name, used in `wrangler deploy`):',
+      placeholder: DEFAULT_WORKER_NAME,
+      defaultValue: DEFAULT_WORKER_NAME,
+      validate: (v) => validateWorkerName(v || DEFAULT_WORKER_NAME),
+    }),
+  );
+  return (name || DEFAULT_WORKER_NAME).trim();
+}
+
+function patchWranglerJsonc(accountId, storeId, workerName) {
   const templatePath = join(ROOT, 'wrangler.default.jsonc');
   const outputPath   = join(ROOT, 'wrangler.jsonc');
   let txt = readFileSync(templatePath, 'utf8');
   txt = txt.replaceAll('REPLACE_WITH_YOUR_CF_ACCOUNT_ID',    accountId.trim());
   txt = txt.replaceAll('REPLACE_WITH_YOUR_SECRETS_STORE_ID', storeId.trim());
+  if (workerName) {
+    txt = txt.replace(/"name":\s*"[^"]*"/, `"name": "${workerName.trim()}"`);
+  }
   writeFileSync(outputPath, txt, 'utf8');
 }
 
@@ -1300,15 +1328,16 @@ async function main() {
     [
       pc.bold('This wizard will guide you through:'),
       '',
-      `  ${pc.cyan('1.')} Cloudflare login`,
-      `  ${pc.cyan('2.')} Account ID  +  Secrets Store selection`,
-      `  ${pc.cyan('3.')} Patch ${pc.yellow('wrangler.jsonc')} with your values`,
-      `  ${pc.cyan('4.')} Set ${pc.yellow('CF_API_TOKEN')} as a Worker secret`,
-      `  ${pc.cyan('5.')} Supabase URL ${pc.dim('(var)')} + publishable key ${pc.dim('(Worker secret)')} + secret key ${pc.dim('(Secrets Store)')} + storage`,
-      `  ${pc.cyan('6.')} Apply database migrations via Supabase Management API`,
-      `  ${pc.cyan('7.')} Sync Supabase Edge Function secrets + deploy ${pc.yellow('send_email')}`,
-      `  ${pc.cyan('8.')} Register first super-admin user`,
-      `  ${pc.cyan('9.')} Build  →  Deploy`,
+      `  ${pc.cyan('1.')} Worker name  ${pc.dim('(default: specy)')}`,
+      `  ${pc.cyan('2.')} Cloudflare login`,
+      `  ${pc.cyan('3.')} Account ID  +  Secrets Store selection`,
+      `  ${pc.cyan('4.')} Patch ${pc.yellow('wrangler.jsonc')} with your values`,
+      `  ${pc.cyan('5.')} Set ${pc.yellow('CF_API_TOKEN')} as a Worker secret`,
+      `  ${pc.cyan('6.')} Supabase URL ${pc.dim('(var)')} + publishable key ${pc.dim('(Worker secret)')} + secret key ${pc.dim('(Secrets Store)')} + storage`,
+      `  ${pc.cyan('7.')} Apply database migrations via Supabase Management API`,
+      `  ${pc.cyan('8.')} Sync Supabase Edge Function secrets + deploy ${pc.yellow('send_email')}`,
+      `  ${pc.cyan('9.')} Register first super-admin user`,
+      `  ${pc.cyan('10.')} Build  →  Deploy`,
       '',
       pc.dim('You can re-run this wizard any time with  npm run setup'),
     ].join('\n'),
@@ -1316,6 +1345,9 @@ async function main() {
   );
 
   bailOnCancel(await confirm({ message: 'Ready to begin?' }));
+
+  // ── 0. Worker name ──────────────────────────────────────────────────────────
+  const workerName = await promptWorkerName();
 
   // ── 1. Login ──────────────────────────────────────────────────────────────
   log.step(pc.bold('Step 1 — Cloudflare authentication'));
@@ -1337,11 +1369,12 @@ async function main() {
   // ── 4. Patch wrangler.jsonc ───────────────────────────────────────────────
   const ps = spinner();
   ps.start('Writing the selected Secrets Store to wrangler.jsonc…');
-  patchWranglerJsonc(accountId, storeId);
+  patchWranglerJsonc(accountId, storeId, workerName);
   ps.stop(pc.green('wrangler.jsonc updated ✓'));
 
   note(
     [
+      `${pc.bold('Worker name')}      = ${pc.cyan(workerName)}`,
       `${pc.bold('CF_ACCOUNT_ID')}    = ${pc.cyan(accountId)}`,
       `${pc.bold('SECRETS_STORE_ID')} = ${pc.cyan(storeId)}`,
     ].join('\n'),
