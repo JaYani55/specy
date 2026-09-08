@@ -143,3 +143,5 @@ See [specs/plugins/eupl-compliance.md](specs/plugins/eupl-compliance.md) for the
 Interested in contributing to Specy? We'd love to hear from you.
 
 **Write to:** [jay@pluracon.org](mailto:jay@pluracon.org)
+
+dev
