@@ -5,6 +5,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | Document | Purpose |
 |---|---|
 | [`mcp-exposition.md`](mcp-exposition.md) | MCP server, spec/tool registry, and exposure model |
+| [`plugin-hooks.md`](plugin-hooks.md) | Full plugin hook target reference: contracts, dispatch points, context shapes, status |
 | [`agent-system-prompt.md`](agent-system-prompt.md) | The Specy agent system prompt |
 | [`oauth-unified-authentication.md`](oauth-unified-authentication.md) | Implementing OAuth in another microservice for unified authentication (client + resource-server guide, claim contract) |
 | [`frontend-integration-manifest.md`](frontend-integration-manifest.md) | Manifest contract for frontend integrations |

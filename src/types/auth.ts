@@ -25,6 +25,11 @@ export interface UserBase {
   role: UserRole;
   hasAccess: boolean;
   roles: string[];
+  /**
+   * Full decoded JWT claim payload (Claim Management, specs/plans/CLAIM_MANAGEMENT.md).
+   * Plugin claims are namespaced: claims.<plugin_id> = { … }.
+   */
+  claims?: Record<string, unknown>;
 }
 
 export interface UserProfile extends UserBase {

@@ -14,6 +14,7 @@ import {
   deployEdgeFunction,
   extractProjectRef,
   fetchCoreUpdateState,
+  recordWorkerDeployment,
   registerAuthHook,
   runSqlQuery,
   syncEdgeFunctionSecrets,
@@ -23,6 +24,11 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const EXPECTED_REMOTE = 'https://github.com/JaYani55/specy.git';
+
+// Retained across the run so the deploy step can record worker-deployment state
+// without re-prompting for the PAT.
+let activePat = null;
+let activeProjectRef = null;
 
 const args = new Set(process.argv.slice(2));
 const options = {
@@ -383,6 +389,8 @@ async function runSupabaseUpdatePhase() {
   }
 
   const pat = await promptForSupabasePat();
+  activePat = pat;
+  activeProjectRef = projectRef;
   const migrations = options.skipMigrations
     ? []
     : buildMigrationManifest(ROOT, storageProvider, storageBucket);
@@ -586,6 +594,17 @@ async function main() {
     deploy();
   } else {
     warn('Skipping deploy as requested.');
+  }
+
+  // Record the live Worker's commit into the deployment-state registry — only
+  // after a successful deploy (the external system confirms before we persist).
+  if (!options.skipDeploy && activePat && activeProjectRef) {
+    try {
+      await recordWorkerDeployment(activeProjectRef, activePat, capture('git', ['rev-parse', '--short', 'HEAD']));
+      ok('Recorded worker deployment state.');
+    } catch (error) {
+      warn(`Could not record worker deployment state: ${error.message}`);
+    }
   }
 
   console.log('');

@@ -222,13 +222,23 @@ This is the metadata file the install script reads and validates.
 | `api_metadata` | `object` | — | Optional descriptive API metadata for runtime discovery. Supports `basePath` and `routes[]`, where each route declares `method`, `path`, and optional `summary`. |
 | `capabilities` | `object[]` | `[]` | Optional high-level capability descriptors for discovery/admin tooling. Each entry declares `key`, `kind` (`"interface" | "hook" | "api"`), optional `targets[]`, and `description`. |
 | `config_schema` | `object[]` | `[]` | Configuration fields the plugin needs. Each entry has `key`, `label`, optional `description`, `type` (`"text" | "textarea" | "url" | "secret"`), optional `required`, optional `placeholder`, and optional `expose_to_frontend`. The install script prints these at the end; values are set via the Plugins admin UI at `/plugins`. |
-| `wrangler_bindings` | `object` | — | Declarative Cloudflare Worker bindings the plugin requires at deploy time. See [§3.1 — Wrangler Bindings](#31-wrangler-bindings). |
+| `wrangler_bindings` | `object` | — | **Deprecated.** Concrete Cloudflare Worker binding entries injected verbatim into `wrangler.jsonc`. Point at account-global instances and break per-environment deployments — declare `wrangler_intents` instead. See [§3.1 — Wrangler Bindings (legacy)](#31-wrangler-bindings-legacy). |
+| `wrangler_intents` | `object` | — | **Binding intents (preferred).** Declare *requirements* (binding + purpose + scope), never concrete instances; core resolves a per-environment instance name and provisions it. See [§3.2 — Binding Intents](#32-binding-intents). |
+| `deployment_path` | `string` | `"cloudflare"` | The vendor cloud system the plugin's cloud bindings are declared against. **Binding management is part of a plugin: developers must declare their cloud system bindings based on the deployment path — `cloudflare` is the current default and only deployment path.** Unknown paths are rejected at build/install time. |
 
-### 3.1 Wrangler Bindings
+### 3.1 Wrangler Bindings (legacy — deprecated)
 
-If your plugin needs Cloudflare Worker bindings (AI Gateway, KV namespaces, Durable Objects), declare them in `plugin.json` under `wrangler_bindings`. The build system automatically injects these into `wrangler.jsonc` inside a dedicated auto-generated section.
+> **Deprecated:** `wrangler_bindings` declares **concrete instances** (account-global
+> queue names, KV ids, store ids). Every deployment therefore shares one instance —
+> which broke cross-environment deploys with cryptic consumer-registration errors and
+> silently routed dev traffic into prod queues. Declare
+> [`wrangler_intents`](#32-binding-intents) instead. Both forms are accepted during
+> migration; `wrangler_intents` wins when both are present, and legacy-only manifests
+> produce a deprecation warning on every build.
 
-> **Note:** `r2_buckets`, `vars`, and `secrets_store_secrets` are owned by the CMS core and cannot be declared in `wrangler_bindings`. Add those entries directly to `wrangler.jsonc` instead.
+If your plugin needs Cloudflare Worker bindings (AI Gateway, KV namespaces, Durable Objects, Queues, Vars, Secrets Store), declare them in `plugin.json` under `wrangler_bindings`. The build system automatically injects these into `wrangler.jsonc` inside a dedicated auto-generated section.
+
+> **Note:** `r2_buckets` is owned by the CMS core and cannot be declared in `wrangler_bindings` — plugins consume the shared `MEDIA_BUCKET` binding instead (see [r2-file-storage.md](../agents/r2-file-storage.md)). `vars` and `secrets_store_secrets` are merged into the core sections of `wrangler.jsonc` with per-name conflict detection: duplicate var keys or secret bindings across plugins abort the build.
 
 #### Supported binding types
 
@@ -240,6 +250,12 @@ interface PluginWranglerBindings {
   kv_namespaces?: PluginWranglerKvBinding[];
   /** Durable Object bindings. */
   durable_objects?: PluginWranglerDurableObjectBinding[];
+  /** Queue producers/consumers (merged into the core queues config). */
+  queues?: PluginWranglerQueuesBinding;
+  /** Plain-text vars merged into the core "vars" object. Keys must be unique across all plugins. */
+  vars?: Record<string, string>;
+  /** Secrets Store bindings merged into the core "secrets_store_secrets" array. Binding names must be unique across all plugins. */
+  secrets_store_secrets?: PluginWranglerSecretsStoreBinding[];
 }
 
 interface PluginWranglerAiBinding {
@@ -255,7 +271,22 @@ interface PluginWranglerDurableObjectBinding {
   name: string;       // JS variable name, e.g. "MY_PLUGIN_DO"
   class_name: string; // Durable Object class name exported by the Worker
 }
+
+interface PluginWranglerQueuesBinding {
+  producers?: Array<{ queue: string; binding: string }>;
+  consumers?: Array<{ queue: string; max_batch_size?: number; max_batch_timeout?: number }>;
+}
+
+interface PluginWranglerSecretsStoreBinding {
+  binding: string;     // JS variable name, e.g. "SS_TWILIO_AUTH_SECRET"
+  store_id: string;    // Cloudflare Secrets Store UUID
+  secret_name: string; // Secret name inside the store
+}
 ```
+
+> Source of truth: `src/types/plugin.ts` (`PluginWranglerBindings` and the
+> per-type interfaces). The type system also accepts `r2_buckets`, but the
+> build rejects it with a warning — see the note above.
 
 #### Example
 
@@ -288,6 +319,56 @@ The build system validates that no two plugins declare the same binding name wit
 #### EUPL compliance
 
 Declaring wrangler bindings in `plugin.json` keeps plugin infrastructure requirements in plugin code, never in core wrangler config files. The core provides only the merge mechanism — a build-time hook that reads plugin manifests and writes the auto-generated section in `wrangler.jsonc`. This follows the same pattern as `migrations[]` and `config_schema`.
+
+### 3.2 Binding Intents (preferred)
+
+The Binding Intent & Provisioning System (BIPS) implements the doctrine that **binding management is part of a plugin**: your plugin declares its cloud-system bindings **based on the deployment path** (`deployment_path` — `cloudflare` is the current default and only deployment path), as **intents** — requirements, never concrete instances. Core owns the mechanism: deterministic resolution, provisioning, a resource ledger, and injection into `wrangler.jsonc`.
+
+```json
+{
+  "deployment_path": "cloudflare",
+  "wrangler_intents": {
+    "queues": [
+      {
+        "binding": "ISIBOT_SMS_QUEUE",
+        "purpose": "sms-notifications",
+        "scope": "environment",
+        "consumer": { "max_batch_size": 5, "max_batch_timeout": 10 }
+      }
+    ],
+    "kv_namespaces": [
+      { "binding": "MY_PLUGIN_KV", "purpose": "cache" }
+    ],
+    "secrets_store_secrets": [
+      { "binding": "SS_TWILIO_ACCOUNT_SID", "purpose": "twilio-account-sid", "scope": "shared" }
+    ],
+    "vars": { "MY_PLUGIN_LOG_LEVEL": "" }
+  }
+}
+```
+
+#### Intent fields
+
+| Field | Meaning |
+|---|---|
+| `binding` | The JS identifier on `env` — your plugin code only ever reads `env.<BINDING>`. Unique across plugins per kind. |
+| `purpose` | Semantic slug (`[a-z][a-z0-9-]*`); combined with the deployment worker name and your plugin id into the instance name. Single-source per plugin. |
+| `scope` | `"environment"` (default) — every deployment gets its **own instance**, resolved as `{worker-name}--{plugin-id}--{purpose}` (e.g. `specy-dev--pluradash--sms-notifications`). `"shared"` — explicit opt-in to one account-global instance, resolved as `{plugin-id}--{purpose}`. |
+| `consumer` (queues) | Consumer settings, registered against the **same resolved instance** as the producer. |
+| `secret_name` / `store_id` (secrets) | Link target inside the Secrets Store; omit `store_id` to resolve the deployment's core store (`SECRETS_STORE_ID`). Values stay in the Secrets Store, never in the manifest. |
+
+#### What core does for you
+
+1. **Validate** (build and install time): kind whitelist, purpose slug, single-source purposes, cross-plugin binding conflicts, deployment path. `r2_buckets` remains core-owned.
+2. **Resolve** deterministically per environment — two deployments of the same stack can never collide (this is what fixes the queue duplicate-consumer incident: the dev deploy gets its own queue instead of reusing prod's).
+3. **Provision** (`npm run bindings:provision`, also attempted by the installer when `CF_API_TOKEN` is available): create-or-get via the Cloudflare API, recorded in the resource ledger. Run order: install → provision → build → deploy.
+4. **Inject** the resolved entries into `wrangler.jsonc` — your runtime code is untouched (`env.ISIBOT_SMS_QUEUE`).
+
+The full contract (ledger, teardown, Secrets Store verification, deployment-path extensibility) is specified in [`../platform/binding-management.md`](../platform/binding-management.md).
+
+#### EUPL note
+
+As with `wrangler_bindings`, intents keep plugin infrastructure requirements in `plugin.json` — but unlike the legacy form, the *instance* is core-resolved deployment configuration while the *requirement* stays plugin-declared. Plugins depend only on the shape of the mechanism, never on concrete cloud resource names.
 
 ### Optional runtime access contract
 

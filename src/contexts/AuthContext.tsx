@@ -175,7 +175,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         originalRole: userRole,
         Username: profileResult.data?.Username,
         hasAccess: hasValidRole,
-        roles: userRoleNames
+        roles: userRoleNames,
+        claims: (decoded.claims as Record<string, unknown> | undefined) ?? {},
       };
 
       return userData;

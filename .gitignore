@@ -52,6 +52,12 @@ src/plugins/hooks-registry.ts
 api/plugin-routes.ts
 api/plugin-hooks.ts
 api/plugin-metadata.ts
+api/plugin-claims.ts
+api/plugin-bindings.ts
+
+# Binding resource ledger (BIPS — per-deployment state record, gitignored).
+# Written by scripts/provision-bindings.mjs / install-plugins.mjs.
+.bindings-ledger.json
 
 # Per-plugin npm dependency tracking (gitignored — keeps plugin deps out of package.json).
 # Reinstalled automatically by ensure-registry.mjs on every predev/prebuild.

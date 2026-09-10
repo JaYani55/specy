@@ -6,8 +6,8 @@
  * lets you pick which ones to install, downloads + wires them up.
  *
  * Usage:
- *   node scripts/install-plugins.mjs               # fetch from DB → interactive picker
- *   node scripts/install-plugins.mjs --all         # fetch from DB → install all (no picker, CI-safe)
+ *   node scripts/install-plugins.mjs               # workspace plugins + DB registry → interactive picker
+ *   node scripts/install-plugins.mjs --all         # install all (workspace + registered, CI-safe)
  *   node scripts/install-plugins.mjs --local       # install remote entries from plugins.json (no DB)
  *   node scripts/install-plugins.mjs --add <url>   # register a GitHub URL + install it directly
  *   node scripts/install-plugins.mjs --list        # list plugins (DB + local state)
@@ -15,11 +15,14 @@
  *
  * Environment (.env or .env.local):
  *   VITE_SUPABASE_URL              Supabase project URL
- *   VITE_SUPABASE_PUBLISHABLE_KEY  Supabase anon/publishable key
+ *   SUPABASE_ACCESS_TOKEN          Supabase PAT (optional — prompted interactively if missing)
  *   GITHUB_TOKEN                   (optional) GitHub PAT — avoids rate-limits, required for private repos
  *
- * DB operations use interactive login (email + password). No service key is stored locally.
- * Access is enforced by RLS + the custom JWT hook (admin or super-admin role required).
+ * DB operations run through the Supabase Management API (/database/query) using a
+ * personal access token (PAT, prefix sbp_/sb_pat_). The PAT is read from the
+ * SUPABASE_ACCESS_TOKEN env var or prompted once; it is never written to disk.
+ * Management API calls execute SQL with project-owner privileges (RLS does NOT apply) —
+ * keep the token local and never commit it.
  *
  * After running you MUST rebuild and redeploy:
  *   npm run build
@@ -33,47 +36,42 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
 import { createInterface } from 'readline';
-import { createClient } from '@supabase/supabase-js';
-import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR } from './lib/plugin-workspace.mjs';
+import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR, WRANGLER_CONFIG_FILE } from './lib/plugin-workspace.mjs';
+import { sqlStr } from './lib/sqlStr.mjs';
+import { validatePluginMigrations } from './lib/migration-validation.mjs';
+import { collectManifestIntents, collectPluginIntents, findLedgerRow, listUnprovisionedIntents, readWorkerName } from './lib/binding-intents.mjs';
+import { writeDeploymentState, resolvedIntentsToBindingStateRows } from './lib/deployment-state.mjs';
+import { provisionBindingIntents, readLedgerFromPath } from './lib/binding-provisioner.mjs';
+import { auditBindingConsistency, printBindingAuditReport } from './lib/binding-consistency.mjs';
+import { parseJsoncConfig } from './lib/wrangler-config.mjs';
+import { loadDotEnv } from './lib/env.mjs';
+import { promptSecret } from './lib/prompts.mjs';
+import {
+  createPatDb,
+  extractProjectRef,
+  getSupabaseUrl,
+  patQuery,
+  runSqlQuery,
+} from './lib/remote-sql.mjs';
 
 const __dirname     = dirname(fileURLToPath(import.meta.url));
 const ROOT          = resolve(__dirname, '..');
 const PLUGINS_JSON       = join(ROOT, 'plugins.json');
 const PLUGINS_DIR        = WORKSPACE_PLUGINS_DIR;
-const REGISTRY_FILE      = join(PLUGINS_DIR, 'registry.ts');
-const HOOKS_REGISTRY_FILE = join(PLUGINS_DIR, 'hooks-registry.ts');
-const PLUGIN_ROUTES_FILE = join(ROOT, 'api', 'plugin-routes.ts');
-const PLUGIN_METADATA_FILE = join(ROOT, 'api', 'plugin-metadata.ts');
 const PLUGIN_DEPS_FILE   = join(ROOT, 'plugin-deps.json');
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
-const c = { reset:'\x1b[0m', bold:'\x1b[1m', red:'\x1b[31m', green:'\x1b[32m', yellow:'\x1b[33m', cyan:'\x1b[36m' };
+const c = { reset:'\x1b[0m', bold:'\x1b[1m', red:'\x1b[31m', green:'\x1b[32m', yellow:'\x1b[33m', cyan:'\x1b[36m', dim:'\x1b[2m' };
 const log  = (...a) => console.log(...a);
 const info = (m) => log(`${c.cyan}i${c.reset}  ${m}`);
 const ok   = (m) => log(`${c.green}v${c.reset}  ${m}`);
 const warn = (m) => log(`${c.yellow}!${c.reset}  ${m}`);
 const fail = (m) => log(`${c.red}x${c.reset}  ${m}`);
-const die  = (m) => { fail(m); process.exit(1); };
-
-// ─── .env loader ─────────────────────────────────────────────────────────────
-// Reads .env.local then .env; .env.local wins.
-function loadDotEnv() {
-  const vars = {};
-  for (const file of ['.env.local', '.env']) {
-    const p = join(ROOT, file);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, 'utf8').split('\n')) {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
-      const idx = t.indexOf('=');
-      if (idx === -1) continue;
-      const key = t.slice(0, idx).trim();
-      const val = t.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
-      if (!(key in vars)) vars[key] = val;
-    }
-  }
-  return vars;
-}
+const die  = (m) => { fail(m); process.exitCode = 1; throw new FatalError(m); };
+// process.exit() after a fetch() crashes on Windows (libuv assertion, exit code 127),
+// so die() throws a sentinel instead — the entry point swallows it and lets the
+// event loop drain with process.exitCode = 1 already set.
+class FatalError extends Error {}
 
 // ─── plugin-deps.json helpers ────────────────────────────────────────────────
 // Tracks npm packages installed by plugins, keyed by plugin id.
@@ -86,105 +84,60 @@ function writePluginDeps(data) {
   writeFileSync(PLUGIN_DEPS_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-// ─── Supabase client (anon key — auth enforced by RLS + JWT hook) ───────────────────────
-function createAnonClient() {
-  const env = loadDotEnv();
-  const url = process.env.SUPABASE_URL
-           ?? process.env.VITE_SUPABASE_URL
-           ?? env['SUPABASE_URL']
-           ?? env['VITE_SUPABASE_URL'];
-  const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY
-           ?? env['VITE_SUPABASE_PUBLISHABLE_KEY'];
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-}
-
-// Decode the roles injected by the custom_access_token_hook into the JWT claims.
-function getJwtRoles(accessToken) {
-  try {
-    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString('utf8'));
-    return Array.isArray(payload.user_roles) ? payload.user_roles : [];
-  } catch { return []; }
-}
-
-// Prompt for a password without echoing characters.
-function promptPassword(question) {
-  return new Promise((resolve) => {
-    process.stdout.write(question);
-    const wasRaw = process.stdin.isRaw ?? false;
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
-    let pwd = '';
-    const onData = (ch) => {
-      if (ch === '\r' || ch === '\n') {
-        process.stdin.setRawMode(wasRaw);
-        process.stdin.pause();
-        process.stdin.removeListener('data', onData);
-        process.stdout.write('\n');
-        resolve(pwd);
-      } else if (ch === '\u0003') { // Ctrl+C
-        process.stdout.write('\n'); process.exit(0);
-      } else if (ch === '\u007f' || ch === '\b') { // backspace
-        if (pwd.length > 0) { pwd = pwd.slice(0, -1); process.stdout.write('\b \b'); }
-      } else {
-        pwd += ch; process.stdout.write('*');
-      }
-    };
-    process.stdin.on('data', onData);
-  });
-}
-
-// Regular line prompt — paste-friendly (no raw mode). Used for tokens that
-// are never stored and don't need per-character masking.
-function promptLine(question) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
-}
-
-// Interactive login: prompts for email + password, signs in, verifies role.
-// Returns the authenticated supabase client, or calls die() if auth fails.
-async function loginInteractive(client) {
-  log('');
-  log(`${c.bold}Plugin installer — Supabase login required${c.reset}`);
-  info('Only users with the admin or super-admin role can install plugins.');
-  log('');
-
-  const rl    = createInterface({ input: process.stdin, output: process.stdout });
-  const email = await new Promise((resolve) => rl.question(`${c.cyan}Email:${c.reset}    `, (a) => { rl.close(); resolve(a.trim()); }));
-  const pwd   = await promptPassword(`${c.cyan}Password:${c.reset} `);
-
-  const { data, error } = await client.auth.signInWithPassword({ email, password: pwd });
-  if (error) die(`Login failed: ${error.message}`);
-
-  const roles = getJwtRoles(data.session.access_token);
-  if (!roles.includes('admin') && !roles.includes('super-admin')) {
-    await client.auth.signOut();
-    die(`Access denied. Your account (${email}) does not have the admin or super-admin role.`);
-  }
-
-  ok(`Logged in as ${email}  [roles: ${roles.join(', ')}]`);
-  return data.session;
-}
-
 // ─── DB helpers ──────────────────────────────────────────────────────────────
-async function fetchRegisteredPlugins(supabase) {
-  const { data, error } = await supabase
-    .from('plugins')
-    .select('slug, name, version, description, author_name, repo_url, download_url, status')
-    .eq('status', 'registered')
-    .order('name');
-  if (error) throw new Error(`Supabase query failed: ${error.message}`);
-  return data ?? [];
+async function fetchRegisteredPlugins(db) {
+  if (!db) return [];
+  const rows = await patQuery(
+    db,
+    `SELECT slug, name, version, description, author_name, repo_url, download_url, status
+       FROM plugins
+      WHERE status = 'registered'
+      ORDER BY name`,
+  );
+  return rows ?? [];
 }
 
-async function markPluginInstalled(supabase, slug, version) {
-  if (!supabase) return;
-  const update = { status: 'installed', installed_at: new Date().toISOString() };
-  if (version) update.version = version;
-  const { error } = await supabase.from('plugins').update(update).eq('slug', slug);
-  if (error) warn(`  Could not update DB status for "${slug}": ${error.message}`);
-  else ok(`  DB status → installed`);
+// Upsert the plugin into the plugins table so status updates (installed /
+// error) have a row to work with. Workspace-first flow: a plugin that only
+// exists locally is registered here before installation completes.
+async function ensurePluginRegistered(db, slug, manifest, entry) {
+  if (!db) return;
+  const repoUrl = entry?.repo_url ?? manifest?.repository ?? null;
+  if (!repoUrl) {
+    warn(`  Cannot register "${slug}" in the plugins table — no repo_url in entry or manifest.`);
+    return;
+  }
+  try {
+    await patQuery(db, `
+      INSERT INTO plugins (slug, name, version, description, author_name, license, repo_url, download_url, status)
+      VALUES (
+        ${sqlStr(slug)},
+        ${sqlStr(manifest?.name ?? slug)},
+        ${sqlStr(manifest?.version ?? '0.0.0')},
+        ${manifest?.description ? sqlStr(manifest.description) : 'NULL'},
+        ${manifest?.author ? sqlStr(manifest.author) : 'NULL'},
+        ${manifest?.license ? sqlStr(manifest.license) : 'NULL'},
+        ${sqlStr(repoUrl)},
+        ${manifest?.download_url ? sqlStr(manifest.download_url) : 'NULL'},
+        'registered'
+      )
+      ON CONFLICT (slug) DO NOTHING`);
+    ok('  Registered in plugins table');
+  } catch (e) {
+    warn(`  Could not register "${slug}" in the plugins table: ${e.message}`);
+  }
+}
+
+async function markPluginInstalled(db, slug, version) {
+  if (!db) return;
+  try {
+    const sets = [`status = 'installed'`, `installed_at = now()`];
+    if (version) sets.push(`version = ${sqlStr(version)}`);
+    await patQuery(db, `UPDATE plugins SET ${sets.join(', ')} WHERE slug = ${sqlStr(slug)}`);
+    ok(`  DB status → installed`);
+  } catch (e) {
+    warn(`  Could not update DB status for "${slug}": ${e.message}`);
+  }
 }
 
 function sanitizeConfigSchema(configSchema) {
@@ -204,43 +157,94 @@ function sanitizeConfigSchema(configSchema) {
     .filter((field) => field.key && field.label);
 }
 
-async function syncPluginConfigSchema(supabase, slug, configSchema) {
-  if (!supabase) return;
-
-  const { error } = await supabase
-    .from('plugins')
-    .update({ config_schema: sanitizeConfigSchema(configSchema) })
-    .eq('slug', slug);
-
-  if (error) {
-    warn(`  Could not sync config schema for "${slug}": ${error.message}`);
-  } else {
+async function syncPluginConfigSchema(db, slug, configSchema) {
+  if (!db) return;
+  try {
+    const json = JSON.stringify(sanitizeConfigSchema(configSchema));
+    await patQuery(db, `UPDATE plugins SET config_schema = ${sqlStr(json)}::jsonb WHERE slug = ${sqlStr(slug)}`);
     ok('  DB config schema synced');
+  } catch (e) {
+    warn(`  Could not sync config schema for "${slug}": ${e.message}`);
   }
 }
 
-async function markPluginError(supabase, slug, message) {
-  if (!supabase) return;
-  const { error } = await supabase
-    .from('plugins')
-    .update({ status: 'error', error_message: message })
-    .eq('slug', slug);
-  if (error) warn(`  Could not update DB error status for "${slug}": ${error.message}`);
+async function markPluginError(db, slug, message) {
+  if (!db) return;
+  try {
+    await patQuery(db, `UPDATE plugins SET status = 'error', error_message = ${sqlStr(message)} WHERE slug = ${sqlStr(slug)}`);
+  } catch (e) {
+    warn(`  Could not update DB error status for "${slug}": ${e.message}`);
+  }
+}
+
+// ─── Deployment-state publication (DEPLOYMENT-STATE-TRACKING.md) ────────────
+// Write-after-confirm: these run only after the external system (Supabase) has
+// already acknowledged the mutation. Non-fatal — state can be repaired later
+// with `npm run state:recheck -- --sync`.
+
+async function recordPluginCodeState(db, slug, version) {
+  if (!db) return;
+  try {
+    await writeDeploymentState(db.projectRef, db.pat, [{
+      owner: `plugin:${slug}`,
+      component: 'code',
+      key: 'code',
+      value: { status: 'installed', version, provider: 'supabase', deployed_at: new Date().toISOString() },
+    }]);
+  } catch (e) {
+    warn(`  Could not record deployment state for "${slug}": ${e.message}`);
+  }
+}
+
+async function recordPluginClaimsState(db, slug, manifest) {
+  if (!db) return;
+  const declarations = manifest?.claims_declarations;
+  if (!Array.isArray(declarations) || declarations.length === 0) return;
+  try {
+    // One top-level JWT key per plugin (claim_key = plugin id) — the registry
+    // row, not the individual resolver outputs (see specs/auth/plugin-claims.md).
+    await writeDeploymentState(db.projectRef, db.pat, [{
+      owner: `plugin:${slug}`,
+      component: 'claims',
+      key: slug,
+      value: { status: 'applied', provider: 'supabase', meta: { count: declarations.length } },
+    }]);
+  } catch (e) {
+    warn(`  Could not record claims state for "${slug}": ${e.message}`);
+  }
+}
+
+async function recordPluginBindingsState(db) {
+  if (!db) return;
+  try {
+    const plugins = scanWorkspacePlugins();
+    const ledger = readLedgerFromPath(ROOT);
+    const { resolvedIntents } = collectPluginIntents(plugins, {
+      wranglerJsoncPath: WRANGLER_CONFIG_FILE,
+      ledger,
+    });
+    const rows = resolvedIntentsToBindingStateRows(resolvedIntents);
+    if (rows.length) await writeDeploymentState(db.projectRef, db.pat, rows);
+  } catch (e) {
+    warn(`  Could not record binding state: ${e.message}`);
+  }
 }
 
 // ─── Interactive picker ──────────────────────────────────────────────────────
 async function pickPlugins(rows) {
   if (!rows.length) {
-    info('No plugins with status "registered" found in the database.');
+    info('No plugins available — nothing in /plugins workspace and no entries with status "registered" in the database.');
     return [];
   }
 
   log('');
-  log(`${c.bold}Plugins registered in Supabase (status = registered):${c.reset}`);
+  log(`${c.bold}Available plugins (workspace + Supabase registry):${c.reset}`);
   log('');
   rows.forEach((row, i) => {
-    const local = existsSync(join(PLUGINS_DIR, row.slug))
-      ? `  ${c.yellow}(already installed locally)${c.reset}` : '';
+    const local = row.local
+      ? `  ${c.green}(workspace)${c.reset}`
+      : existsSync(join(PLUGINS_DIR, row.slug))
+        ? `  ${c.yellow}(already installed locally)${c.reset}` : '';
     const desc  = row.description ? `  — ${row.description}` : '';
     log(`  ${c.cyan}[${i + 1}]${c.reset}  ${c.bold}${row.name}${c.reset}  (${row.slug})${local}${desc}`);
   });
@@ -395,331 +399,6 @@ function loadManifest(pluginDir) {
   } catch (e) { warn(`  Cannot parse plugin.json: ${e.message}`); return null; }
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function stripSqlComments(sql) {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--.*$/gm, ' ');
-}
-
-function normalizeIdentifierPart(part) {
-  return part.replace(/^"+|"+$/g, '');
-}
-
-function getAllowedPluginSchemas(slug) {
-  return [...new Set([slug.replace(/-/g, '_'), slug])].filter(Boolean);
-}
-
-function collectSqlFiles(dir, filePrefix) {
-  if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
-      .sort()
-      .map((f) => ({
-        name: f,
-        file: `${filePrefix}/${f}`,
-        sql: readFileSync(join(dir, f), 'utf8'),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function validateScopedObjectTarget(identifier, allowedSchemas, file, statement, issues) {
-  const parts = identifier.split('.');
-  if (parts.length < 2) {
-    issues.push(`${file}: ${statement} must target an explicit plugin schema, found "${identifier}".`);
-    return;
-  }
-
-  const schema = normalizeIdentifierPart(parts[0]);
-  if (!allowedSchemas.includes(schema)) {
-    issues.push(
-      `${file}: ${statement} targets schema "${schema}", expected one of: ${allowedSchemas.join(', ')}.`,
-    );
-  }
-}
-
-function validateMigrationSchemaUsage(files, slug) {
-  const allowedSchemas = getAllowedPluginSchemas(slug);
-  const issues = [];
-  const schemaChecks = [
-    {
-      statement: 'CREATE/ALTER/DROP TABLE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:ONLY\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP VIEW',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|ALTER|DROP)\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/DROP FUNCTION',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)\s*\(/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP TYPE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+TYPE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP SEQUENCE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+SEQUENCE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP POLICY',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+POLICY\s+"?[\w-]+"?\s+ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/DROP TRIGGER',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+TRIGGER\s+"?[\w-]+"?\s+ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE INDEX',
-      regex: /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:"?[\w-]+"?\s+)?ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-  ];
-
-  for (const file of files) {
-    const sql = stripSqlComments(file.sql);
-    for (const check of schemaChecks) {
-      for (const match of sql.matchAll(check.regex)) {
-        validateScopedObjectTarget(match[1], allowedSchemas, file.file, check.statement, issues);
-      }
-    }
-  }
-
-  return issues;
-}
-
-function validatePluginMigrations(slug) {
-  const upDir = join(PLUGINS_DIR, slug, 'migrations');
-  const downDir = join(upDir, 'down');
-  const upMigrations = collectSqlFiles(upDir, `src/plugins/${slug}/migrations`);
-
-  if (!upMigrations.length) {
-    return { ok: true, errors: [] };
-  }
-
-  const errors = [];
-  const allowedSchemas = getAllowedPluginSchemas(slug);
-  const downMigrations = collectSqlFiles(downDir, `src/plugins/${slug}/migrations/down`);
-
-  if (!existsSync(downDir)) {
-    errors.push(`src/plugins/${slug}/migrations/down/: missing directory; explicit down-migrations are required.`);
-  }
-
-  const downNames = new Set(downMigrations.map((migration) => migration.name));
-  for (const migration of upMigrations) {
-    if (!downNames.has(migration.name)) {
-      errors.push(
-        `${migration.file}: missing matching down-migration at src/plugins/${slug}/migrations/down/${migration.name}.`,
-      );
-    }
-  }
-
-  const schemaDefined = upMigrations.some((migration) => {
-    const sql = stripSqlComments(migration.sql);
-    return allowedSchemas.some((schema) => {
-      const schemaPattern = new RegExp(
-        `\\bCREATE\\s+SCHEMA\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:AUTHORIZATION\\s+)?"?${escapeRegExp(schema)}"?\\b`,
-        'i',
-      );
-      return schemaPattern.test(sql);
-    });
-  });
-
-  if (!schemaDefined) {
-    errors.push(
-      `plugins/${slug}/migrations/: missing CREATE SCHEMA for plugin schema (${allowedSchemas.join(' or ')}).`,
-    );
-  }
-
-  errors.push(...validateMigrationSchemaUsage(upMigrations, slug));
-  errors.push(...validateMigrationSchemaUsage(downMigrations, slug));
-
-  return { ok: errors.length === 0, errors };
-}
-
-// ─── Registry rebuild ─────────────────────────────────────────────────────────
-
-function rebuildRegistry(allSlugs) {
-  const installed = [];
-  for (const slug of allSlugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) { warn(`src/plugins/${slug}/ not found — skipped`); continue; }
-
-    let ep = 'src/index.tsx';
-    const mp = join(dir, 'plugin.json');
-    if (existsSync(mp)) {
-      try { const m = JSON.parse(readFileSync(mp, 'utf8')); if (m.entrypoint) ep = m.entrypoint; } catch {}
-    }
-    if (!existsSync(join(dir, ep))) { warn(`Entrypoint missing: src/plugins/${slug}/${ep} — skipped`); continue; }
-    installed.push({ slug, ep });
-  }
-
-  const imports = installed.map((p, i) => `import plugin${i} from './${p.slug}/${p.ep}';`).join('\n');
-  const items   = installed.map((_, i) => `  plugin${i},`).join('\n');
-
-  writeFileSync(REGISTRY_FILE, `/**
- * AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
- *
- * This file is regenerated every time install-plugins.mjs runs.
- * It imports each installed plugin's default export (a PluginDefinition)
- * and collects them into a single array for the loader to consume.
- *
- * To add a plugin: run \`node scripts/install-plugins.mjs --add <github-url>\`
- * then rebuild and redeploy.
- */
-
-import type { PluginDefinition } from '@/types/plugin';
-
-// ─── Installed Plugin Imports ─────────────────────────────────────────────────
-${imports || '// (no plugins installed)'}
-
-
-// ─── Registry ─────────────────────────────────────────────────────────────────
-const registeredPlugins: PluginDefinition[] = [
-${items || '  // (no plugins installed)'}
-];
-
-export default registeredPlugins;
-`, 'utf8');
-
-  ok(`Registry rebuilt: ${installed.length} plugin(s) wired up`);
-  return installed;
-}
-
-// ─── Plugin API route wiring ─────────────────────────────────────────────────
-// Regenerates api/plugin-routes.ts, which is imported by api/index.ts.
-// Mirrors rebuildRegistry for the backend router.
-function rebuildPluginRoutes(allSlugs) {
-  const routes = [];
-  for (const slug of allSlugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) continue;
-    const mp = join(dir, 'plugin.json');
-    if (!existsSync(mp)) continue;
-    let apiEp;
-    try { const m = JSON.parse(readFileSync(mp, 'utf8')); apiEp = m.api_entrypoint; } catch {}
-    if (!apiEp) continue;
-    const fullEpPath = join(dir, apiEp);
-    if (!existsSync(fullEpPath)) { warn(`api_entrypoint not found: src/plugins/${slug}/${apiEp} — skipped`); continue; }
-    // Strip extension for TS import paths
-    const importPath = `../src/plugins/${slug}/${apiEp.replace(/\.[^.]+$/, '')}`;
-    const varName    = slug.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) + 'Plugin';
-    routes.push({ slug, varName, importPath });
-  }
-
-  const imports = routes.map((r) => `import ${r.varName} from '${r.importPath}';`).join('\n');
-  const mounts  = routes.map((r) => `  app.route('/api/plugin/${r.slug}', ${r.varName});`).join('\n');
-
-  writeFileSync(PLUGIN_ROUTES_FILE, `// AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
-// Re-run \`npm run plugin:install\` to regenerate.
-import type { Hono } from 'hono';
-import type { Env } from './lib/supabase';
-
-${imports || '// (no plugins with API routes installed)'}
-
-export function mountPluginRoutes(app: Hono<{ Bindings: Env }>): void {
-${mounts || '  // (no plugins with API routes installed)'}
-}
-`, 'utf8');
-
-  ok(`Plugin routes rebuilt: api/plugin-routes.ts (${routes.length} route(s))`);
-}
-
-function rebuildHookRegistry(installed) {
-  const imports = installed.map((p, i) => `import plugin${i} from './${p.slug}/${p.ep}';`).join('\n');
-  const items = installed.map((_, i) => `  ...(plugin${i}.hooks ?? []),`).join('\n');
-
-  writeFileSync(HOOKS_REGISTRY_FILE, `/**
- * AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
- *
- * This file is regenerated every time install-plugins.mjs runs.
- * It flattens build-time hook contributions from installed plugins.
- */
-
-import type { PluginHookContribution } from '@/types/plugin';
-
-${imports || '// (no plugins installed)'}
-
-const registeredHooks: PluginHookContribution[] = [
-${items || '  // (no plugin hooks installed)'}
-];
-
-export default registeredHooks;
-`, 'utf8');
-
-  ok(`Hook registry rebuilt: ${installed.length} plugin(s) scanned`);
-}
-
-function rebuildPluginMetadata(allSlugs) {
-  const entries = [];
-
-  for (const slug of allSlugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) continue;
-
-    const manifest = loadManifest(dir);
-    if (!manifest) continue;
-
-    entries.push({
-      pluginId: manifest.id ?? slug,
-      hookMetadata: Array.isArray(manifest.hook_metadata) ? manifest.hook_metadata : [],
-      apiMetadata: manifest.api_metadata ?? null,
-      capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities : [],
-    });
-  }
-
-  writeFileSync(PLUGIN_METADATA_FILE, `// AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
-// Re-run \`npm run plugin:install\` to regenerate.
-import type { PluginApiMetadata, PluginCapabilityDescriptor, PluginHookDescriptor } from '@/types/plugin';
-
-export interface RegisteredPluginMetadata {
-  pluginId: string;
-  hookMetadata: PluginHookDescriptor[];
-  apiMetadata: PluginApiMetadata | null;
-  capabilities: PluginCapabilityDescriptor[];
-}
-
-const registeredPluginMetadata: RegisteredPluginMetadata[] = ${JSON.stringify(entries, null, 2)};
-
-export function getRegisteredPluginMetadata(): RegisteredPluginMetadata[] {
-  return registeredPluginMetadata;
-}
-`, 'utf8');
-
-  ok(`Plugin metadata rebuilt: ${entries.length} plugin(s) described`);
-}
-
-// ─── Supabase Management API helpers (mirrors setup.mjs) ────────────────────
-
-function extractProjectRef(supabaseUrl) {
-  try { return new URL(supabaseUrl).hostname.split('.')[0]; }
-  catch { return null; }
-}
-
-async function runSqlQuery(projectRef, pat, sql) {
-  const res = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-    {
-      method:  'POST',
-      headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ query: sql }),
-    },
-  );
-  if (!res.ok) {
-    const rawText = await res.text().catch(() => '');
-    let detail = rawText;
-    try { const body = JSON.parse(rawText); detail = body.message || body.error || rawText; } catch {}
-    throw new Error(`HTTP ${res.status}: ${detail}`);
-  }
-  return res.json().catch(() => null);
-}
-
 // Returns sorted up-migration SQL files (direct .sql files in migrations/, ascending).
 // Down-migrations live in migrations/down/ and are handled by the uninstall script.
 function collectUpMigrations(slug) {
@@ -738,7 +417,7 @@ function collectUpMigrations(slug) {
 
 // ─── Migration apply ──────────────────────────────────────────────────────────
 
-async function applyPluginMigrations(slugs) {
+async function applyPluginMigrations(slugs, existingPat = null) {
   const allFiles = slugs.flatMap(collectUpMigrations);
   if (!allFiles.length) return;
 
@@ -755,13 +434,13 @@ async function applyPluginMigrations(slugs) {
     return;
   }
 
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY && !existingPat) {
     warn('Non-interactive mode — apply migration files manually via Supabase Dashboard → SQL Editor.');
     return;
   }
 
   const rl1 = createInterface({ input: process.stdin, output: process.stdout });
-  const doApply = await new Promise((resolve) => {
+  const doApply = existingPat ? 'y' : await new Promise((resolve) => {
     rl1.question(`${c.yellow}?${c.reset}  Apply these migrations to Supabase now? [y/N] `, (a) => { rl1.close(); resolve(a.trim().toLowerCase()); });
   });
   if (doApply !== 'y' && doApply !== 'yes') {
@@ -769,13 +448,16 @@ async function applyPluginMigrations(slugs) {
     return;
   }
 
-  log('');
-  info('Supabase personal access token (PAT) required for the Management API.');
-  log(`  Create one at: ${c.cyan}https://supabase.com/dashboard/account/tokens${c.reset}`);
-  log(`  ${c.yellow}PATs start with sbp_ or sb_pat_ — do NOT use your anon/secret keys.${c.reset}`);
-  log(`  The token is only used locally for this operation and is never stored.`);
-  log('');
-  const pat = await promptLine(`${c.cyan}Supabase PAT:${c.reset} `);
+  let pat = existingPat;
+  if (!pat) {
+    log('');
+    info('Supabase personal access token (PAT) required for the Management API.');
+    log(`  Create one at: ${c.cyan}https://supabase.com/dashboard/account/tokens${c.reset}`);
+    log(`  ${c.yellow}PATs start with sbp_ or sb_pat_ — do NOT use your anon/secret keys.${c.reset}`);
+    log(`  The token is only used locally for this operation and is never stored.`);
+    log('');
+    pat = await promptSecret(`${c.cyan}Supabase PAT:${c.reset} `);
+  }
   if (!pat || pat.length < 10) {
     warn('No PAT entered — skipping migrations. Apply manually via Supabase Dashboard → SQL Editor.');
     return;
@@ -803,23 +485,254 @@ async function applyPluginMigrations(slugs) {
   ok('Migrations applied ✓');
 }
 
-// ─── Core install loop ────────────────────────────────────────────────────────
+// ─── Binding intents (BIPS — specs/platform/binding-management.md) ──────
+
+/**
+ * Validate one manifest's binding intents at install time — a plugin with
+ * invalid intents fails the install with actionable errors, before any
+ * registry rebuild or build (config-level failures, never deploy-level).
+ * Binding management is part of a plugin: intents are declared against the
+ * deployment path (cloudflare is the current default and only path).
+ */
+function validatePluginBindingIntents(manifest, pluginId) {
+  const { mode, intents, errors, warnings, deploymentPath, intentCount } = collectManifestIntents(manifest, pluginId);
+  return { ok: errors.length === 0, mode, errors, warnings, deploymentPath, intentCount, intents };
+}
+
+/**
+ * Read the Cloudflare account id from the generated wrangler.jsonc
+ * (top-level account_id or the CF_ACCOUNT_ID var; placeholders ignored).
+ */
+function readCfAccountId() {
+  if (!existsSync(WRANGLER_CONFIG_FILE)) return null;
+  try {
+    const raw = readFileSync(WRANGLER_CONFIG_FILE, 'utf8');
+    const top = /"account_id"\s*:\s*"([^"]+)"/.exec(raw)?.[1] ?? null;
+    const varId = /"CF_ACCOUNT_ID"\s*:\s*"([^"]+)"/.exec(raw)?.[1] ?? null;
+    if (top && !top.startsWith('REPLACE_')) return top;
+    if (varId && !varId.startsWith('REPLACE_')) return varId;
+    return null;
+  } catch { return null; }
+}
+
+/**
+ * Provision plugin binding instances for this deployment (create-or-get via
+ * the Cloudflare API, recorded in the resource ledger). Non-fatal: when no
+ * CF_API_TOKEN is available the operator is pointed at the provision CLI.
+ *
+ * Runs over the FULL workspace (declarative reconcile — the ledger reflects
+ * the final declared state alone, not just the newly installed plugins), then
+ * rebuilds the registry artifacts so provisioned ids (kv) land in wrangler.jsonc.
+ */
+export async function provisionPluginBindingIntents() {
+  const status = {
+    mode: 'none',
+    workerName: null,
+    checked: [],        // { kind, name, pluginId, state, detail, command? }
+    attempted: false,
+    provisioned: [],    // created or found this run
+    pending: [],        // { kind, resolvedName, command }
+    ok: false,
+  };
+
+  const plugins = scanWorkspacePlugins();
+  if (!plugins.length) return status;
+
+  const ledger = readLedgerFromPath(ROOT);
+  const { mode, resolvedIntents, errors, warnings } = collectPluginIntents(plugins, {
+    wranglerJsoncPath: WRANGLER_CONFIG_FILE,
+    ledger,
+  });
+
+  if (errors.length > 0) {
+    fail('Binding intent errors detected (the build will fail):');
+    for (const error of errors) fail(`  ${error}`);
+    for (const intent of resolvedIntents) {
+      status.checked.push({ kind: intent.kind, pluginId: intent.pluginId, resolvedName: intent.resolvedName, state: 'invalid', detail: 'intent validation failed (see errors above)' });
+    }
+    return status;
+  }
+  if (mode !== 'intents') {
+    const legacyCount = plugins.filter((p) => p.manifest?.wrangler_bindings && !p.manifest?.wrangler_intents).length;
+    if (legacyCount > 0) {
+      warn(`${legacyCount} plugin(s) use legacy wrangler_bindings (concrete instances) — injected verbatim, no per-environment provisioning.`);
+    }
+    return status; // no wrangler_intents declared — nothing to provision
+  }
+
+  const workerName = readWorkerName(WRANGLER_CONFIG_FILE);
+  status.mode = 'intents';
+  status.workerName = workerName;
+
+  log('');
+  info(`Binding pipeline (cloudflare, environment ${c.bold}${workerName}${c.reset}) — step detection:`);
+  for (const warning of warnings) log(`    ${c.yellow}!${c.reset}  ${warning}`);
+
+  // ── Step detection: classify every intent's completion state ──
+  for (const intent of resolvedIntents) {
+    if (intent.kind === 'queues' || intent.kind === 'kv_namespaces') {
+      if (intent.instanceId) {
+        status.checked.push({ kind: intent.kind, pluginId: intent.pluginId, resolvedName: intent.resolvedName, state: 'done', detail: 'provisioned (ledger)', command: null });
+      } else {
+        status.checked.push({ kind: intent.kind, pluginId: intent.pluginId, resolvedName: intent.resolvedName, state: 'pending', detail: 'not provisioned for this environment', command: 'npm run bindings:provision' });
+      }
+    } else if (intent.kind === 'secrets_store_secrets') {
+      // Detection: a ledger row with a store_id means the link was verified in a
+      // previous run; without one, the link needs API verification (token).
+      const ledgerRow = findLedgerRow(ledger, intent.pluginId, 'secrets_store_secrets', intent.purpose);
+      const verified = Boolean(ledgerRow?.wiring?.store_id && intent.config.store_id === ledgerRow.wiring.store_id);
+      status.checked.push({
+        kind: 'secrets_store_secrets', pluginId: intent.pluginId, resolvedName: intent.config.secret_name,
+        state: verified ? 'done' : (intent.config.store_id ? 'check' : 'pending'),
+        detail: verified ? 'secret link verified (ledger)'
+          : intent.config.store_id ? 'link not yet verified against the Secrets Store'
+          : 'no Secrets Store resolved (set SECRETS_STORE_ID or declare store_id)',
+        command: verified ? null : 'npm run bindings:provision',
+      });
+    } else {
+      status.checked.push({ kind: intent.kind, pluginId: intent.pluginId, resolvedName: null, state: 'none', detail: 'no instance needed', command: null });
+    }
+  }
+
+  const unprovisioned = listUnprovisionedIntents(resolvedIntents);
+  const secretsToCheck = status.checked.filter((s) => s.kind === 'secrets_store_secrets' && s.state === 'check');
+  if (!unprovisioned.length && !secretsToCheck.length) {
+    status.ok = true;
+    ok('All plugin binding instances are provisioned for this environment.');
+    for (const step of status.checked) {
+      if (step.state === 'done') log(`    ${c.green}v${c.reset} ${step.kind}: ${c.bold}${step.resolvedName ?? '(no instance)'}${c.reset}  — ${step.detail}`);
+    }
+    return status;
+  }
+
+  log('');
+  info(`Binding steps incomplete for this environment: ${unprovisioned.length} instance(s), ${secretsToCheck.length} secret link(s) to verify:`);
+  for (const step of status.checked) {
+    if (step.state === 'done') {
+      log(`    ${c.green}v${c.reset} ${step.kind}: ${c.bold}${step.resolvedName ?? '(no instance)'}${c.reset}  — ${step.detail}`);
+    } else if (step.state !== 'none') {
+      log(`    ${c.yellow}!${c.reset} ${step.kind}: ${c.bold}${step.resolvedName ?? '(unknown)'}${c.reset}  — ${step.detail}`);
+    }
+  }
+
+  const env = loadDotEnv();
+  const token = process.env.CF_API_TOKEN
+    ?? process.env.CLOUDFLARE_API_TOKEN
+    ?? env['CF_API_TOKEN']
+    ?? env['CLOUDFLARE_API_TOKEN'];
+  if (!token) {
+    warn('No CF_API_TOKEN found (env or .env) — provisioning skipped. Run manually:');
+    warn('  npm run bindings:provision   (prompts for the token interactively)');
+    status.pending.push(...status.checked
+      .filter((s) => s.state !== 'done' && s.state !== 'none')
+      .map((s) => ({ kind: s.kind, resolvedName: s.resolvedName, command: s.command ?? 'npm run bindings:provision' })));
+    return status;
+  }
+
+  const accountId = readCfAccountId();
+  if (!accountId) {
+    warn('No Cloudflare account id in wrangler.jsonc — provisioning skipped. Run npm run setup first.');
+    status.pending.push(...status.checked
+      .filter((s) => s.state !== 'done' && s.state !== 'none')
+      .map((s) => ({ kind: s.kind, resolvedName: s.resolvedName, command: s.command ?? 'npm run bindings:provision' })));
+    return status;
+  }
+
+  status.attempted = true;
+  try {
+    const summary = await provisionBindingIntents(resolvedIntents, { token, accountId, root: ROOT, workerName });
+    for (const name of summary.created) {
+      status.provisioned.push(name);
+      ok(`  created: ${c.bold}${name}${c.reset}`);
+      const step = status.checked.find((s) => s.resolvedName === name);
+      if (step) { step.state = 'done'; step.detail = 'provisioned this run (created)'; step.command = null; }
+    }
+    for (const name of summary.got) {
+      status.provisioned.push(name);
+      ok(`  already exists: ${c.bold}${name}${c.reset}`);
+      const step = status.checked.find((s) => s.resolvedName === name);
+      if (step) { step.state = 'done'; step.detail = 'provisioned this run (already existed)'; step.command = null; }
+    }
+    for (const secret of summary.verifiedSecrets) {
+      const step = status.checked.find((s) => s.kind === 'secrets_store_secrets' && s.resolvedName === secret);
+      if (step) { step.state = 'done'; step.detail = 'secret link verified'; }
+    }
+    for (const secret of summary.missingSecrets) {
+      status.pending.push({
+        kind: 'secrets_store_secrets',
+        resolvedName: secret,
+        command: `npx wrangler secrets-store secret create <STORE_ID> --name ${secret} --scopes workers --remote`,
+      });
+    }
+    status.pending.push(...status.checked
+      .filter((s) => s.state !== 'done' && s.state !== 'none' && s.kind !== 'secrets_store_secrets')
+      .map((s) => ({ kind: s.kind, resolvedName: s.resolvedName, command: s.command ?? 'npm run bindings:provision' })));
+
+    ok(`Binding ledger updated (${summary.rows.length} resource row(s)).`);
+
+    // Rebuild so provisioned ids (kv namespace ids from the ledger) are
+    // injected into the generated wrangler.jsonc section.
+    rebuildWorkspacePluginArtifacts();
+    status.ok = status.pending.length === 0;
+    if (status.ok) {
+      ok('Plugin binding instances provisioned and wrangler.jsonc resolved.');
+    } else {
+      warn(`${status.pending.length} binding step(s) still pending (see below).`);
+    }
+  } catch (e) {
+    fail(`Provisioning failed: ${e.message}`);
+    warn('Fix the error and re-run: npm run bindings:provision');
+    for (const step of status.checked) {
+      if (step.state !== 'done' && step.state !== 'none' && !step.command) {
+        step.state = 'pending'; step.detail = 'aborted (provisioning error)'; step.command = 'npm run bindings:provision';
+      }
+    }
+  }
+
+  return status;
+}
+
+/**
+ * Run the binding consistency audit and print the verdict. Returns the audit
+ * plus the grouped pending commands for the manual-steps summary.
+ */
+function runBindingAudit() {
+  const plugins = scanWorkspacePlugins();
+  const ledger = readLedgerFromPath(ROOT);
+  const config = parseJsoncConfig(existsSync(WRANGLER_CONFIG_FILE) ? readFileSync(WRANGLER_CONFIG_FILE, 'utf8') : null);
+
+  const audit = auditBindingConsistency({
+    plugins,
+    wranglerJsoncPath: WRANGLER_CONFIG_FILE,
+    ledger,
+    config,
+  });
+
+  return audit;
+}
+
+// ─── Core install loop ───────────────────────────────────────────────
 // entries: array of { id, repo_url, download_url?, ref? }
-// supabase: client or null (DB status updates skipped when null)
-async function _doInstall(entries, supabase) {
+// db: PAT DB facade or null (DB status updates skipped when null)
+async function _doInstall(entries, db) {
   mkdirSync(PLUGINS_DIR, { recursive: true });
   const results = { ok: [], failed: [] };
 
   for (const plugin of entries) {
     log(`\n${c.bold}Installing: ${plugin.id}${c.reset}`);
-    const parsed = parseGitHubUrl(plugin.repo_url);
-    if (!parsed) { fail(`  Invalid repo_url: ${plugin.repo_url}`); results.failed.push(plugin.id); continue; }
+    const targetDir = join(PLUGINS_DIR, plugin.id);
+    const isLocal   = plugin.local && existsSync(targetDir);
+    const parsed    = parseGitHubUrl(plugin.repo_url);
+    if (!parsed && !isLocal) { fail(`  Invalid repo_url: ${plugin.repo_url ?? '(none)'}`); results.failed.push(plugin.id); continue; }
 
-    const zipUrl    = plugin.download_url ?? getZipUrl(parsed.owner, parsed.repo, plugin.ref ?? 'HEAD');
+    const zipUrl    = parsed ? (plugin.download_url ?? getZipUrl(parsed.owner, parsed.repo, plugin.ref ?? 'HEAD')) : null;
     let   activeId  = plugin.id;
-    const targetDir = join(PLUGINS_DIR, activeId);
     try {
-      await downloadAndExtract(zipUrl, targetDir);
+      if (isLocal) {
+        info(`  Workspace plugin — using existing plugins/${activeId}/ folder (no download)`);
+      } else {
+        await downloadAndExtract(zipUrl, targetDir);
+      }
       const m = loadManifest(targetDir);
       if (m) {
         ok(`  ${m.name} v${m.version} by ${m.author} (${m.license})`);
@@ -840,12 +753,28 @@ async function _doInstall(entries, supabase) {
           }
         }
 
+        // ── Ensure DB registration (workspace-first flow) ────────────────
+        await ensurePluginRegistered(db, activeId, m, plugin);
+
         info('  Validating migrations…');
-        const migrationValidation = validatePluginMigrations(activeId);
+        const migrationValidation = validatePluginMigrations(PLUGINS_DIR, activeId);
         if (!migrationValidation.ok) {
           throw new Error(`Migration validation failed:\n- ${migrationValidation.errors.join('\n- ')}`);
         }
         ok('  Migrations validated');
+
+        // ── Binding intent validation (BIPS) ──────
+        info('  Validating binding intents…');
+        const intentValidation = validatePluginBindingIntents(m, activeId);
+        if (!intentValidation.ok) {
+          throw new Error(`Binding intent validation failed:\n- ${intentValidation.errors.join('\n- ')}`);
+        }
+        if (intentValidation.mode === 'intents') {
+          ok(`  Binding intents validated (${intentValidation.intentCount} intent(s), deployment path: ${intentValidation.deploymentPath})`);
+        } else if (intentValidation.mode === 'legacy') {
+          warn('  Uses legacy wrangler_bindings (concrete instances) — migrate to wrangler_intents for per-environment provisioning.');
+          for (const warning of intentValidation.warnings) warn(`  ${warning}`);
+        }
 
         // ── npm dependencies ──────────────────────────────────────────────────
         if (m.required_npm_dependencies && Object.keys(m.required_npm_dependencies).length > 0) {
@@ -891,7 +820,7 @@ async function _doInstall(entries, supabase) {
 
         // ── config schema reminder ────────────────────────────────────────────
         if (Array.isArray(m.config_schema) && m.config_schema.length > 0) {
-          await syncPluginConfigSchema(supabase, activeId, m.config_schema);
+          await syncPluginConfigSchema(db, activeId, m.config_schema);
           log('');
           info(`  Configuration keys for "${activeId}":`);
           m.config_schema.forEach((field) => {
@@ -901,30 +830,51 @@ async function _doInstall(entries, supabase) {
           });
           log(`  → Set these in the Plugins admin UI at /plugins`);
         } else {
-          await syncPluginConfigSchema(supabase, activeId, []);
+          await syncPluginConfigSchema(db, activeId, []);
         }
 
         // ── Update DB status ──────────────────────────────────────────────────
-        await markPluginInstalled(supabase, activeId, m.version);
+        await markPluginInstalled(db, activeId, m.version);
+        await recordPluginCodeState(db, activeId, m.version);
+        await recordPluginClaimsState(db, activeId, m);
       }
       results.ok.push(activeId);
     } catch (e) {
       fail(`  Failed: ${e.message}`);
       const failedDir = join(PLUGINS_DIR, activeId);
       if (existsSync(failedDir)) {
-        try {
-          await rm(failedDir, { recursive: true, force: true });
-          warn(`  Removed invalid plugin directory: src/plugins/${activeId}/`);
-        } catch {}
+        if (plugin.local && existsSync(failedDir)) {
+          // Workspace plugins are the user's source of truth (separate git repo)
+          // — never delete them on failure, only downloaded artifacts.
+          warn(`  Kept workspace folder plugins/${activeId}/ — fix the errors above and re-run.`);
+        } else {
+          try {
+            await rm(failedDir, { recursive: true, force: true });
+            warn(`  Removed invalid plugin directory: src/plugins/${activeId}/`);
+          } catch {}
+        }
       }
-      await markPluginError(supabase, plugin.id, e.message);
+      await markPluginError(db, plugin.id, e.message);
       results.failed.push(plugin.id);
     }
   }
 
   // Rebuild generated plugin artifacts from the current /plugins workspace folder.
   rebuildWorkspacePluginArtifacts();
-  await applyPluginMigrations(results.ok);
+  await applyPluginMigrations(results.ok, db?.pat ?? null);
+
+  // Provision plugin binding instances for this deployment (BIPS Layer 3),
+  // then reconcile the generated wrangler.jsonc against provisioned ids.
+  await provisionPluginBindingIntents();
+
+  // Publish binding state to the deployment-state registry (declarative,
+  // idempotent — mirrors the ledger).
+  await recordPluginBindingsState(db);
+
+  // ── Full consistency audit over ALL moving parts (dynamic, zero manual checks) ──
+  // Covers: intent validity, provisioning completeness, Secrets Store resolution,
+  // ledger freshness (stale/orphan rows), and generated-config sync.
+  const audit = runBindingAudit();
 
   log(`\n${c.bold}Done${c.reset}`);
   if (results.ok.length)     ok(`  Installed : ${results.ok.join(', ')}`);
@@ -943,29 +893,43 @@ async function _doInstall(entries, supabase) {
     }
   }
 
+  // ── Consistency verdict + dynamic manual steps ──
+  log('');
+  log(`${c.bold}Consistency check${c.reset} (environment: ${c.bold}${audit.workerName ?? 'specy'}${c.reset}):`);
+  const { pendingCommands, allClear } = printBindingAuditReport(audit, { log: (m) => log(`  ${m}`) });
+
   log('');
   info('Remaining manual steps:');
-  log('  1. Set any required plugin config values at /plugins');
-  log('  2. If migrations were skipped above: apply .sql files via Supabase Dashboard → SQL Editor');
-  log('  3. Deploy  (e.g. npx wrangler deploy)');
+  let stepNo = 1;
+  log(`  ${stepNo++}. Set any required plugin config values at /plugins`);
+  log(`  ${stepNo++}. If migrations were skipped above: apply .sql files via Supabase Dashboard → SQL Editor`);
+
+  if (audit.consistent) {
+    ok(`All moving parts consistent — ready to deploy.`);
+  } else {
+    log(`  ${stepNo++}. Resolve the pending binding items above — run:`);
+    for (const [command, targets] of pendingCommands) {
+      log(`       ${c.cyan}${command}${c.reset}`);
+      for (const target of targets) log(`       ${c.dim}→ ${target}${c.reset}`);
+    }
+    log(`     …then re-run ${c.cyan}npm run build${c.reset} — the audit re-checks everything automatically.`);
+  }
+
+  log(`  ${stepNo++}. Deploy  (e.g. npx wrangler deploy)`);
   log('');
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
-// List now also needs login to see full DB data; gracefully falls back if no client.
+// List reads DB data via the Supabase PAT; gracefully falls back if no PAT is available.
 async function cmdList() {
-  const client = createAnonClient();
-  if (client) {
-    info('Fetching plugin list from Supabase… (login required)');
+  const db = await createPatDb();
+  if (db) {
     try {
-      await loginInteractive(client);
-      const { data: rows, error } = await client
-        .from('plugins')
-        .select('slug, name, version, status, installed_at')
-        .order('name');
-      await client.auth.signOut();
-      if (error) throw error;
+      const rows = await patQuery(
+        db,
+        `SELECT slug, name, version, status, installed_at FROM plugins ORDER BY name`,
+      );
       if (!rows?.length) { info('No plugins in database.'); return; }
       log(`\n${c.bold}Plugins (Supabase + local):${c.reset}`);
       for (const row of rows) {
@@ -975,7 +939,7 @@ async function cmdList() {
       }
       log('');
       return;
-    } catch (e) { await client.auth.signOut().catch(() => {}); warn(`Could not fetch from Supabase: ${e.message}`); }
+    } catch (e) { warn(`Could not fetch from Supabase: ${e.message}`); }
   }
   // Fallback — local only
   const plugins = scanWorkspacePlugins();
@@ -1005,42 +969,55 @@ async function cmdAdd(repoUrl) {
     ok(`Added "${id}" to plugins.json`);
   }
 
-  const client = createAnonClient();
-  const supabase = client ? (await loginInteractive(client), client) : null;
-  try {
-    await _doInstall([entry], supabase);
-  } finally {
-    if (supabase) await supabase.auth.signOut();
-  }
+  const db = await createPatDb();
+  await _doInstall([entry], db);
 }
 
-// Default: fetch from DB → interactive picker
+// Default: workspace plugins first, then DB-registered entries → interactive picker
 async function cmdPickAndInstall(installAll = false) {
-  const client = createAnonClient();
-  if (!client) {
-    fail('Supabase URL or publishable key not found in .env.');
-    info('Run --local to install from plugins.json without a database connection.');
-    process.exit(1);
+  if (!getSupabaseUrl()) {
+    warn('SUPABASE_URL not found — installing from the /plugins workspace only.');
+  }
+  const db = getSupabaseUrl() ? await createPatDb() : null;
+
+  // 1. Workspace plugins (plugins/*/plugin.json) take precedence.
+  const workspace = scanWorkspacePlugins();
+  const wsCandidates = workspace.map(({ id, manifest }) => ({
+    slug: id,
+    name: manifest.name ?? id,
+    description: manifest.description ?? null,
+    repo_url: manifest.repository ?? null,
+    download_url: manifest.download_url ?? undefined,
+    local: true,
+  }));
+
+  // 2. DB-registered plugins as an additional source.
+  let registered = [];
+  if (db) {
+    info('Fetching registered plugins from Supabase…');
+    try { registered = await fetchRegisteredPlugins(db); }
+    catch (e) { warn(`Could not fetch plugins from Supabase: ${e.message}`); }
   }
 
-  await loginInteractive(client);
+  // 3. Merge — workspace entries first, DB-only entries after.
+  const wsIds = new Set(wsCandidates.map((w) => w.slug));
+  const merged = [...wsCandidates, ...registered.filter((r) => !wsIds.has(r.slug))];
 
-  info('Fetching registered plugins from Supabase…');
-  let registered;
-  try { registered = await fetchRegisteredPlugins(client); }
-  catch (e) { await client.auth.signOut(); die(`Failed to fetch plugins from Supabase: ${e.message}`); }
+  if (!merged.length) {
+    info('No plugins found — no valid plugin folders in /plugins and no entries with status "registered" in the database.');
+    return;
+  }
 
   let selected;
   if (installAll) {
-    if (!registered.length) { info('No plugins with status "registered" found.'); await client.auth.signOut(); return; }
-    selected = registered;
+    selected = merged;
     log('');
-    info(`Installing all ${selected.length} registered plugin(s):`);
-    selected.forEach((r) => log(`  ${c.cyan}+${c.reset}  ${r.name}  (${r.slug})${r.description ? '  — ' + r.description : ''}`));
+    info(`Installing all ${selected.length} plugin(s):`);
+    merged.forEach((r) => log(`  ${c.cyan}+${c.reset}  ${r.name}  (${r.slug})${r.local ? '  [workspace]' : ''}${r.description ? '  — ' + r.description : ''}`));
     log('');
   } else {
-    selected = await pickPlugins(registered);
-    if (!selected || !selected.length) { await client.auth.signOut(); return; }
+    selected = await pickPlugins(merged);
+    if (!selected || !selected.length) return;
   }
 
   const entries = selected.map((row) => ({
@@ -1048,15 +1025,12 @@ async function cmdPickAndInstall(installAll = false) {
     repo_url:     row.repo_url,
     download_url: row.download_url ?? undefined,
     ref:          'HEAD',
+    local:        row.local ?? false,
   }));
 
-  syncToPluginsJson(entries);
-  try {
-    await _doInstall(entries, client);
-  } finally {
-    await client.auth.signOut();
-    ok('Logged out.');
-  }
+  // plugins.json tracks remote sources only — workspace plugins live on disk.
+  syncToPluginsJson(entries.filter((e) => !e.local));
+  await _doInstall(entries, db);
 }
 
 // Fallback: install from plugins.json without DB login
@@ -1070,30 +1044,48 @@ async function cmdLocalInstall() {
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+// Wraps command dispatch so die()'s FatalError sentinel exits cleanly (exit code
+// already set to 1) instead of surfacing as an unhandled rejection — see die().
+async function runCommand(fn) {
+  try {
+    await fn();
+  } catch (e) {
+    if (e instanceof FatalError) return;
+    throw e;
+  }
+}
+
+// Only dispatch when invoked directly — importing this module (e.g. from
+// update.mjs for the binding-provisioning step) must be side-effect free.
+import { pathToFileURL } from 'url';
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
   log('');
   log('Usage:');
-  log('  node scripts/install-plugins.mjs               Fetch from DB → interactive picker');
-  log('  node scripts/install-plugins.mjs --all         Fetch from DB → install all registered (CI-safe)');
+  log('  node scripts/install-plugins.mjs               Workspace plugins + DB registry → interactive picker');
+  log('  node scripts/install-plugins.mjs --all         Install all (workspace + DB registry, CI-safe)');
   log('  node scripts/install-plugins.mjs --local       Install remote entries from plugins.json (no DB required)');
   log('  node scripts/install-plugins.mjs --add <url>   Register + install a GitHub repo directly');
   log('  node scripts/install-plugins.mjs --list        List plugins (DB status + local state)');
   log('');
   log('Environment (.env or .env.local):');
   log('  VITE_SUPABASE_URL              Supabase project URL');
-  log('  VITE_SUPABASE_PUBLISHABLE_KEY  Supabase anon/publishable key');
+  log('  SUPABASE_ACCESS_TOKEN          Supabase PAT (optional — prompted if missing)');
   log('  GITHUB_TOKEN                   GitHub PAT (optional, avoids rate-limits)');
-  log('  Note: DB operations use interactive login — no service key needed.');
+  log('  Note: DB operations use a Supabase PAT via the Management API — never stored.');
   log('');
 } else if (args.includes('--list')) {
-  await cmdList();
+  await runCommand(() => cmdList());
 } else if (args.includes('--add')) {
-  await cmdAdd(args[args.indexOf('--add') + 1]);
+  await runCommand(() => cmdAdd(args[args.indexOf('--add') + 1]));
 } else if (args.includes('--all')) {
-  await cmdPickAndInstall(true);
+  await runCommand(() => cmdPickAndInstall(true));
 } else if (args.includes('--local')) {
-  await cmdLocalInstall();
+  await runCommand(() => cmdLocalInstall());
 } else {
-  await cmdPickAndInstall(false);
+  await runCommand(() => cmdPickAndInstall(false));
+}
 }

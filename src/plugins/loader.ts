@@ -6,6 +6,7 @@
  */
 
 import registeredPlugins from './registry';
+import { pluginClaimMatches } from './claimMatching';
 import type {
   PluginAdminConnectionSection,
   PluginApiMetadata,
@@ -39,18 +40,24 @@ function isFlagEnabled(
   return featureFlags[flag] === true;
 }
 
-export function isPluginAccessible(plugin: PluginDefinition, userRoles?: string[]): boolean {
+export function isPluginAccessible(
+  plugin: PluginDefinition,
+  userRoles?: string[],
+  tokenClaims?: Record<string, unknown> | null,
+): boolean {
   const requiredRoles = plugin.access?.anyRole;
-
-  if (!requiredRoles?.length) {
-    return true;
+  if (requiredRoles?.length) {
+    if (!userRoles?.length || !requiredRoles.some((role) => userRoles.includes(role))) {
+      return false;
+    }
   }
 
-  if (!userRoles?.length) {
-    return false;
+  const requiredClaims = plugin.access?.claims;
+  if (requiredClaims && Object.keys(requiredClaims).length > 0) {
+    if (!pluginClaimMatches(plugin.id, requiredClaims, tokenClaims)) return false;
   }
 
-  return requiredRoles.some((role) => userRoles.includes(role));
+  return true;
 }
 
 /**
@@ -122,15 +129,24 @@ export function getPluginSidebarTree(group?: 'main' | 'admin', userRoles?: strin
  * Returns all registered plugin definitions.
  * Useful for listing installed plugins in the Plugins admin page.
  */
-export function getPlugins(userRoles?: string[]): PluginDefinition[] {
-  return registeredPlugins.filter((plugin) => isPluginAccessible(plugin, userRoles));
+export function getPlugins(
+  userRoles?: string[],
+  tokenClaims?: Record<string, unknown> | null,
+): PluginDefinition[] {
+  return registeredPlugins.filter((plugin) => isPluginAccessible(plugin, userRoles, tokenClaims));
 }
 
 /**
  * Returns all build-time hook contributions, optionally filtered by target.
+ * `tokenClaims` (full decoded JWT payload) enables `access.claims`-gated
+ * plugins' hooks — fail-closed when omitted (see pluginClaimMatches).
  */
-export function getPluginHooks(target?: string, userRoles?: string[]): PluginHookContribution[] {
-  const hooks = getPlugins(userRoles).flatMap((plugin) => plugin.hooks ?? []);
+export function getPluginHooks(
+  target?: string,
+  userRoles?: string[],
+  tokenClaims?: Record<string, unknown> | null,
+): PluginHookContribution[] {
+  const hooks = getPlugins(userRoles, tokenClaims).flatMap((plugin) => plugin.hooks ?? []);
   if (!target) return hooks;
   return hooks.filter((hook) => hook.target === target);
 }
