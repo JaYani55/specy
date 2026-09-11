@@ -20,7 +20,7 @@ with overlapping responsibilities and duplicated helpers:
 | `npm run update:plugins` | `scripts/update-plugins.mjs` | plugin git pull + plugin migrations + status |
 | `npm run plugin:install` | `scripts/install-plugins.mjs` | plugin download/deps/migrations/bindings |
 | `npm run plugin:remove` | `scripts/uninstall-plugin.mjs` | plugin removal + downmigrations + teardown |
-| `npm run deploy` | `scripts/deploy.mjs` | consistency audit → drift → wrangler deploy |
+| `npm run deploy` | `scripts/deploy.mjs` | **build (always, unless `--skip-build`)** → consistency audit → drift → wrangler deploy |
 | `npm run migrations` | `scripts/migrate.mjs` | core migrations (workspace → Supabase, no git gate) |
 | `npm run bindings:provision` / `:check` | `scripts/provision-bindings.mjs` | cloud resource provisioning / drift |
 | `npm run auth:check` | `scripts/auth-diagnostics.mjs` | auth-hook diagnostics |
@@ -68,7 +68,7 @@ script (one implementation per operation):
 | Update core + plugins | `scripts/update.mjs` |
 | Update core only | `scripts/cf-update.mjs` |
 | Update plugins only | `scripts/update-plugins.mjs --all` |
-| Install / remove plugin | `scripts/install-plugins.mjs` / `uninstall-plugin.mjs` |
+| Install / remove plugin | `scripts/install-plugins.mjs` / `uninstall-plugin.mjs` (TUI asks for plugin + mode: unregister-keep-files or full delete) |
 | Provision / drift | `scripts/provision-bindings.mjs` |
 | Apply core migrations | `scripts/migrate.mjs` |
 | Deploy | `scripts/deploy.mjs` |

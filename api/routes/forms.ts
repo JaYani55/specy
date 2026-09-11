@@ -368,19 +368,10 @@ const resolveFormDisplayName = async (
   form: FormRow,
 ): Promise<string> => {
   if (form.tenant_id) {
-    // Preferred: the PluraDash organization name of the tenant. The pluradash schema
-    // only exists when the plugin is installed, so any error falls through gracefully.
-    const { data: organization, error: organizationError } = await admin
-      .schema('pluradash')
-      .from('organizations')
-      .select('name')
-      .eq('tenant_id', form.tenant_id)
-      .maybeSingle();
-
-    if (!organizationError && typeof organization?.name === 'string' && organization.name.trim()) {
-      return organization.name.trim();
-    }
-
+    // NOTE: previously the PluraDash organization name was preferred here via a
+    // direct pluradash-schema query — removed (core must not reference plugin
+    // schemas, AGENTS.md §4). Display names fall back to the tenant name; a
+    // plugin wanting to rename tenants must do so via a documented hook target.
     const { data: tenant, error: tenantError } = await admin
       .from('tenants')
       .select('name')

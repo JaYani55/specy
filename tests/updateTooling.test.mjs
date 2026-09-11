@@ -1,13 +1,21 @@
 // @ts-check
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '..');
 
-test('update tooling: migration validator accepts the pluradash workspace plugin', async () => {
+// The pluradash plugin is workspace *state*, not repo truth — it may be
+// uninstalled (parked in plugins/.uninstalled/) in a given checkout. Skip the
+// workspace-dependent assertions when the directory is absent instead of
+// failing (or vacuously passing) on clean workspaces.
+const PLURADASH_DIR = join(ROOT, 'plugins', 'pluradash');
+const pluradashInstalled = () => existsSync(PLURADASH_DIR);
+
+test('update tooling: migration validator accepts the pluradash workspace plugin', { skip: !pluradashInstalled() ? 'pluradash not installed in this workspace' : false }, async () => {
   const { validatePluginMigrations } = await import(pathToFileURL(join(ROOT, 'scripts/lib/migration-validation.mjs')).href);
   const result = validatePluginMigrations(join(ROOT, 'plugins'), 'pluradash');
   assert.equal(result.ok, true, `expected pluradash migrations to validate, got: ${result.errors.join(' | ')}`);
@@ -35,7 +43,7 @@ test('update tooling: validator rejects plugin DDL targeting public schema', asy
   }
 });
 
-test('update tooling: detectUpdatablePlugins finds workspace git plugins', async () => {
+test('update tooling: detectUpdatablePlugins finds workspace git plugins', { skip: !pluradashInstalled() ? 'pluradash not installed in this workspace' : false }, async () => {
   const { detectUpdatablePlugins } = await import(pathToFileURL(join(ROOT, 'scripts/update-plugins.mjs')).href);
   const detected = detectUpdatablePlugins();
   const pluradash = detected.find((d) => d.id === 'pluradash');

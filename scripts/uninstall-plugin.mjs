@@ -6,13 +6,15 @@
  *
  * Usage:
  *   node scripts/uninstall-plugin.mjs <plugin-id>               # remove plugin
+ *   node scripts/uninstall-plugin.mjs <plugin-id> --keep-files  # unregister only, keep plugins/{id}/
  *   node scripts/uninstall-plugin.mjs <plugin-id> --prune-deps  # also npm uninstall its deps
  *   node scripts/uninstall-plugin.mjs --list                    # show installed plugins
  *   node scripts/uninstall-plugin.mjs --help                    # show usage
  *
  * What it does:
  *   1. Reads the plugin manifest to collect deps, api_entrypoint, and migrations
- *   2. Deletes plugins/{id}/
+ *   2. Deletes plugins/{id}/  (--keep-files: moves it to plugins/.uninstalled/{id}/
+ *      instead — unregistered but re-installable by moving the directory back)
  *   3. Removes the entry from plugins.json
  *   4. Rebuilds generated plugin registry artifacts
  *   5. (--prune-deps) npm-uninstalls packages not used by any other plugin
@@ -24,7 +26,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
-import { rm } from 'fs/promises';
+import { cp, mkdir, rename, rm } from 'fs/promises';
 import { spawn } from 'child_process';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -40,6 +42,7 @@ import {
   patQuery,
   runSqlQuery,
 } from './lib/remote-sql.mjs';
+import { unexposePluginSchema } from './lib/exposed-schemas.mjs';
 import {
   collectSqlFiles,
   escapeRegExp,
@@ -141,8 +144,12 @@ async function applyDownMigrations(slug, downMigs, hasUpMigs, existingPat = null
     return false;
   }
 
-  const rl1 = createInterface({ input: process.stdin, output: process.stdout });
+  // Create the readline interface ONLY when actually prompting — a dangling
+  // interface on process.stdin keeps the event loop alive, so the process
+  // would never exit (which froze the setup TUI's spawnSync at the deploy
+  // instruction when a PAT was already available via existingPat).
   const doApply = existingPat ? 'y' : await new Promise((resolve) => {
+    const rl1 = createInterface({ input: process.stdin, output: process.stdout });
     rl1.question(`${c.yellow}?${c.reset}  Apply these down-migrations now? [y/N] `, (a) => { rl1.close(); resolve(a.trim().toLowerCase()); });
   });
   if (doApply !== 'y' && doApply !== 'yes') {
@@ -283,7 +290,50 @@ function confirm(question) {
   });
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
+// ─── Commands ───────────────────────────────────────────────────────────────
+
+const RETRYABLE_FS_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EXDEV']);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Move a directory with Windows-safe fallbacks.
+ *
+ * `rename()` on Windows fails with EBUSY/EPERM when ANY file inside the tree
+ * has an open handle (editor file watchers, a running `npm run dev`, the
+ * search indexer). Strategy:
+ *   1. retry the rename a few times — the handles are often transient
+ *   2. fall back to recursive copy + delete (copying tolerates read handles)
+ *   3. if even the delete fails, remove the copy again and throw — the caller
+ *      aborts BEFORE un-registering anything, so no half-registered state
+ *
+ * @returns {'rename'|'copy'} which strategy succeeded
+ */
+async function moveDirKeepFiles(src, dest) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await rename(src, dest);
+      return 'rename';
+    } catch (e) {
+      if (!RETRYABLE_FS_CODES.has(e.code) || attempt === 5) break;
+      await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
+  }
+  await cp(src, dest, { recursive: true, force: true });
+  try {
+    await rm(src, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    return 'copy';
+  } catch (e) {
+    // Undo the copy — otherwise the plugin would exist twice and, worse,
+    // remain registered from its original location. Retry a little, then warn.
+    try {
+      await rm(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    } catch {
+      warn(`Could not remove the partial copy at ${dest} — it will be overwritten by the next attempt.`);
+    }
+    throw e;
+  }
+}
 
 async function cmdList() {
   const plugins = scanWorkspacePlugins();
@@ -295,7 +345,7 @@ async function cmdList() {
   log('');
 }
 
-async function cmdUninstall(pluginId, pruneDepsFlag) {
+async function cmdUninstall(pluginId, pruneDepsFlag, keepFiles = false) {
   const data    = readPluginsJson();
   const plugins = data.plugins ?? [];
   const entry   = plugins.find((p) => p.id === pluginId) ?? null;
@@ -324,7 +374,10 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   log('');
 
   if (!process.argv.includes('--yes') && !process.argv.includes('-y')) {
-    const confirmed = await confirm(`Remove "${pluginId}" and delete plugins/${pluginId}/?`);
+    const question = keepFiles
+      ? `Unregister "${pluginId}" and move plugins/${pluginId}/ out of the registry (files kept)?`
+      : `Remove "${pluginId}" and delete plugins/${pluginId}/?`;
+    const confirmed = await confirm(question);
     if (!confirmed) { info('Aborted.'); process.exitCode = 0; return; }
   }
 
@@ -342,10 +395,30 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     warn('This legacy plugin does not meet the current migration rules. Filesystem uninstall will continue, but database cleanup must be reviewed manually.');
   }
 
-  // ── 2. Delete directory ────────────────────────────────────────────────────
+  // ── 2. Remove the directory from the workspace registry ──────────────────
+  // The generated registries (src/plugins/registry.ts, api/plugin-routes.ts, …)
+  // are built from every plugins/<dir> with a manifest — removing the
+  // plugins.json entry alone never unregisters anything. Full uninstall
+  // deletes the directory; --keep-files moves it to plugins/.uninstalled/<id>/
+  // (gitignored via plugins/*/), so the code survives and can be re-installed
+  // by moving it back into plugins/.
   if (existsSync(pluginDir)) {
-    await rm(pluginDir, { recursive: true, force: true });
-    ok(`Deleted plugins/${pluginId}/`);
+    if (keepFiles) {
+      const parkedDir = join(PLUGINS_DIR, '.uninstalled', pluginId);
+      try {
+        await mkdir(dirname(parkedDir), { recursive: true });
+        const strategy = await moveDirKeepFiles(pluginDir, parkedDir);
+        ok(`Moved plugins/${pluginId}/ → plugins/.uninstalled/${pluginId}/  (kept for re-install, via ${strategy})`);
+      } catch (e) {
+        die(`Could not move plugins/${pluginId}/ to plugins/.uninstalled/ (${e.code ?? e.message}).\n`
+          + `A process still holds the directory open — close editors, dev servers (npm run dev),\n`
+          + `and terminals with a CWD inside plugins/${pluginId}/, then retry.\n`
+          + `Aborting — nothing was unregistered.`);
+      }
+    } else {
+      await rm(pluginDir, { recursive: true, force: true });
+      ok(`Deleted plugins/${pluginId}/`);
+    }
   } else {
     warn(`plugins/${pluginId}/ not found — already deleted?`);
   }
@@ -361,6 +434,12 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   rebuildWorkspacePluginArtifacts();
 
   // ── 5. Clean plugin-deps.json ──────────────────────────────────────────────
+  // --keep-files keeps the npm packages installed (re-install readiness);
+  // --prune-deps combined with --keep-files is ignored with a notice.
+  const effectivePrune = keepFiles ? false : pruneDepsFlag;
+  if (keepFiles && pruneDepsFlag) {
+    warn('--prune-deps ignored in --keep-files mode — packages stay installed for re-install.');
+  }
   const pluginDeps = readPluginDeps();
   if (pluginDeps[pluginId]) {
     const pkgNames = Object.keys(pluginDeps[pluginId]);
@@ -369,7 +448,7 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     ok(`Removed "${pluginId}" from plugin-deps.json`);
 
     // ── 6. Optional: prune orphaned npm deps ──────────────────────────────────
-    if (pruneDepsFlag) {
+    if (effectivePrune) {
       await pruneDeps(pluginId);
     } else if (pkgNames.length > 0) {
       warn(`npm packages from this plugin were NOT removed (pass --prune-deps to remove them):`);
@@ -381,6 +460,37 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     if (pkgs.length) {
       warn(`"${pluginId}" not in plugin-deps.json — attempting prune from manifest`);
       await pruneDeps(pluginId);
+    }
+  }
+
+  // ── 5b. Un-expose the plugin schema BEFORE the down-migrations drop it ────
+  // PostgREST exposure: the install flow exposes the plugin schema in the
+  // Supabase API settings (pgrst.db_schemas / platform config). Down-migrations
+  // drop the schema — if it is still exposed at that moment, PostgREST's
+  // schema-cache reload fails (PGRST002: all REST queries 503) until the
+  // exposure is removed. Clean up FIRST so there is no wedge window.
+  let exposedCleanupDone = false;
+  if (migrations.length > 0 && hasUpMigs) {
+    const pluginSchema = getAllowedPluginSchemas(pluginId)[0] ?? pluginId;
+    if (db) {
+      try {
+        const result = await unexposePluginSchema(db.projectRef, db.pat, pluginSchema);
+        if (result.status === 'removed') {
+          ok(`  Removed "${pluginSchema}" from API exposed schemas (via ${result.via}) — PostgREST config reloaded.`);
+          exposedCleanupDone = true;
+        } else if (result.status === 'not-exposed') {
+          exposedCleanupDone = true; // nothing to clean up
+        } else {
+          warn(`  Could not remove "${pluginSchema}" from exposed schemas: ${result.error}`);
+        }
+      } catch (e) {
+        warn(`  Could not clean up exposed schemas: ${e.message}`);
+      }
+    }
+    if (!exposedCleanupDone) {
+      warn(`If "${pluginId}" was exposed in Supabase API settings (Exposed schemas), REMOVE it now:`);
+      log(`  Dashboard → Project Settings → API → Exposed schemas → uncheck "${pluginSchema}"`);
+      log(`  An exposed schema without access/objects wedges PostgREST's schema-cache reload (PGRST002, all REST 503).`);
     }
   }
 
@@ -459,6 +569,13 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   log('  1. Complete any manual cleanup listed above');
   log('  2. npm run build');
   log('  3. Deploy  (e.g. npx wrangler deploy)');
+  if (keepFiles) {
+    log('');
+    log(`${c.bold}Re-install later:${c.reset}`);
+    log(`  1. Move plugins/.uninstalled/${pluginId} back to plugins/${pluginId}`);
+    log('  2. npm run build — the generated registries pick it up automatically');
+    log('     (re-install re-writes plugins.json, state/claims/bindings rows; migrations are idempotent)');
+  }
   log('');
 }
 
@@ -470,6 +587,8 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
   log('');
   log('Usage:');
   log('  node scripts/uninstall-plugin.mjs <plugin-id>               Remove a plugin');
+  log('  node scripts/uninstall-plugin.mjs <plugin-id> --keep-files  Unregister only — moves plugins/<id>/ to');
+  log('                                                              plugins/.uninstalled/<id>/ (files kept, re-installable)');
   log('  node scripts/uninstall-plugin.mjs <plugin-id> --prune-deps  Remove + uninstall its npm packages');
   log('  node scripts/uninstall-plugin.mjs <plugin-id> --yes         Skip confirmation prompt');
   log('  node scripts/uninstall-plugin.mjs --list                    List registered plugins');
@@ -483,6 +602,7 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
 } else {
   const pluginId   = args.find((a) => !a.startsWith('--') && a !== '-y');
   const pruneDeps  = args.includes('--prune-deps');
+  const keepFiles  = args.includes('--keep-files');
   if (!pluginId) die('No plugin ID provided. Usage: node scripts/uninstall-plugin.mjs <plugin-id>');
-  await cmdUninstall(pluginId, pruneDeps);
+  await cmdUninstall(pluginId, pruneDeps, keepFiles);
 }

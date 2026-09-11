@@ -83,6 +83,7 @@ scripts\install-plugins.bat --add https://github.com/owner/my-plugin
 8. **Runs the binding pipeline with step detection** — classifies every intent's completion state for the current environment (provisioned via ledger / pending / secret link to verify), provisions only what is missing when `CF_API_TOKEN` is available (env or `.env`), and lists every pending step with its exact command in the manual-steps summary (non-fatal without a token)
 9. Prints any SQL migration files that need to be applied
 10. Prints any `config_schema` keys that need to be set
+11. **Exposes the plugin schema** (plugins with migrations): adds it to the in-DB PostgREST config (`pgrst.db_schemas`) via the Management API when a PAT is available and reloads the PostgREST config — manual dashboard step only as fallback (see §10)
 
 ### Registering workspace plugins
 
@@ -311,6 +312,9 @@ node scripts/uninstall-plugin.mjs yatda --prune-deps
 # Skip confirmation prompt (for CI / scripting)
 node scripts/uninstall-plugin.mjs yatda --yes --prune-deps
 
+# Unregister only — keep plugins/yatda/ (moved to plugins/.uninstalled/yatda/)
+node scripts/uninstall-plugin.mjs yatda --keep-files
+
 # npm script shorthand
 npm run plugin:remove -- yatda
 ```
@@ -319,7 +323,7 @@ npm run plugin:remove -- yatda
 
 1. Reads `plugin.json` from the plugin directory to collect its API entrypoint, migrations, npm packages, and wrangler bindings
 2. Prompts for confirmation (skipped with `--yes`)
-3. Deletes `plugins/{id}/`
+3. Deletes `plugins/{id}/` — **or**, with `--keep-files`, moves it to `plugins/.uninstalled/{id}/` instead (gitignored): the plugin is cleanly unregistered (registry rebuild, `plugins.json`, `plugin-deps.json`, deployment-state rows, claims) but the code survives. Re-install by moving the directory back into `plugins/` and running `npm run build` — the generated registries pick it up automatically; the install flow re-writes `plugins.json`, state/claims/bindings rows, and idempotent migrations re-run cleanly. `--prune-deps` is ignored (with a notice) in this mode so the packages stay installed
 4. Removes the entry from `plugins.json`
 5. Rebuilds the generated plugin registry artifacts — this automatically removes the plugin's wrangler bindings from `wrangler.jsonc` (the auto-generated PLUGIN BINDINGS section is regenerated from scratch)
 6. Reports the plugin's recorded cloud resource instances from the binding ledger and prints the teardown command (`npm run bindings:provision -- --teardown <id>`) — environment-scoped instances (the plugin's own queues/KV namespaces) should be deleted; shared-scoped instances are never deleted
@@ -339,6 +343,16 @@ The script prints these explicitly, but the things that require manual action ar
 **Database tables and data** — if you intentionally skip downmigrations because data must be retained, document that operational exception. Otherwise the expected uninstall path is to reverse the schema changes via the provided downmigrations, not to leave plugin-owned tables behind.
 
 **Plugins UI** — go to `/plugins` as a SUPERADMIN and click **Entfernen** to remove the database record.
+
+**Supabase API → Exposed schemas** — handled **automatically** since the
+`--keep-files`/unregister flow: `scripts/uninstall-plugin.mjs` removes the
+plugin schema from the in-DB PostgREST config (`pgrst.db_schemas`, the same
+GUC the dashboard toggles write) via the Management API and sends
+`NOTIFY pgrst, 'reload config'`. If no PAT was available or the update
+failed, the script prints a manual fallback: uncheck the plugin schema under
+Project Settings → API → Exposed schemas. Do not leave a dropped/revoked
+schema exposed — PostgREST's schema-cache reload then fails (`PGRST002` —
+every REST query 503s) until it is removed and the cache reloads.
 
 After completing manual cleanup, rebuild and deploy:
 

@@ -926,9 +926,10 @@ Required rules:
 
 Required rules:
 
-- Add the plugin schema to Supabase `API > Exposed schemas` in every environment that will use the plugin
+- Add the plugin schema to Supabase `API > Exposed schemas` in every environment that will use the plugin — **automated**: `scripts/install-plugins.mjs` adds it to the in-DB PostgREST config (`pgrst.db_schemas`) via the Management API and reloads PostgREST config when a PAT is available; the manual dashboard step is only the fallback when no PAT is available or the update fails
 - Do this before testing any route that calls `.schema('your_plugin_schema')`, otherwise PostgREST returns errors such as `Invalid schema: your_plugin_schema`
 - Service-role clients do not bypass the exposed-schema requirement for PostgREST-backed queries
+- Symmetrically, `scripts/uninstall-plugin.mjs` **removes** the schema from the exposed list (an exposed schema whose objects were dropped/revoked wedges PostgREST's schema cache — `PGRST002`, all REST queries 503)
 - If the schema cannot be exposed, plugin routes must use an alternative access path, such as `public` RPC functions or core-owned tables, instead of direct `.schema(...)` queries
 
 ### Migration file conventions

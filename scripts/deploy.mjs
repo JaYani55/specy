@@ -6,16 +6,21 @@
  * wrangler deploy. Replaces the raw `npx wrangler deploy` habit so the
  * wrangler config-diff prompt can never surprise anyone:
  *
- *   1. Consistency audit — all binding moving parts (intents, provisioning,
+ *   1. Build — `npm run build` (typecheck + vite build) ALWAYS runs first so
+ *      the deployed bundle reflects the current source: a deploy after a
+ *      plugin uninstall/install without a rebuild would keep serving the old
+ *      plugin UI from the stale dist/ bundle. Opt out with --skip-build.
+ *   2. Consistency audit — all binding moving parts (intents, provisioning,
  *      secrets, ledger, generated config sync). Aborts with fix commands when
  *      not converged — deploying a divergent config is the failure mode this
  *      prevents.
- *   2. Remote drift check — the same diff the wrangler prompt shows, reported
+ *   3. Remote drift check — the same diff the wrangler prompt shows, reported
  *      BEFORE the prompt (classified, attributed). Skipped gracefully without
  *      CF_API_TOKEN.
- *   3. wrangler deploy.
+ *   4. wrangler deploy.
  *
  * Flags:
+ *   --skip-build   Skip the build step (deploy the existing dist/ as-is)
  *   --skip-audit   Skip the consistency check (not recommended)
  *   --yes          Forwarded intent marker — informational only; wrangler still
  *                  owns its prompt in interactive terminals (CI auto-accepts).
@@ -42,11 +47,31 @@ const fail = (m) => log(`${c.red}x${c.reset}  ${m}`);
 
 const args = process.argv.slice(2);
 const skipAudit = args.includes('--skip-audit');
+const skipBuild = args.includes('--skip-build');
 
 // ─── 1. Registries (cheap, idempotent — protects against stale checkout) ─────
 rebuildWorkspacePluginArtifacts();
 
-// ─── 2. Consistency audit (aborts on non-converged state) ────────────────────
+// ─── 2. Build (always, unless explicitly skipped) ─────────────────────────
+// The Worker serves the vite bundle from dist/ — deploying without rebuilding
+// keeps stale plugin UI/routes live after install/uninstall. `npm run build`
+// also runs the prebuild registry regeneration + typecheck, so a failing
+// build (type errors, registry problems) aborts the deploy before wrangler
+// sees a divergent config.
+if (!skipBuild) {
+  log('');
+  log(`${c.bold}Build${c.reset} (npm run build — typecheck + vite; skip with --skip-build):`);
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const build = spawnSync(npmCmd, ['run', 'build'], { stdio: 'inherit', cwd: ROOT, shell: process.platform === 'win32' });
+  if (build.status !== 0) {
+    fail(`Build failed (exit ${build.status ?? '?'}).`);
+    info('Fix the errors above, or deploy the existing dist/ as-is with: npm run deploy -- --skip-build');
+    process.exit(1);
+  }
+  ok('Build succeeded.');
+}
+
+// ─── 3. Consistency audit (aborts on non-converged state) ────────────────────
 if (!skipAudit) {
   log('');
   log(`${c.bold}Consistency check${c.reset}:`);
@@ -78,7 +103,7 @@ if (!skipAudit) {
   ok('All moving parts consistent.');
 }
 
-// ─── 3. Remote drift report (non-fatal, informational) ───────────────────────
+// ─── 4. Remote drift report (non-fatal, informational) ───────────────────────
 log('');
 try {
   const { runRemoteDriftCheck } = await import('./lib/binding-consistency-remote.mjs');
@@ -90,7 +115,7 @@ try {
   warn(`Remote drift check unavailable: ${e.message}`);
 }
 
-// ─── 4. Deploy ────────────────────────────────────────────────────────────────
+// ─── 5. Deploy ────────────────────────────────────────────────────────────────────
 log('');
 info(`Deploying via wrangler… (the config-diff prompt, if shown, matches the drift report above)`);
 const wranglerCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';

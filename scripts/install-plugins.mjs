@@ -39,6 +39,8 @@ import { createInterface } from 'readline';
 import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR, WRANGLER_CONFIG_FILE } from './lib/plugin-workspace.mjs';
 import { sqlStr } from './lib/sqlStr.mjs';
 import { validatePluginMigrations } from './lib/migration-validation.mjs';
+import { getAllowedPluginSchemas } from './lib/migration-validation.mjs';
+import { exposePluginSchema } from './lib/exposed-schemas.mjs';
 import { collectManifestIntents, collectPluginIntents, findLedgerRow, listUnprovisionedIntents, readWorkerName } from './lib/binding-intents.mjs';
 import { writeDeploymentState, resolvedIntentsToBindingStateRows } from './lib/deployment-state.mjs';
 import { provisionBindingIntents, readLedgerFromPath } from './lib/binding-provisioner.mjs';
@@ -409,6 +411,7 @@ function collectUpMigrations(slug) {
       .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
       .sort()
       .map((f) => ({
+        slug,
         file: `src/plugins/${slug}/migrations/${f}`,
         sql:  readFileSync(join(migDir, f), 'utf8'),
       }));
@@ -439,8 +442,12 @@ async function applyPluginMigrations(slugs, existingPat = null) {
     return;
   }
 
-  const rl1 = createInterface({ input: process.stdin, output: process.stdout });
+  // Create the readline interface ONLY when actually prompting — a dangling
+  // interface on process.stdin keeps the event loop alive, so the process
+  // would never exit (which froze the setup TUI's spawnSync at the deploy
+  // instruction when a PAT was already available via existingPat).
   const doApply = existingPat ? 'y' : await new Promise((resolve) => {
+    const rl1 = createInterface({ input: process.stdin, output: process.stdout });
     rl1.question(`${c.yellow}?${c.reset}  Apply these migrations to Supabase now? [y/N] `, (a) => { rl1.close(); resolve(a.trim().toLowerCase()); });
   });
   if (doApply !== 'y' && doApply !== 'yes') {
@@ -467,10 +474,12 @@ async function applyPluginMigrations(slugs, existingPat = null) {
   if (!projectRef) { warn('Could not extract project ref from SUPABASE_URL.'); return; }
 
   log('');
-  for (const { file, sql } of allFiles) {
+  const applied = new Set();
+  for (const { file, sql, slug } of allFiles) {
     process.stdout.write(`  Applying ${c.yellow}${file}${c.reset}… `);
     try {
       await runSqlQuery(projectRef, pat, sql);
+      applied.add(slug);
       process.stdout.write(`${c.green}✓${c.reset}\n`);
     } catch (err) {
       process.stdout.write(`${c.red}✗${c.reset}\n`);
@@ -479,10 +488,11 @@ async function applyPluginMigrations(slugs, existingPat = null) {
       const cont = await new Promise((resolve) => {
         rl2.question(`${c.yellow}?${c.reset}  Continue with remaining migrations? [y/N] `, (a) => { rl2.close(); resolve(a.trim().toLowerCase()); });
       });
-      if (cont !== 'y' && cont !== 'yes') { warn('Migrations aborted.'); return; }
+      if (cont !== 'y' && cont !== 'yes') { warn('Migrations aborted.'); return [...applied]; }
     }
   }
   ok('Migrations applied ✓');
+  return [...applied];
 }
 
 // ─── Binding intents (BIPS — specs/platform/binding-management.md) ──────
@@ -861,7 +871,36 @@ async function _doInstall(entries, db) {
 
   // Rebuild generated plugin artifacts from the current /plugins workspace folder.
   rebuildWorkspacePluginArtifacts();
-  await applyPluginMigrations(results.ok, db?.pat ?? null);
+  const appliedSlugs = await applyPluginMigrations(results.ok, db?.pat ?? null) ?? [];
+
+  // ── Expose plugin schemas for PostgREST (development.md §API exposure
+  //    requirement, automated; symmetric to the uninstall cleanup). Only for
+  //    plugins whose migrations were actually applied — the schema is created
+  //    by migration 001, and exposing a not-yet-existing schema wedges
+  //    PostgREST's cache reload (PGRST002). ──
+  for (const slug of results.ok) {
+    if (collectUpMigrations(slug).length === 0) continue; // no schema to expose
+    const pluginSchema = getAllowedPluginSchemas(slug)[0] ?? slug;
+    if (!db || !appliedSlugs.includes(slug)) {
+      warn(`  Schema "${pluginSchema}" (${slug}) could not be auto-exposed — migrations were not applied via PAT.`);
+      log('    Dashboard → Project Settings → API → Exposed schemas → check the schema (after applying migrations)');
+      continue;
+    }
+    try {
+      const exposure = await exposePluginSchema(db.projectRef, db.pat, pluginSchema);
+      if (exposure.status === 'added') {
+        ok(`  Exposed "${pluginSchema}" schema in the API settings (via ${exposure.via}) — PostgREST config reloaded.`);
+      } else if (exposure.status === 'already-exposed') {
+        info(`  Schema "${pluginSchema}" is already exposed in the API settings.`);
+      } else {
+        warn(`  Could not expose "${pluginSchema}": ${exposure.error} — add it manually:`);
+        log('    Dashboard → Project Settings → API → Exposed schemas → check the schema');
+      }
+    } catch (e) {
+      warn(`  Could not expose the plugin schema: ${e.message} — add it manually:`);
+      log('    Dashboard → Project Settings → API → Exposed schemas → check the schema');
+    }
+  }
 
   // Provision plugin binding instances for this deployment (BIPS Layer 3),
   // then reconcile the generated wrangler.jsonc against provisioned ids.

@@ -100,6 +100,7 @@ const INTEGRITY_TEST_SUITES = [
   'bindingIntents',
   'coreMigrations',
   'deploymentState',
+  'exposedSchemas',
   'pluginClaimsRegistry',
   'pluginClaimMatching',
   'pluginInstallerPat',
@@ -267,7 +268,7 @@ const MENU = [
   { value: 'update:core', label: 'Update core only', hint: 'npm run update:core' },
   { value: 'update:plugins', label: 'Update plugins only', hint: 'npm run update:plugins -- --all' },
   { value: 'install', label: 'Install a plugin', hint: 'npm run plugin:install' },
-  { value: 'remove', label: 'Remove a plugin', hint: 'npm run plugin:remove' },
+  { value: 'remove', label: 'Remove a plugin', hint: 'unregister (keep files) or full uninstall' },
   { value: 'provision', label: 'Provision plugin bindings', hint: 'npm run bindings:provision' },
   { value: 'drift', label: 'Check remote binding drift', hint: 'npm run bindings:check' },
   { value: 'state', label: 'Re-check deployment states', hint: 'dry-run or repair (--sync)' },
@@ -321,9 +322,39 @@ async function runMaintenanceTui() {
       case 'install':
         nodeScript('install-plugins.mjs');
         break;
-      case 'remove':
-        nodeScript('uninstall-plugin.mjs');
+      case 'remove': {
+        const plugins = scanWorkspacePlugins();
+        const sources = readLocalState().pluginSources;
+        const options = [
+          ...plugins.map((pl) => ({
+            value: pl.id,
+            label: `${pl.id}  (workspace)`,
+            hint: `plugins/${pl.dirName}${pl.manifest?.version ? ` · v${pl.manifest.version}` : ''}`,
+          })),
+          ...sources
+            .filter((s) => !plugins.some((pl) => pl.id === s.id))
+            .map((s) => ({ value: s.id, label: `${s.id}  (source)`, hint: s.repo_url ?? undefined })),
+        ];
+        if (options.length === 0) {
+          p.log.info('No plugins installed — nothing to remove.');
+          break;
+        }
+        const target = await p.select({
+          message: 'Which plugin should be removed?',
+          options,
+        });
+        if (p.isCancel(target)) break;
+        const mode = await p.select({
+          message: `How should "${target}" be removed?`,
+          options: [
+            { value: 'keep', label: 'Unregister (keep files)', hint: 'cleanly unregistered — re-installable by moving the folder back' },
+            { value: 'full', label: 'Full uninstall (delete files)', hint: 'also deletes plugins/<id>/ from disk' },
+          ],
+        });
+        if (p.isCancel(mode)) break;
+        nodeScript('uninstall-plugin.mjs', mode === 'keep' ? [target, '--keep-files'] : [target]);
         break;
+      }
       case 'provision':
         nodeScript('provision-bindings.mjs');
         break;
