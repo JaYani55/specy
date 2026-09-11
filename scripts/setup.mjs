@@ -25,7 +25,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import * as p from '@clack/prompts';
-import { detectPhase, readLocalState } from './lib/state.mjs';
+import { detectPhase, readLocalState, readUncommittedMigrations, formatGitStatusLine } from './lib/state.mjs';
 import { runFirstTimeSetup } from './lib/first-time-setup.mjs';
 import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WRANGLER_CONFIG_FILE } from './lib/plugin-workspace.mjs';
 import { auditBindingConsistency, printBindingAuditReport } from './lib/binding-consistency.mjs';
@@ -33,6 +33,7 @@ import { readLedgerFromPath } from './lib/binding-provisioner.mjs';
 import { parseJsoncConfig } from './lib/wrangler-config.mjs';
 import { createPatDb } from './lib/remote-sql.mjs';
 import { fetchCoreUpdateState } from './lib/core-update.mjs';
+import { readDeploymentState, summarizeDeploymentRows } from './lib/deployment-state.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -77,23 +78,117 @@ function runIntegrityCheck() {
 
   p.log.message('Binding consistency:');
   printBindingAuditReport(audit, { log: (m) => p.log.info(strip(m)) });
+
+  // 3. Tooling unit tests — the suites that guard the systems this integrity
+  //    check itself inspects (registries, bindings, claims, state, migrations,
+  //    wrangler config). Runs the full suites; on failure only a condensed
+  //    report is printed (full output via `npm test`).
+  runIntegrityTests();
   return audit;
+}
+
+// ─── Integrity test gate ─────────────────────────────────────────────────────
+
+/**
+ * Test suites covering the tooling systems the integrity check reports on.
+ * Kept as an explicit list (not a glob) so the TUI gate stays deterministic
+ * and fast; extend when a new tooling suite lands.
+ */
+const INTEGRITY_TEST_SUITES = [
+  'bindingConsistency',
+  'bindingDrift',
+  'bindingIntents',
+  'coreMigrations',
+  'deploymentState',
+  'pluginClaimsRegistry',
+  'pluginClaimMatching',
+  'pluginInstallerPat',
+  'secretsStores',
+  'secretsStoreSecretId',
+  'state',
+  'updateTooling',
+  'workerName',
+  'wranglerConfig',
+]
+  .map((name) => join(ROOT, 'tests', `${name}.test.mjs`))
+  .filter((file) => existsSync(file));
+
+function runIntegrityTests() {
+  p.log.message('Unit tests (tooling integrity suites):');
+  const res = spawnSync(process.execPath, ['--test', ...INTEGRITY_TEST_SUITES], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  const output = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+  // Anchor at line end: the `ℹ tests 26` / `ℹ pass 26` summary lines end with
+  // the number, while test names are followed by `(duration)`. The m-flag +
+  // `$` anchor keeps a passing test named like "tests 5" from polluting counts.
+  const count = (label) => {
+    const m = output.match(new RegExp(`${label}\\s+(\\d+)\\s*$`, 'm'));
+    return m ? Number(m[1]) : null;
+  };
+
+  if (res.status === 0 && !res.error) {
+    const pass = count('pass') ?? count('tests') ?? '?';
+    p.log.success(`  all tooling suites passed (${pass} tests)`);
+    return true;
+  }
+
+  const timedOut = res.error?.code === 'ETIMEDOUT';
+  p.log.error(timedOut
+    ? '  tooling suites timed out (120s) — run `npm test` for details'
+    : `  tooling suites FAILED (${count('pass') ?? 0} passed, ${count('fail') ?? '?'} failed) — run \`npm test\` for the full output`);
+
+  const failedFiles = [...new Set([...output.matchAll(/(tests[\\/][^\s"']+\.test\.mjs)/g)].map((m) => m[1].replaceAll('\\', '/')))];
+  const failing = [...new Set([...output.matchAll(/^\s*✖\s+(.+)$/gm)].map((m) => m[1].trim()))];
+  if (failedFiles.length) p.log.message(`  affected: ${failedFiles.slice(0, 8).join(', ')}${failedFiles.length > 8 ? ' …' : ''}`);
+  if (failing.length) p.log.message(`  failing: ${failing.slice(0, 8).join(' · ')}${failing.length > 8 ? ' …' : ''}`);
+  return false;
 }
 
 // ─── State summary ───────────────────────────────────────────────────────────
 
+/**
+ * Read the recorded remote deployment truth for the state footer.
+ *
+ * Primary source is the typed `public.deployment_state` registry (core AND
+ * plugin rows, see specs/changes/2026-09-11-setup-tui-state-summary.md).
+ * Falls back to the legacy `system_config.core_update` shim when the table
+ * does not exist yet (pre-migration projects) — that store is core-only by
+ * construction, so `plugins` is empty there.
+ *
+ * @returns {null | { source: 'deployment_state'|'legacy',
+ *            coreMigrations: number, edgeFunctions: number,
+ *            workerCommit: string|null, workerDeployedAt: string|null,
+ *            coreCommit: string|null,
+ *            plugins: {slug, version, migrations, bindings, claims}[] }}
+ */
 async function readRemoteDeployment(db) {
   if (!db) return null;
+  try {
+    const ds = await readDeploymentState(db.projectRef, db.pat);
+    if (ds.available) {
+      return { source: 'deployment_state', ...summarizeDeploymentRows(ds.rows) };
+    }
+  } catch {
+    // fall through to the legacy shim
+  }
   try {
     const remote = await fetchCoreUpdateState(db.projectRef, db.pat);
     if (!remote.available) return null;
     const worker = remote.state.get('deployment:worker');
     const core = remote.state.get('deployment:core_commit');
+    const functions = remote.state.get('deployment:functions');
     return {
+      source: 'legacy',
       workerCommit: worker?.commit ?? null,
       workerDeployedAt: worker?.deployedAt ?? null,
       coreCommit: core?.commit ?? null,
-      recordedMigrationCount: [...remote.state.keys()].filter((k) => k.startsWith('migration:')).length,
+      edgeFunctions: functions ? 1 : 0,
+      coreMigrations: [...remote.state.keys()].filter((k) => k.startsWith('migration:')).length,
+      plugins: [],
     };
   } catch {
     return null;
@@ -106,7 +201,7 @@ function showStateSummary(local, remote) {
     `Phase         ${local.phase === 'fresh' ? 'fresh (first-time setup pending)' : 'configured'}`,
     `Account ID    ${local.accountId ?? '— (not configured)'}`,
     `Supabase URL  ${local.supabaseUrl ?? '— (not configured)'}`,
-    `Git head      ${local.gitHead ?? '— (not a git checkout)'}`,
+    `Git          ${formatGitStatusLine(local.git)}`,
     `Plugins       ${local.workspacePlugins.length} workspace / ${local.pluginSources.length} source${local.pluginSources.length === 1 ? '' : 's'}`,
     `Cloud ledger  ${local.ledgerRows} resource row${local.ledgerRows === 1 ? '' : 's'}`,
   ];
@@ -114,12 +209,54 @@ function showStateSummary(local, remote) {
     lines.push(
       `Worker commit ${remote.workerCommit ?? '— (never recorded)'}${remote.workerDeployedAt ? `  (${remote.workerDeployedAt})` : ''}`,
       `Core commit   ${remote.coreCommit ?? '—'}`,
-      `Migrations    ${remote.recordedMigrationCount} recorded applied`,
+      `Migrations    ${remote.coreMigrations ?? 0} recorded applied`,
+      `Edge funcs    ${remote.edgeFunctions ?? 0} recorded`,
     );
+    if (remote.plugins.length) {
+      for (const plugin of remote.plugins) {
+        const parts = [
+          plugin.version ? `v${plugin.version}` : 'version not recorded',
+          `${plugin.migrations} migration${plugin.migrations === 1 ? '' : 's'} recorded`,
+          `${plugin.bindings} binding${plugin.bindings === 1 ? '' : 's'} recorded`,
+        ];
+        if (plugin.claims) parts.push('claims recorded');
+        lines.push(`Plugin state ${plugin.slug}  ·  ${parts.join(' · ')}`);
+      }
+    } else if (remote.source === 'deployment_state') {
+      lines.push('Plugin state  — (none recorded — run npm run state:recheck --sync to backfill)');
+    }
   } else {
     lines.push('Deployment    — (Supabase not reachable — no PAT / no SUPABASE_URL)');
   }
   p.log.message('Installation & deployment state:\n' + lines.map((l) => `  • ${l}`).join('\n'));
+}
+
+// ─── Migration guards ───────────────────────────────────────────────────────
+
+/**
+ * Pre-flight guard before applying core migrations: refuse to silently apply
+ * uncommitted migration SQL. Applying a migration that exists only on disk
+ * (not in git) records its state in the DB while the file can be lost on a
+ * checkout — divergence the state tracker would then report forever.
+ */
+async function runMigrationsWithGuards() {
+  const uncommitted = readUncommittedMigrations();
+  if (uncommitted.length > 0) {
+    p.log.warning(`Uncommitted migration files (${uncommitted.length}):`);
+    for (const { status, path } of uncommitted.slice(0, 10)) {
+      p.log.message(`    ${status === '??' ? '+' : '~'} ${path}  (${status})`);
+    }
+    if (uncommitted.length > 10) p.log.message(`    … and ${uncommitted.length - 10} more`);
+    const proceed = await p.confirm({
+      message: 'Apply migrations anyway? Commit or stash the files first for a clean state trail.',
+      initialValue: false,
+    });
+    if (p.isCancel(proceed) || !proceed) {
+      p.log.info('Aborted — commit the migration files first (see specs/plugins/development.md and AGENTS.md §5).');
+      return;
+    }
+  }
+  nodeScript('migrate.mjs');
 }
 
 // ─── Maintenance menu ────────────────────────────────────────────────────────
@@ -133,7 +270,7 @@ const MENU = [
   { value: 'remove', label: 'Remove a plugin', hint: 'npm run plugin:remove' },
   { value: 'provision', label: 'Provision plugin bindings', hint: 'npm run bindings:provision' },
   { value: 'drift', label: 'Check remote binding drift', hint: 'npm run bindings:check' },
-  { value: 'state', label: 'Re-check deployment states', hint: 'npm run state:recheck' },
+  { value: 'state', label: 'Re-check deployment states', hint: 'dry-run or repair (--sync)' },
   { value: 'migrations', label: 'Apply pending core migrations', hint: 'npm run migrations' },
   { value: 'deploy', label: 'Deploy to Cloudflare', hint: 'npm run deploy' },
   { value: 'auth', label: 'Diagnose auth hook', hint: 'npm run auth:check' },
@@ -193,11 +330,20 @@ async function runMaintenanceTui() {
       case 'drift':
         nodeScript('provision-bindings.mjs', ['--check-remote']);
         break;
-      case 'state':
-        nodeScript('state-recheck.mjs');
+      case 'state': {
+        const mode = await p.select({
+          message: 'Re-check deployment states — how should it run?',
+          options: [
+            { value: 'report', label: 'Report only (dry-run)', hint: 'list unrecorded / drifted / stale rows — no writes' },
+            { value: 'sync', label: 'Repair (sync)', hint: 'backfill unrecorded, re-record drifted, delete stale plugin rows' },
+          ],
+        });
+        if (p.isCancel(mode)) break;
+        nodeScript('state-recheck.mjs', mode === 'sync' ? ['--sync'] : []);
         break;
+      }
       case 'migrations':
-        nodeScript('migrate.mjs');
+        await runMigrationsWithGuards();
         break;
       case 'deploy':
         nodeScript('deploy.mjs');

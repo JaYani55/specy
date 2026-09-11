@@ -422,18 +422,106 @@ function reconcileKey(item) {
 }
 
 /**
+ * Aggregate deployment-state rows into a compact summary for the TUI state
+ * footer (`scripts/setup.mjs` → showStateSummary). Pure — unit-tested.
+ *
+ * Core rows count migrations/edge functions and surface the worker/core
+ * commit; plugin rows are grouped per plugin slug with recorded version,
+ * migration, binding, and claim counts.
+ *
+ * @param {object[]} rows Normalized rows from readDeploymentState()
+ * @returns {{ coreMigrations: number, edgeFunctions: number,
+ *             workerCommit: string|null, workerDeployedAt: string|null,
+ *             coreCommit: string|null,
+ *             plugins: {slug: string, version: string|null, migrations: number,
+ *                       bindings: number, claims: boolean}[] }}
+ */
+export function summarizeDeploymentRows(rows) {
+  const summary = {
+    coreMigrations: 0,
+    edgeFunctions: 0,
+    workerCommit: null,
+    workerDeployedAt: null,
+    coreCommit: null,
+    plugins: [],
+  };
+  const byOwner = new Map();
+
+  for (const row of rows ?? []) {
+    if (row.ownerKind === 'plugin') {
+      let entry = byOwner.get(row.owner);
+      if (!entry) {
+        entry = {
+          slug: row.pluginSlug ?? row.owner.replace(/^plugin:/, ''),
+          version: null,
+          migrations: 0,
+          bindings: 0,
+          claims: false,
+        };
+        byOwner.set(row.owner, entry);
+      }
+      if (row.component === 'code' && row.key === 'code') entry.version = row.value?.version ?? null;
+      else if (row.component === 'migrations') entry.migrations += 1;
+      else if (row.component === 'bindings') entry.bindings += 1;
+      else if (row.component === 'claims') entry.claims = true;
+      continue;
+    }
+    if (row.ownerKind !== 'core') continue;
+    if (row.component === 'migrations') summary.coreMigrations += 1;
+    else if (row.component === 'edge_functions') summary.edgeFunctions += 1;
+    else if (row.component === 'worker' && row.key === 'worker') {
+      summary.workerCommit = row.value?.commit ?? null;
+      summary.workerDeployedAt = row.value?.deployed_at ?? null;
+    } else if (row.component === 'worker' && row.key === 'core_commit') {
+      summary.coreCommit = row.value?.commit ?? null;
+    }
+  }
+
+  summary.plugins = [...byOwner.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+  return summary;
+}
+
+/**
  * Drift = a recorded checksum/version/commit differs from the local value.
  *
  * @param {object} local
  * @param {object} recorded
  * @returns {boolean}
  */
-export function isDrifted(local, recorded) {
+/**
+ * Fields in which `local` and `recorded` differ. A row is anchored on the
+ * strongest comparable field it carries (precedence: `checksum` > `version`
+ * > `commit`); only that field is compared:
+ *
+ * - `checksum` rows (migrations, edge_functions) are **content-anchored**: the
+ *   checksum is the drift truth. A moved git `commit` alone is NOT drift —
+ *   otherwise every repo commit would flag all migration rows as drifted even
+ *   though the SQL content is byte-identical.
+ * - `version` rows (plugin `code`) drift on version.
+ * - `commit`-only rows (`worker`) drift on commit — "which build is live" is
+ *   the question there.
+ *
+ * If the stronger field is missing on either side, comparison falls through to
+ * the next one (uncomparable → not drift).
+ *
+ * @returns {('checksum'|'version'|'commit')[]} differing field names
+ */
+export function driftFields(local, recorded) {
   const value = recorded?.value ?? {};
-  if (local.checksum != null && value.checksum != null && local.checksum !== value.checksum) return true;
-  if (local.version != null && value.version != null && local.version !== value.version) return true;
-  if (local.commit != null && value.commit != null && local.commit !== value.commit) return true;
-  return false;
+  if (local.checksum != null && value.checksum != null) {
+    return local.checksum !== value.checksum ? ['checksum'] : [];
+  }
+  if (local.version != null && value.version != null) {
+    return local.version !== value.version ? ['version'] : [];
+  }
+  if (local.commit != null && value.commit != null) {
+    return local.commit !== value.commit ? ['commit'] : [];
+  }
+  return [];
+}
+
+export function isDrifted(local, recorded) {
+  return driftFields(local, recorded).length > 0;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

@@ -208,7 +208,7 @@ It reconciles four sources:
 Output classes (each attributed `core-owned` / `plugin-owned`):
 
 - **unrecorded** — local says a migration/binding/version exists but no row → `--sync` backfills (and bumps the migration state → applied/checksum).
-- **drifted** — recorded `checksum`/`commit` differs from local → report + optional re-apply/re-record (same semantics as today's drift detection).
+- **drifted** — recorded state differs from local on the row's anchor field (precedence `checksum` > `version` > `commit`; only the strongest field present on **both** sides is compared) → report (with the differing field and values) + optional re-apply/re-record. Content-anchored rows (`migrations`, `edge_functions`, `code` with checksum) therefore do **not** drift when only the git head moves — see `driftFields()` in `scripts/lib/deployment-state.mjs`.
 - **stale/orphaned** — recorded rows whose component no longer exists locally (e.g. removed plugin, renamed purpose) → report + optional delete (teardown analog).
 - **converged** — recorded == local == live.
 

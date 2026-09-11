@@ -99,6 +99,11 @@ export const MIGRATION_ORDER_CORE = [
   '202609100001_deployment_state.sql',
   // plugin_claims → plugins(id) FK (cascade) — must run after both tables.
   '202609100002_plugin_claims_ownership.sql',
+  // Mail-queue cron gate — replaces trigger_mail_queue_processing() with a
+  // work-presence-gated version (skips idle send_email invocations). Must run
+  // after 202609070001 (creates the function + cron schedule) and after
+  // mail_delivery.sql (mail_delivery_jobs table).
+  '202609110001_mail_queue_cron_gate.sql',
 ];
 
 /**

@@ -64,7 +64,7 @@ script (one implementation per operation):
 
 | Menu action | Delegates to |
 |---|---|
-| Integrity check | inline: `rebuildWorkspacePluginArtifacts()` + `auditBindingConsistency()` |
+| Integrity check | inline: `rebuildWorkspacePluginArtifacts()` + `auditBindingConsistency()` + tooling unit-test gate (`runIntegrityTests()` — runs the 14 suites in `tests/` that guard registries, bindings, claims, state, migrations, and wrangler config; condensed failure report, full output via `npm test`) |
 | Update core + plugins | `scripts/update.mjs` |
 | Update core only | `scripts/cf-update.mjs` |
 | Update plugins only | `scripts/update-plugins.mjs --all` |
@@ -268,3 +268,25 @@ Legacy core_update keys map onto this taxonomy as:
   reconciles local manifests + git head + workspace plugins + binding ledger
   against `deployment_state` (with a legacy `core_update` fallback) and reports
   **unrecorded / drifted / stale / converged**; `--sync` repairs idempotently.
+  Drift is judged on the row's anchor field only (`checksum` > `version` >
+  `commit`) — a moved git head alone does not make content-anchored migration/
+  edge-function rows drift, and the report names the differing field(s).
+  See `specs/changes/2026-09-11-state-recheck-drift-semantics.md`.
+- The TUI state footer ("Installation & deployment state") reads
+  `public.deployment_state` as its primary source (via `readDeploymentState` +
+  `summarizeDeploymentRows`) — core migrations/edge functions, worker/core
+  commit, and per-plugin `code`/`migrations`/`bindings`/`claims` rows — and
+  falls back to the legacy `core_update` shim (core-only, no plugin lines)
+  when the table does not exist yet. See
+  `specs/changes/2026-09-11-setup-tui-state-summary.md`.
+  The footer's git line shows branch, HEAD and upstream sync status
+  (`dev @ afbea61 · ↑1 ahead ↓3 behind vs origin/dev`, `up to date with …`,
+  `no upstream branch`) — pure helpers (`parseAheadBehind`,
+  `parseUncommittedPaths`, `filterMigrationSqlChanges`, `formatGitStatusLine`)
+  in `scripts/lib/state.mjs`, tested in `tests/state.test.mjs`.
+- The **Apply core migrations** TUI action guards against uncommitted
+  migration SQL before delegating to `migrate.mjs`: uncommitted (new/modified/
+  staged) `migrations/*.sql` files are listed with a confirmation prompt
+  (default: abort) — applying a file that exists only on disk would record its
+  state in the DB while the file itself is lost on checkout. See
+  `specs/changes/2026-09-11-setup-tui-state-summary.md`.

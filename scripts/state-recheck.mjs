@@ -40,6 +40,7 @@ import {
   buildPluginDeleteByIdSql,
   coreRecordsToStateRows,
   deletePluginDeploymentState,
+  driftFields,
   normalizeStateValue,
   readDeploymentState,
   reconcileRecords,
@@ -255,9 +256,10 @@ function printReport(result) {
     warn(`Drifted (${result.drifted.length}) — recorded differs from local:`);
     for (const { local, recorded } of result.drifted) {
       const rec = recorded.value ?? {};
-      const from = rec.checksum ?? rec.version ?? rec.commit ?? '?';
-      const to = local.checksum ?? local.version ?? local.commit ?? '?';
-      log(`    ${ownerLabel(local.owner)} ${c.cyan}${local.component}${c.reset} ${c.bold}${local.key}${c.reset}  ${c.dim}${from} → ${to}${c.reset}`);
+      const short = (v) => (v == null ? '?' : String(v).length > 12 ? `${String(v).slice(0, 12)}…` : String(v));
+      const fields = driftFields(local, recorded);
+      const detail = fields.map((f) => `${f}: ${short(rec[f])} → ${short(local[f])}`).join(', ');
+      log(`    ${ownerLabel(local.owner)} ${c.cyan}${local.component}${c.reset} ${c.bold}${local.key}${c.reset}  ${c.dim}${detail || '?'}${c.reset}`);
     }
   }
 

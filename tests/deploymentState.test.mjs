@@ -7,9 +7,12 @@ import {
   buildPluginUpsertSql,
   coreKeyToComponent,
   coreRecordToStateRow,
+  driftFields,
+  isDrifted,
   normalizeOwner,
   normalizeStateValue,
   reconcileRecords,
+  summarizeDeploymentRows,
   toStateRow,
 } from '../scripts/lib/deployment-state.mjs';
 
@@ -180,4 +183,101 @@ test('reconcileRecords ignores drift when neither side carries a comparable fiel
   assert.equal(drifted.length, 0);
   assert.equal(stale.length, 0);
   assert.equal(converged.length, 1);
+});
+
+// ─── driftFields (content-anchored vs commit-anchored rows) ─────────────────
+
+test('driftFields: checksum-anchored rows ignore a moved git commit', () => {
+  // Regression: migration rows carry `commit: <git head>` locally. Any repo
+  // commit moved the head; the SQL content (checksum) stayed identical — that
+  // must NOT count as drift.
+  const local = { owner: 'core', component: 'migrations', key: 'a.sql', checksum: 'aaa', commit: 'afbea61new' };
+  const recorded = { value: { checksum: 'aaa', commit: '9f2a44bold' } };
+  assert.deepEqual(driftFields(local, recorded), []);
+  assert.equal(isDrifted(local, recorded), false);
+});
+
+test('driftFields: checksum-anchored rows still drift on checksum mismatch', () => {
+  const local = { owner: 'core', component: 'edge_functions', key: 'send_email', checksum: 'new', commit: 'afbea61new' };
+  const recorded = { value: { checksum: 'old', commit: '9f2a44bold' } };
+  assert.deepEqual(driftFields(local, recorded), ['checksum']);
+});
+
+test('driftFields: commit-only rows (worker) drift on commit', () => {
+  const local = { owner: 'core', component: 'worker', key: 'worker', commit: 'afbea61new' };
+  assert.deepEqual(driftFields(local, { value: { commit: '9f2a44bold' } }), ['commit']);
+  assert.deepEqual(driftFields(local, { value: { commit: 'afbea61new' } }), []);
+});
+
+test('driftFields: version rows (plugin code) drift on version', () => {
+  const local = { owner: 'plugin:pluradash', component: 'code', key: 'code', version: '2.0.0' };
+  assert.deepEqual(driftFields(local, { value: { version: '1.0.0' } }), ['version']);
+  assert.deepEqual(driftFields(local, { value: { version: '2.0.0' } }), []);
+});
+
+test('driftFields: checksum anchor wins over version/commit comparisons', () => {
+  // A row carrying a checksum never drifts on version/commit — the checksum
+  // is its drift truth.
+  const local = { owner: 'core', component: 'migrations', key: 'a.sql', checksum: 'same', version: '1', commit: 'aaa' };
+  const recorded = { value: { checksum: 'same', version: '2', commit: 'bbb' } };
+  assert.deepEqual(driftFields(local, recorded), []);
+});
+
+// ─── summarizeDeploymentRows (TUI state footer aggregation) ──────────────────
+
+test('summarizeDeploymentRows aggregates core and plugin rows', () => {
+  const summary = summarizeDeploymentRows([
+    { owner: 'core', ownerKind: 'core', component: 'migrations', key: 'preamble.sql', value: { checksum: 'x' } },
+    { owner: 'core', ownerKind: 'core', component: 'migrations', key: 'objects.sql', value: { checksum: 'y' } },
+    { owner: 'core', ownerKind: 'core', component: 'edge_functions', key: 'send_email', value: {} },
+    {
+      owner: 'core', ownerKind: 'core', component: 'worker', key: 'worker',
+      value: { commit: 'afbea61full', deployed_at: '2026-09-11T10:00:00Z' },
+    },
+    { owner: 'core', ownerKind: 'core', component: 'worker', key: 'core_commit', value: { commit: '9f2a44bfull' } },
+    {
+      owner: 'plugin:pluradash', ownerKind: 'plugin', pluginSlug: 'pluradash',
+      component: 'code', key: 'code', value: { version: '1.4.2' },
+    },
+    { owner: 'plugin:pluradash', ownerKind: 'plugin', pluginSlug: 'pluradash', component: 'migrations', key: '001.sql', value: {} },
+    { owner: 'plugin:pluradash', ownerKind: 'plugin', pluginSlug: 'pluradash', component: 'migrations', key: '002.sql', value: {} },
+    { owner: 'plugin:pluradash', ownerKind: 'plugin', pluginSlug: 'pluradash', component: 'bindings', key: 'sms', value: {} },
+    { owner: 'plugin:pluradash', ownerKind: 'plugin', pluginSlug: 'pluradash', component: 'claims', key: 'pluradash', value: {} },
+  ]);
+
+  assert.equal(summary.coreMigrations, 2);
+  assert.equal(summary.edgeFunctions, 1);
+  assert.equal(summary.workerCommit, 'afbea61full');
+  assert.equal(summary.workerDeployedAt, '2026-09-11T10:00:00Z');
+  assert.equal(summary.coreCommit, '9f2a44bfull');
+
+  assert.equal(summary.plugins.length, 1);
+  const [plugin] = summary.plugins;
+  assert.equal(plugin.slug, 'pluradash');
+  assert.equal(plugin.version, '1.4.2');
+  assert.equal(plugin.migrations, 2);
+  assert.equal(plugin.bindings, 1);
+  assert.equal(plugin.claims, true);
+});
+
+test('summarizeDeploymentRows: multiple plugins sort by slug, defaults are zero-valued', () => {
+  const summary = summarizeDeploymentRows([
+    { owner: 'plugin:zeta', ownerKind: 'plugin', pluginSlug: 'zeta', component: 'code', key: 'code', value: {} },
+    { owner: 'plugin:alpha', ownerKind: 'plugin', pluginSlug: 'alpha', component: 'code', key: 'code', value: { version: '0.1.0' } },
+  ]);
+  assert.deepEqual(summary.plugins.map((p) => p.slug), ['alpha', 'zeta']);
+  assert.equal(summary.plugins[0].version, '0.1.0');
+  assert.equal(summary.plugins[1].version, null); // code row without version
+  assert.equal(summary.plugins[1].migrations, 0);
+  assert.equal(summary.plugins[1].bindings, 0);
+  assert.equal(summary.plugins[1].claims, false);
+  assert.equal(summary.coreMigrations, 0);
+  assert.equal(summary.workerCommit, null);
+});
+
+test('summarizeDeploymentRows: empty/undefined input yields an empty summary', () => {
+  const empty = summarizeDeploymentRows([]);
+  assert.deepEqual(empty.plugins, []);
+  assert.equal(empty.coreMigrations, 0);
+  assert.equal(summarizeDeploymentRows(undefined).coreMigrations, 0);
 });
