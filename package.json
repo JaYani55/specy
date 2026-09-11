@@ -29,6 +29,7 @@
     "plugin:install:local": "node scripts/install-plugins.mjs --local",
     "plugin:remove": "node scripts/uninstall-plugin.mjs",
     "migrations": "node scripts/migrate.mjs",
+    "snapshots": "node scripts/snapshots.mjs",
     "auth:check": "node scripts/auth-diagnostics.mjs",
     "bindings:provision": "node scripts/provision-bindings.mjs",
     "bindings:check": "node scripts/provision-bindings.mjs --check-remote",

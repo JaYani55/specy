@@ -41,6 +41,7 @@ import {
   upsertCoreUpdateRecords,
 } from './lib/core-update.mjs';
 import { createPatDb, extractProjectRef, getSupabaseUrl, resolvePat, runSqlQuery } from './lib/remote-sql.mjs';
+import { createActionLog } from './lib/action-log.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..'); // repo root — buildMigrationManifest joins ROOT/migrations
 
@@ -99,17 +100,25 @@ async function main() {
   log('');
   log(`${c.bold}Core migrations — workspace state → Supabase${c.reset} (no git, no deploy)`);
 
+  // Critical action log — every migrations run appends to /data/logs.
+  const actionLog = createActionLog('migrations', { root: ROOT, meta: { dryRun: String(dryRun) } });
+
   const supabaseUrl = getSupabaseUrl();
   if (!supabaseUrl) {
     fail('SUPABASE_URL not found in .env — cannot connect.');
+    actionLog.entry('SUPABASE_URL not found in .env');
+    actionLog.finish('failed', 'no SUPABASE_URL');
     process.exitCode = 1;
     return;
   }
   const projectRef = extractProjectRef(supabaseUrl);
+  actionLog.entry(`project: ${projectRef}`);
 
   const { pat } = (await createPatDb()) ?? {};
   if (!pat) {
     fail('No Supabase PAT — migrations cannot be applied.');
+    actionLog.entry('no Supabase PAT available');
+    actionLog.finish('failed', 'no PAT');
     process.exitCode = 1;
     return;
   }
@@ -135,8 +144,11 @@ async function main() {
     for (const m of plan.driftedMigrations) log(`    ${c.yellow}~${c.reset} ${m.name}`);
   }
 
+  actionLog.entry(`plan: ${plan.pendingMigrations.length} pending, ${plan.driftedMigrations.length} drifted, bootstrap=${plan.bootstrapRequired}`);
+
   if (dryRun) {
     info('Dry run — nothing applied.');
+    actionLog.finish('dry-run');
     return;
   }
 
@@ -145,6 +157,8 @@ async function main() {
     const proceed = await confirm('Record the current manifest as baseline and apply pending migrations?');
     if (!proceed) {
       warn('Aborted.');
+      actionLog.entry('bootstrap baseline confirmation declined');
+      actionLog.finish('aborted');
       process.exitCode = 1;
       return;
     }
@@ -174,6 +188,8 @@ async function main() {
     const match = migrations.find((m) => m.name === name || m.name.endsWith(`/${name}`) || m.name === join('migrations', name));
     if (!match) {
       fail(`--replay: no migration named "${name}" in the manifest.`);
+      actionLog.entry(`--replay: unknown migration "${name}"`);
+      actionLog.finish('failed', 'unknown --replay target');
       process.exitCode = 1;
       return;
     }
@@ -192,6 +208,7 @@ async function main() {
 
   if (toApply.length === 0) {
     ok('Nothing to apply.');
+    actionLog.finish('nothing-to-apply');
     return;
   }
 
@@ -207,9 +224,12 @@ async function main() {
       process.stdout.write(`${c.red}✗${c.reset}\n`);
       fail(`  ${migration.name}: ${e.message}`);
       fail('Migration aborted — fix and re-run npm run migrations (idempotent, safe to re-run).');
+      actionLog.entry(`FAILED applying ${migration.name}: ${e.message}`);
+      actionLog.finish('failed', migration.name);
       process.exitCode = 1;
       return;
     }
+    actionLog.entry(`applied ${migration.name}`);
     pendingRecords.push(stateRecord(migration));
     if (migration.name === 'system_config.sql') canRecordState = true;
     if (canRecordState && pendingRecords.length > 0) {
@@ -217,6 +237,8 @@ async function main() {
     }
   }
   ok(`${toApply.length} migration(s) applied and state recorded.`);
+  actionLog.entry(`${toApply.length} migration(s) applied and state recorded.`);
+  actionLog.finish('applied');
 
   try {
     await registerAuthHook(projectRef, pat);

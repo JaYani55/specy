@@ -22,6 +22,7 @@ with overlapping responsibilities and duplicated helpers:
 | `npm run plugin:remove` | `scripts/uninstall-plugin.mjs` | plugin removal + downmigrations + teardown |
 | `npm run deploy` | `scripts/deploy.mjs` | **build (always, unless `--skip-build`)** → consistency audit → drift → wrangler deploy |
 | `npm run migrations` | `scripts/migrate.mjs` | core migrations (workspace → Supabase, no git gate) |
+| `npm run snapshots` | `scripts/snapshots.mjs` | database snapshots: dump all DB content to `/data/snapshots` / fully restore a local snapshot |
 | `npm run bindings:provision` / `:check` | `scripts/provision-bindings.mjs` | cloud resource provisioning / drift |
 | `npm run auth:check` | `scripts/auth-diagnostics.mjs` | auth-hook diagnostics |
 | `predev`/`prebuild` | `scripts/ensure-registry.mjs` | registry rebuild + plugin npm deps |
@@ -71,6 +72,7 @@ script (one implementation per operation):
 | Install / remove plugin | `scripts/install-plugins.mjs` / `uninstall-plugin.mjs` (TUI asks for plugin + mode: unregister-keep-files or full delete) |
 | Provision / drift | `scripts/provision-bindings.mjs` |
 | Apply core migrations | `scripts/migrate.mjs` |
+| DB Snapshots (create / restore) | `scripts/snapshots.mjs` (TUI opens the snapshot submenu: Create Snapshot / Restore Snapshot / List — reads local snapshots from `/data/snapshots`) |
 | Deploy | `scripts/deploy.mjs` |
 | Auth diagnostics | `scripts/auth-diagnostics.mjs` |
 | Reconfigure | `runFirstTimeSetup()` |
@@ -83,6 +85,13 @@ script (one implementation per operation):
 | `scripts/lib/state.mjs` | phase detection + local installation-state summary |
 | `scripts/lib/first-time-setup.mjs` | the former `setup.mjs` wizard, now a callable flow |
 | `scripts/setup.mjs` | the unified dispatcher + maintenance TUI |
+| `scripts/snapshots.mjs` | DB snapshot engine (create / restore / list) + interactive snapshot submenu |
+| `scripts/lib/db-snapshot.mjs` | pure snapshot logic: schema filtering, SQL literal rendering, insert/delete/sequence SQL, FK-topological restore ordering |
+| `scripts/lib/action-log.mjs` | dynamic `/data` workspace (`snapshots/`, `logs/`) + critical action log writer |
+
+Every critical action run (migrations, snapshot create, snapshot restore)
+writes an action log to `/data/logs` — see
+[`db-snapshots.md`](db-snapshots.md).
 
 ---
 

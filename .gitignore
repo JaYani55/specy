@@ -59,6 +59,11 @@ api/plugin-bindings.ts
 # Written by scripts/provision-bindings.mjs / install-plugins.mjs.
 .bindings-ledger.json
 
+# ─── Local data workspace ─────────────────────────────────────────────────────────
+# Created dynamically by the setup tooling: database snapshots
+# (/data/snapshots) and critical action logs (/data/logs).
+/data/
+
 # Per-plugin npm dependency tracking (gitignored — keeps plugin deps out of package.json).
 # Reinstalled automatically by ensure-registry.mjs on every predev/prebuild.
 plugin-deps.json

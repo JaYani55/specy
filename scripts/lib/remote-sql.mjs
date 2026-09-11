@@ -16,6 +16,7 @@ const log = (...a) => console.log(...a);
 const info = (m) => log(`${c.cyan}i${c.reset}  ${m}`);
 const okMsg = (m) => log(`${c.green}✓${c.reset}  ${m}`);
 const warn = (m) => log(`${c.yellow}!${c.reset}  ${m}`);
+const fail = (m) => log(`${c.red}✗${c.reset}  ${m}`);
 
 export function getSupabaseUrl() {
   const env = loadDotEnv();
@@ -113,4 +114,4 @@ export function patQuery(db, sql) {
   return runSqlQuery(db.projectRef, db.pat, sql);
 }
 
-export { info, log, warn, okMsg };
+export { info, log, warn, okMsg, fail };

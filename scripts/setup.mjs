@@ -273,6 +273,7 @@ const MENU = [
   { value: 'drift', label: 'Check remote binding drift', hint: 'npm run bindings:check' },
   { value: 'state', label: 'Re-check deployment states', hint: 'dry-run or repair (--sync)' },
   { value: 'migrations', label: 'Apply pending core migrations', hint: 'npm run migrations' },
+  { value: 'snapshots', label: 'DB Snapshots', hint: 'create / restore database snapshots (/data/snapshots)' },
   { value: 'deploy', label: 'Deploy to Cloudflare', hint: 'npm run deploy' },
   { value: 'auth', label: 'Diagnose auth hook', hint: 'npm run auth:check' },
   { value: 'resetup', label: 'Re-run first-time setup (reconfigure)', hint: 'rewrites wrangler.jsonc' },
@@ -375,6 +376,9 @@ async function runMaintenanceTui() {
       }
       case 'migrations':
         await runMigrationsWithGuards();
+        break;
+      case 'snapshots':
+        nodeScript('snapshots.mjs');
         break;
       case 'deploy':
         nodeScript('deploy.mjs');
