@@ -310,6 +310,35 @@ export function buildSelectSql() {
       order by ds.owner_kind, ds.plugin_id, ds.component, ds.key;`;
 }
 
+/**
+ * Build the INSERT that registers a workspace plugin in public.plugins.
+ *
+ * deployment_state.plugin rows resolve plugin_id via
+ * `select id from public.plugins where slug = …` — if the plugin has no row
+ * (e.g. it predates the installer's registration step), the subselect yields
+ * NULL and the insert violates deployment_state_owner_check. Writers that
+ * backfill plugin state (state:recheck --sync, installer) must therefore
+ * ensure the row exists first.
+ *
+ * `repo_url` is required by the plugins_kind_url_consistency check
+ * (kind = 'plugin' ⇒ repo_url NOT NULL, see plugins_webapps.sql).
+ *
+ * @param {string} slug Plugin slug (= manifest.id).
+ * @param {string} name Display name.
+ * @param {string|null} version Version (fallback '0.0.0').
+ * @param {string|null} repoUrl Repository URL (manifest.repository).
+ * @returns {string} SQL registering the plugin (idempotent).
+ */
+export function buildPluginRegistrationSql(slug, name, version, repoUrl) {
+  if (!repoUrl) {
+    throw new Error(`Cannot register plugin "${slug}" in public.plugins — no repository URL (required by plugins_kind_url_consistency).`);
+  }
+  return `
+      insert into public.plugins (slug, name, version, repo_url, status)
+      values (${sqlStr(slug)}, ${sqlStr(name)}, ${sqlStr(version ?? '0.0.0')}, ${sqlStr(repoUrl)}, 'registered')
+      on conflict (slug) do nothing;`;
+}
+
 // ─── Executors (thin — the actual SQL is built by the pure helpers above) ─────
 
 /**

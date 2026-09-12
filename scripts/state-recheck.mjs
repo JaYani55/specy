@@ -39,6 +39,7 @@ import { collectPluginIntents, readBindingLedger, readWorkerName } from './lib/b
 import { collectSqlFiles } from './lib/migration-validation.mjs';
 import {
   buildPluginDeleteByIdSql,
+  buildPluginRegistrationSql,
   coreRecordsToStateRows,
   deletePluginDeploymentState,
   driftFields,
@@ -232,14 +233,64 @@ function localItemToStateValue(item) {
   });
 }
 
+/**
+ * Ensure every plugin referenced by unrecorded/drifted rows has a row in
+ * public.plugins before plugin state is written — deployment_state.plugin rows
+ * resolve plugin_id via the slug, and a missing row crashes the write with a
+ * deployment_state_owner_check violation (plugins that predate the installer's
+ * registration step). Missing repository URLs are reported, not fatal — the
+ * subsequent write warns instead of crashing (see applySync).
+ *
+ * @param {object} db PAT db handle (createPatDb).
+ * @param {{ unrecorded: object[], drifted: object[] }} result Reconcile result.
+ */
+async function ensurePluginsRegistered(db, result) {
+  if (!db) return;
+  const slugs = new Set();
+  for (const item of [...(result?.unrecorded ?? []), ...(result?.drifted ?? [])]) {
+    if (item?.owner?.startsWith('plugin:')) slugs.add(item.owner.slice('plugin:'.length));
+  }
+  if (!slugs.size) return;
+  const plugins = scanWorkspacePlugins();
+  for (const slug of slugs) {
+    const plugin = plugins.find((p) => p.id === slug);
+    const manifest = plugin?.manifest ?? null;
+    const repoUrl = manifest?.repository ?? null;
+    if (!repoUrl) {
+      warn(`Plugin "${slug}" has no repository URL in its manifest — plugin state rows may fail to record.`);
+      continue;
+    }
+    try {
+      await runSqlQuery(db.projectRef, db.pat, buildPluginRegistrationSql(slug, manifest?.name ?? slug, manifest?.version, repoUrl));
+    } catch (e) {
+      // Idempotent re-run: an existing row (or a concurrent registration) is
+      // fine — only log if something genuinely unexpected happened.
+      if (!String(e?.message || e).includes('duplicate key')) {
+        warn(`Could not ensure "${slug}" is registered in public.plugins: ${e.message}`);
+      }
+    }
+  }
+}
+
 async function applySync(result, db) {
+  // Plugin state rows need the plugin registered first (see ensurePluginsRegistered).
+  await ensurePluginsRegistered(db, result);
+
   const unrecordedRows = [];
   for (const item of result.unrecorded) {
     unrecordedRows.push({ owner: item.owner, component: item.component, key: item.key, value: localItemToStateValue(item) });
   }
   if (unrecordedRows.length) {
-    await writeDeploymentState(db.projectRef, db.pat, unrecordedRows);
-    ok(`Backfilled ${unrecordedRows.length} unrecorded row(s).`);
+    try {
+      await writeDeploymentState(db.projectRef, db.pat, unrecordedRows);
+      ok(`Backfilled ${unrecordedRows.length} unrecorded row(s).`);
+    } catch (e) {
+      // Core rows are written before plugin rows inside writeDeploymentState and
+      // every write is an idempotent upsert — a plugin-side failure must not
+      // abort the whole sync; re-running continues where it left off.
+      warn(`Backfill partially failed: ${e.message}`);
+      warn('Core rows are recorded; re-run npm run state:recheck -- --sync after fixing the plugin rows (see warnings above).');
+    }
   }
 
   // Plugin drift → auto re-record (locally generated truth). Core drift →
@@ -254,8 +305,12 @@ async function applySync(result, db) {
     value: localItemToStateValue(local),
   }));
   if (pluginDriftRows.length) {
-    await writeDeploymentState(db.projectRef, db.pat, pluginDriftRows);
-    warn(`Re-recorded ${pluginDriftRows.length} drifted plugin row(s) to the local values.`);
+    try {
+      await writeDeploymentState(db.projectRef, db.pat, pluginDriftRows);
+      warn(`Re-recorded ${pluginDriftRows.length} drifted plugin row(s) to the local values.`);
+    } catch (e) {
+      warn(`Plugin drift re-record failed: ${e.message}`);
+    }
   }
 
   const confirmedCoreRows = [];

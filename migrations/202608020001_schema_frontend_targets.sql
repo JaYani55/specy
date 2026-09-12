@@ -156,6 +156,11 @@ create policy schema_frontend_targets_delete
   );
 
 -- Backfill only the new registry. Existing schema and page JSON is untouched.
+-- Idempotency guard: the ON CONFLICT clause only covers (schema_id, target_key) —
+-- a schema that already has an enabled+primary row with a DIFFERENT target_key
+-- (e.g. seeded by the RPC on a live instance) violates the partial unique index
+-- schema_frontend_targets_primary_unique. Skip schemas that already have an
+-- enabled primary row of any key.
 insert into public.schema_frontend_targets (
   schema_id, tenant_id, target_key, kind, host_path, supports_preview, is_primary
 )
@@ -170,6 +175,10 @@ select
 from public.page_schemas ps
 where ps.slug_structure like '%:slug%'
   and (length(ps.slug_structure) - length(replace(ps.slug_structure, ':slug', ''))) = 5
+  and not exists (
+    select 1 from public.schema_frontend_targets t
+    where t.schema_id = ps.id and t.enabled and t.is_primary
+  )
 on conflict (schema_id, target_key) do nothing;
 
 insert into public.schema_frontend_targets (
