@@ -135,6 +135,47 @@ export function coreRecordsToStateRows(records) {
 }
 
 /**
+ * Reverse of coreKeyToComponent: map a core-owned deployment_state row back
+ * onto its legacy core_update key. Returns null for rows without a legacy
+ * equivalent (auth_hook, config) — those were never stored in core_update.
+ *
+ * @param {{ owner: string, component: string, key: string }} row
+ * @returns {string|null}
+ */
+export function stateRowToLegacyKey(row) {
+  if (row?.owner !== 'core') return null;
+  if (row.component === 'migrations') return `${MIGRATION_PREFIX}${row.key}`;
+  if (row.component === 'edge_functions') {
+    return row.key === 'deployed' ? 'deployment:functions' : `${FUNCTION_PREFIX}${row.key}`;
+  }
+  if (row.component === 'worker') {
+    if (row.key === 'worker') return 'deployment:worker';
+    if (row.key === 'core_commit') return 'deployment:core_commit';
+  }
+  return null;
+}
+
+/**
+ * Convert a typed §3.2 state value back into the legacy core_update value
+ * shape consumed by analyzeCoreUpdates (checksum comparison) and the cf-update
+ * worker-deploy bookkeeping.
+ *
+ * @param {object} value Normalized state value (see normalizeStateValue).
+ * @returns {object}
+ */
+export function stateValueToLegacyValue(value = {}) {
+  const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    checksum: v.checksum ?? null,
+    commit: v.commit ?? null,
+    version: v.version ?? null,
+    status: v.status ?? null,
+    deployed_at: v.deployed_at ?? v.meta?.deployed_at ?? null,
+    workerName: v.meta?.workerName ?? null,
+  };
+}
+
+/**
  * Convert a legacy core_update value into the §3.2 state value.
  *
  * @param {object} value

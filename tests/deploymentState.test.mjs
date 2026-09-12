@@ -10,6 +10,8 @@ import {
   driftFields,
   isDrifted,
   normalizeOwner,
+  stateRowToLegacyKey,
+  stateValueToLegacyValue,
   normalizeStateValue,
   reconcileRecords,
   summarizeDeploymentRows,
@@ -280,4 +282,38 @@ test('summarizeDeploymentRows: empty/undefined input yields an empty summary', (
   assert.deepEqual(empty.plugins, []);
   assert.equal(empty.coreMigrations, 0);
   assert.equal(summarizeDeploymentRows(undefined).coreMigrations, 0);
+});
+
+test('stateRowToLegacyKey inverts coreKeyToComponent for all legacy keys', () => {
+  // Round-trip: legacy key → state row → legacy key must be lossless.
+  const legacyKeys = [
+    'migration:objects.sql',
+    'migration:Auth/Access_hook.sql',
+    'function:send_email',
+    'deployment:worker',
+    'deployment:core_commit',
+    'deployment:functions',
+  ];
+  for (const key of legacyKeys) {
+    const row = coreRecordToStateRow({ key, value: {} });
+    assert.equal(stateRowToLegacyKey(row), key, `round-trip failed for ${key}`);
+  }
+});
+
+test('stateRowToLegacyKey: rows without legacy equivalent return null', () => {
+  assert.equal(stateRowToLegacyKey({ owner: 'core', component: 'auth_hook', key: 'custom_access_token_hook' }), null);
+  assert.equal(stateRowToLegacyKey({ owner: 'core', component: 'config', key: 'anything' }), null);
+  assert.equal(stateRowToLegacyKey({ owner: 'plugin:pluradash', component: 'code', key: 'code' }), null);
+  assert.equal(stateRowToLegacyKey(null), null);
+});
+
+test('stateValueToLegacyValue exposes checksum/commit at the legacy field positions', () => {
+  const legacy = stateValueToLegacyValue({
+    status: 'applied', checksum: 'abc123', commit: 'deadbee', version: null,
+    deployed_at: '2026-09-12T00:00:00Z', meta: { workerName: 'service-cms' },
+  });
+  assert.equal(legacy.checksum, 'abc123');
+  assert.equal(legacy.commit, 'deadbee');
+  assert.equal(legacy.deployed_at, '2026-09-12T00:00:00Z');
+  assert.equal(legacy.workerName, 'service-cms');
 });

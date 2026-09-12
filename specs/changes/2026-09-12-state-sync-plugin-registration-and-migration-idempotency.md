@@ -20,7 +20,17 @@ Drei Fehler, die beim ersten echten Prod-Catch-up (dev → main Merge,
    `schema_frontend_targets_primary_unique` → `migrate.mjs` brach die komplette
    Pending-Kette ab. Jetzt: zusätzliches `not exists`-Guard auf
    „Schema hat bereits eine enabled+primary-Row beliebigen Keys“.
-3. **Obsoler Legacy-State-Restposten.** Vier Rows im alten `core_update`-Format
+3. **Split-Brain: `migrate`/`cf:update` planten gegen den veralteten Legacy-State.**
+   `fetchCoreUpdateState()` las ausschließlich `system_config` (`core_update`),
+   während `state:recheck --sync` die konvergierten (EOL-normalisierten)
+   Checksummen in `public.deployment_state` schrieb — migrate/cf-update meldeten
+   daher permanent 50 „drifted“ Migrationen, obwohl die Registry längst konvergiert
+   war (Shim-Fenster-Dualität). Fix: `fetchCoreUpdateState` überlagert jetzt die
+   Legacy-Rows mit den Core-Rows aus `deployment_state` (Reverse-Mapping via
+   `stateRowToLegacyKey`/`stateValueToLegacyValue`, beide neu exportiert und
+   round-trip-getestet). Registry gewinnt bei Schlüsseln, die in beiden liegen;
+   ohne Registry (Instanz vor der Migration) greift der Legacy-Shim unverändert.
+4. **Obsoler Legacy-State-Restposten.** Vier Rows im alten `core_update`-Format
    (`deployment:functions`, `deployment:core_commit`, `core_commit`, `deployed`)
    bleiben nach der Taxonomie-Migration als „stale“ stehen — Sync löscht Core-Rows
    grundsätzlich nie (Doktrin). Manuelles Aufräumen (optional, rein kosmetisch):
@@ -51,7 +61,14 @@ State-Write-Fehlertoleranz, die `migrate.mjs` bereits hat.
 
 - `scripts/lib/deployment-state.mjs` — neu: `buildPluginRegistrationSql()`
   (pure, exportiert; wirft ohne `repo_url`, da
-  `plugins_kind_url_consistency` sonst die Row zurückweist).
+  `plugins_kind_url_consistency` sonst die Row zurückweist) sowie
+  `stateRowToLegacyKey()` + `stateValueToLegacyValue()` (Reverse-Mapping der
+  Registry-Rows auf Legacy-Core-Update-Keys, Round-Trip getestet).
+- `scripts/lib/core-update.mjs` — `fetchCoreUpdateState()` überlagert den
+  Legacy-Lese-Shim mit den Core-Rows aus `deployment_state`
+  (`readDeploymentStateCore`, Registry gewinnt) — migrate/cf-update planen
+  jetzt gegen das konvergierte Registry-State statt gegen veraltete
+  `system_config`-Checksummen.
 - `scripts/state-recheck.mjs` — `ensurePluginsRegistered()` vor dem Backfill;
   Backfill- und Plugin-Drift-Writes in try/catch (Warnung statt Crash).
 - `migrations/202608020001_schema_frontend_targets.sql` — `not exists`-Guard am
@@ -59,6 +76,9 @@ State-Write-Fehlertoleranz, die `migrate.mjs` bereits hat.
   Drift gemeldet, per `--sync` bestätigen oder `npm run migrations -- --replay`).
 - `tests/pluginRegistration.test.mjs` — 3 Regressionstests (Repo-URL-Pflicht,
   `on conflict do nothing`, Versions-Fallback).
+- `tests/deploymentState.test.mjs` — 3 neue Tests: Round-Trip
+  `coreKeyToComponent` ↔ `stateRowToLegacyKey`, Null-Fälle ohne
+  Legacy-Äquivalent, Legacy-Value-Projektion.
 
 ## Impact-Analyse
 
@@ -74,7 +94,7 @@ State-Write-Fehlertoleranz, die `migrate.mjs` bereits hat.
 
 ## Tests
 
-- `npm test` — 266 Tests grün (3 neu).
+- `npm test` — 269 Tests grün (6 neu).
 - `npm run build` — grün (inkl. typecheck).
 - Nicht live verifiziert: Sync-Lauf gegen eine Bestands-DB ohne registriertes
   Plugin (die reproduzierende Konstellation) — der Fix ist durch Unit-Tests des

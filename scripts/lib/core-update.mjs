@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { MIGRATION_ORDER_CORE } from './migration-order.mjs';
-import { coreRecordsToStateRows, writeDeploymentState } from './deployment-state.mjs';
+import { coreRecordsToStateRows, readDeploymentState, stateRowToLegacyKey, stateValueToLegacyValue, writeDeploymentState } from './deployment-state.mjs';
 
 export const CORE_UPDATE_NAMESPACE = 'core_update';
 
@@ -164,6 +164,27 @@ export function buildFunctionManifest(root) {
   });
 }
 
+/**
+ * Read core-owned rows from the deployment_state registry and project them
+ * onto legacy core_update keys/values ({@link stateRowToLegacyKey}). Used by
+ * fetchCoreUpdateState so migrate/cf-update plan against the converged truth.
+ *
+ * @param {string} projectRef
+ * @param {string} pat
+ * @returns {Promise<Map<string, object>>}
+ */
+async function readDeploymentStateCore(projectRef, pat) {
+  const state = await readDeploymentState(projectRef, pat);
+  const projected = new Map();
+  if (!state.available) return projected;
+  for (const row of state.rows) {
+    const legacyKey = stateRowToLegacyKey(row);
+    if (!legacyKey) continue;
+    projected.set(legacyKey, stateValueToLegacyValue(row.value));
+  }
+  return projected;
+}
+
 export async function fetchCoreUpdateState(projectRef, pat) {
   try {
     const payload = await runSqlQuery(
@@ -196,6 +217,22 @@ export async function fetchCoreUpdateState(projectRef, pat) {
       }
 
       state.set(item.key, value);
+    }
+
+    // Overlay the typed deployment_state registry (source of truth since
+    // 202609100001_deployment_state.sql). Rows re-recorded there by
+    // `state:recheck --sync` carry the current checksums (e.g. EOL-normalized),
+    // while the core_update shim still holds the legacy raw values — without
+    // this overlay, migrate/cf-update report permanent drift for rows the
+    // registry has already converged. Registry wins for keys present in both.
+    try {
+      const registry = await readDeploymentStateCore(projectRef, pat);
+      for (const [key, value] of registry) {
+        state.set(key, value);
+      }
+    } catch {
+      // Registry unavailable (pre-migration instance) — legacy rows are the
+      // best we have; the shim behavior stays intact.
     }
 
     return { available: true, state };
