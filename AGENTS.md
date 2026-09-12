@@ -78,6 +78,7 @@ Existing change logs:
 - `2026-04-13-smtp-notification-foundation.md`
 - `2026-06-20-page-schema-visibility-fix.md`
 - `2026-07-04-pluradash-worker-connectors.md`
+- `2026-09-09-binding-intent-provisioning.md`
 
 ---
 
@@ -97,6 +98,7 @@ All changes are **strictly bound** between Core Changes and Plugin Changes:
 - **Plugin changes** must be documented in the plugin's own repository. Plugins are **separate repositories** and must NOT be committed to the core repo. The `.gitignore` already enforces this: `plugins/*/` is gitignored.
 - **Communication between plugins and core** can ONLY happen via clearly delineated **Hooks and APIs**. Plugins must never import internal implementation details from core pages or components.
 - **If a new Hook or API is created**, it must be documented in the appropriate `/specs/` topical folder with its contract (target name, scope, context shape, and usage guidance).
+- **Every new plugin hook target must be documented in [`specs/agents/plugin-hooks.md`](specs/agents/plugin-hooks.md)** — the authoritative hook target registry (§2 dispatch table: target, scope, kind, dispatch point, context shape, status). Undocumented hooks are treated as incomplete. Declared-but-unwired targets (in `hook_metadata` without core dispatch) must be flagged there with a ⚠️ status.
 
 ### General Rules
 
@@ -144,7 +146,7 @@ Because plugins only depend on the *shape* of core interfaces (not internal logi
 
 - All SQL migrations live in `/migrations/` with ordered, zero-padded numeric prefixes (e.g., `001_preamble.sql`, `002_user_profile.sql`).
 - Migrations must be **idempotent** — safe to run multiple times. Use `CREATE TABLE IF NOT EXISTS`, `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE OR REPLACE FUNCTION`, etc.
-- **When adding a new migration**, you MUST register it in `scripts/setup.mjs` in the `MIGRATION_ORDER` array at the correct position in the dependency chain.
+- **When adding a new migration**, you MUST register it in `scripts/lib/migration-order.mjs` in the `MIGRATION_ORDER_CORE` array at the correct position in the dependency chain (validated by `tests/coreMigrations.test.mjs`).
 - Core migrations target the `public` schema. Plugin migrations must target their own dedicated schema (e.g., `my_plugin`).
 
 ### Plugin Migrations
@@ -156,10 +158,12 @@ Because plugins only depend on the *shape* of core interfaces (not internal logi
 
 ### Cloudflare Worker Bindings
 
-- Wrangler bindings required by plugins (AI Gateway, KV namespaces, Durable Objects) are declared in `plugin.json` under `wrangler_bindings`.
-- These are **automatically injected** into `wrangler.jsonc` by `ensure-registry.mjs` (runs on every `predev`/`prebuild`).
+- **Binding management is part of a plugin.** Developers declare their cloud system bindings based on the deployment path (`deployment_path` in `plugin.json`) — **`cloudflare` is the current default and only deployment path**. Plugins declare *intents* (`wrangler_intents`: binding + purpose + scope), never concrete instances; core resolves per-environment instance names (`{worker-name}--{plugin-id}--{purpose}`), provisions them (`npm run bindings:provision`, create-or-get + git-ignored resource ledger `.bindings-ledger.json`) and injects the resolved entries.
+- The deprecated legacy form `wrangler_bindings` (concrete instance entries, injected verbatim) is still accepted during migration; `wrangler_intents` wins when both are present. Mixed workspaces are supported.
+- Binding intent validation runs at install time and on every `predev`/`prebuild` (via `ensure-registry.mjs`); violations abort with plugin-referenced errors. Provisioning failures are config-level errors that abort before `wrangler deploy`.
 - The injection happens inside the auto-generated `PLUGIN BINDINGS` section. Never manually edit that section.
-- `r2_buckets`, `vars`, and `secrets_store_secrets` are owned by the CMS core and cannot be declared by plugins.
+- `r2_buckets` is owned by the CMS core and cannot be declared by plugins — plugins consume the shared `MEDIA_BUCKET` binding. `vars` and `secrets_store_secrets` merge into the core sections with per-name conflict detection (duplicates across plugins abort the build).
+- Full contract (resolution, provisioning, ledger, teardown, deployment-path extensibility for other vendors): [`specs/platform/binding-management.md`](specs/platform/binding-management.md).
 
 ### Install & Uninstall Scripts
 
@@ -170,6 +174,25 @@ Because plugins only depend on the *shape* of core interfaces (not internal logi
 | `scripts/uninstall-plugin.mjs` | Cleanly remove a plugin (directory, registry, deps, downmigrations) |
 | `scripts/ensure-registry.mjs` | Rebuild plugin registries + wrangler bindings (runs on predev/prebuild) |
 | `scripts/register-plugins.mjs` | Rebuild registries from workspace plugins |
+| `scripts/state-recheck.mjs` | Reconcile recorded deployment state against local manifests/live systems (`npm run state:recheck`) |
+
+### Deployment State Publication
+
+- Every **major component** (core Worker deploy, core migrations, core edge
+  functions, auth hook) and every **plugin** must record its deployment/install
+  state in `public.deployment_state` **after the external system confirms
+  success** (write-after-confirm). State is tagged with `owner_kind`
+  (`core`/`plugin`) and `component`; plugin rows must carry `plugin_id`
+  (FK → `public.plugins`).
+- **New plugins** must have their install flow write `code`, `migrations`,
+  `claims` and `bindings` rows; their uninstall flow must remove them (cascade
+  + explicit teardown).
+- **New migration/state keys** must be added to the component taxonomy in
+  [`specs/platform/unified-setup-tui.md`](specs/platform/unified-setup-tui.md)
+  (or its successor) and covered by a test.
+- State is **never** written before confirmation, **never** carries secrets, and
+  is **always** idempotent (`ON CONFLICT DO UPDATE`). Re-check/repair with
+  `npm run state:recheck -- --sync`.
 
 ### Generated Files (do not edit manually)
 
@@ -179,5 +202,8 @@ These are regenerated by the scripts above and are gitignored:
 - `api/plugin-routes.ts` — Hono route mount table
 - `api/plugin-hooks.ts` — backend hook contributions
 - `api/plugin-metadata.ts` — runtime discovery metadata
+- `api/plugin-claims.ts` — plugin claim declaration registry (descriptive; see specs/auth/plugin-claims.md)
+- `api/plugin-bindings.ts` — plugin binding intent descriptor registry (descriptive; see specs/platform/binding-management.md)
 - `plugin-deps.json` — per-plugin npm dependency tracking
+- `.bindings-ledger.json` — per-deployment resource ledger for provisioned plugin binding instances (BIPS)
 - `wrangler.jsonc` — generated from `wrangler.default.jsonc` + plugin bindings

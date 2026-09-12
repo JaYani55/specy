@@ -39,7 +39,9 @@ if (existsSync(PLUGIN_DEPS_FILE)) {
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     // --no-package-lock: resolve fresh from registry so the CMS lockfile doesn't
     // force conservative (minimum-version) resolution for plugin-managed packages.
-    const result = spawnSync(npmCmd, ['install', '--no-save', '--legacy-peer-deps', ...pkgs], { cwd: ROOT, stdio: 'pipe' });
+    // shell:true — spawning .cmd files (npm.cmd on Windows) without a shell
+    // fails with EINVAL on current Node versions.
+    const result = spawnSync(npmCmd, ['install', '--no-save', '--legacy-peer-deps', ...pkgs], { cwd: ROOT, stdio: 'pipe', shell: true });
     if (result.status !== 0) {
       console.warn('!  Plugin package install failed. Run manually:');
       console.warn(`   npm install --no-save --legacy-peer-deps ${pkgs.join(' ')}`);

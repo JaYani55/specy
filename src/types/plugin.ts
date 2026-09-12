@@ -66,6 +66,15 @@ export interface PluginManifest {
   hook_metadata?: PluginHookDescriptor[];
 
   /**
+   * Custom JWT claims this plugin contributes (Claim Management,
+   * specs/plans/CLAIM_MANAGEMENT.md). Declared at build time, resolved at
+   * token-mint time by a plugin-schema function, namespaced under
+   * `claims.<plugin_id>`. The registry step enforces single-source,
+   * reserved-key rejection and the per-claim byte budget.
+   */
+  claims_declarations?: PluginClaimDeclaration[];
+
+  /**
    * Optional metadata describing the plugin's API surface for discovery.
    */
   api_metadata?: PluginApiMetadata;
@@ -81,10 +90,31 @@ export interface PluginManifest {
    * PLUGIN BINDINGS section. Each binding type is optional; the merge script
    * deduplicates by binding name across all installed plugins.
    *
-   * EUPL note: declarative binding declarations keep plugin infrastructure
-   * requirements in plugin.json, never in core wrangler config files.
+   * @deprecated Legacy form — declares CONCRETE instances (account-global names),
+   * which break per-environment deployments. Declare `wrangler_intents` instead
+   * (Binding Management, specs/platform/binding-management.md). Both forms are
+   * accepted during migration; `wrangler_intents` wins when both are present.
    */
   wrangler_bindings?: PluginWranglerBindings;
+
+  /**
+   * Binding intents (Binding Intent & Provisioning System — BIPS).
+   * The plugin declares *requirements* (`binding` + `purpose` + `scope`), never
+   * concrete instances; a deterministic resolver maps every intent to a
+   * per-environment instance name (`{worker-name}--{plugin-id}--{purpose}`) and
+   * the provisioner create-or-gets it before deploy.
+   *
+   * Wins over the deprecated `wrangler_bindings` when both are present.
+   */
+  wrangler_intents?: PluginBindingIntents;
+
+  /**
+   * The vendor cloud system the plugin's bindings are declared against.
+   * Binding management is part of a plugin: developers must declare their cloud
+   * system bindings based on the deployment path. Cloudflare is the current
+   * default and only deployment path; unknown paths are rejected at build time.
+   */
+  deployment_path?: PluginDeploymentPath;
 }
 
 export type PluginConfigFieldType = 'text' | 'textarea' | 'url' | 'secret';
@@ -131,6 +161,29 @@ export interface PluginHookDescriptor {
   /** Lower numbers run earlier; defaults to 100. */
   order?: number;
   /** Human-readable description for discovery/admin tooling. */
+  description?: string;
+}
+
+/** JWT value shape a plugin claim resolver is allowed to return. */
+export type PluginClaimValueType = 'bool' | 'string' | 'uuid' | 'string[]' | 'json';
+
+export interface PluginClaimDeclaration {
+  /**
+   * Claim key inside the plugin's namespaced claim object. The top-level JWT
+   * key is always the plugin id (`claims.<plugin_id>`).
+   */
+  key: string;
+  /** Value shape the resolver returns (validated at mint time against the registry). */
+  type: PluginClaimValueType;
+  /**
+   * Name of the resolver function in the plugin schema (signature:
+   * `(p_uid uuid, p_tenant uuid) RETURNS jsonb`). Registered by the plugin's
+   * migration into public.plugin_claims.
+   */
+  resolver: string;
+  /** Max serialized size in bytes; over-budget output is omitted at mint time. */
+  budget_bytes?: number;
+  /** Human-readable description for review/agent discovery. */
   description?: string;
 }
 
@@ -284,12 +337,102 @@ export interface PluginWranglerQueueConsumerBinding {
   max_batch_timeout?: number;
 }
 
+// ─── Binding Intents (BIPS) ─────────────────────────────────
+
+/** Vendor cloud system bindings are declared against. Cloudflare is the current default and only deployment path. */
+export type PluginDeploymentPath = 'cloudflare';
+
+/**
+ * Instance scope of a binding intent:
+ * - `environment` (default) — the deployment gets its OWN instance, resolved as
+ *   `{worker-name}--{plugin-id}--{purpose}` (isolation by default).
+ * - `shared` — explicit opt-in to one account-global instance, resolved as
+ *   `{plugin-id}--{purpose}` (single-source across plugins).
+ */
+export type PluginBindingScope = 'environment' | 'shared';
+
+/** Base shape of a binding intent — requirements, never concrete instances. */
+export interface PluginBindingIntentBase {
+  /** JS variable name on `env` — the plugin's capability handle in plugin code. */
+  binding: string;
+  /** Semantic slug; combined with plugin id and worker name into the instance name. */
+  purpose: string;
+  /** Instance scope (default: `environment`). */
+  scope?: PluginBindingScope;
+}
+
+export interface PluginQueueBindingIntent extends PluginBindingIntentBase {
+  /** Consumer settings — registered against the SAME resolved instance as the producer. */
+  consumer?: Omit<PluginWranglerQueueConsumerBinding, 'queue'>;
+}
+
+export interface PluginKvBindingIntent extends PluginBindingIntentBase {
+  /** @deprecated Intents never name instances — the namespace id resolves per environment from provisioning. */
+  namespace_id?: string;
+}
+
+export interface PluginSecretsStoreBindingIntent extends PluginBindingIntentBase {
+  /** Secret name inside the store (the link target). Defaults to the UPPER_SNAKE form of `purpose`. */
+  secret_name?: string;
+  /** Secrets Store UUID. Omit to resolve the core deployment's Secrets Store (`SECRETS_STORE_ID`). */
+  store_id?: string;
+  /** Provision behavior (default: `link` — verify the link, values stay in the Secrets Store). */
+  provision?: 'link';
+}
+
+/**
+ * Binding intents declared under `wrangler_intents` in plugin.json. The plugin
+ * declares *requirements*; core owns the mechanism (resolver, provisioner,
+ * ledger, injection) and plugins declare semantics — same split as claims.
+ *
+ * @see specs/platform/binding-management.md
+ */
+export interface PluginBindingIntents {
+  /** Workers AI binding (singleton object, no instance provisioning). */
+  ai?: PluginWranglerAiBinding;
+  /** KV namespace intents — provisioned per environment; ids come from the ledger. */
+  kv_namespaces?: PluginKvBindingIntent[];
+  /** Durable Object class bindings (namespace = worker, no instance provisioning). */
+  durable_objects?: PluginWranglerDurableObjectBinding[];
+  /** Queue intents — the incident case: per-environment instances by default. */
+  queues?: PluginQueueBindingIntent[];
+  /** Plain environment vars (non-secret). Merged into wrangler.jsonc vars. */
+  vars?: Record<string, string>;
+  /** Secrets Store link intents — verified against the deployment's store. */
+  secrets_store_secrets?: PluginSecretsStoreBindingIntent[];
+}
+
+/**
+ * Descriptive descriptor of a resolved binding intent, as written to the
+ * generated api/plugin-bindings.ts registry (review / discovery artifact).
+ */
+export interface PluginBindingIntentDescriptor {
+  pluginId: string;
+  kind: string;
+  /** JS variable name on `env` (capability handle). */
+  binding: string;
+  /** Semantic purpose slug. */
+  purpose: string;
+  scope: PluginBindingScope;
+  /** Vendor cloud system the intent is declared against. */
+  deploymentPath: string;
+  /** Resolved per-environment instance name, or null for instance-less kinds. */
+  resolvedName: string | null;
+}
+
 export interface PluginAccessRule {
   /**
    * User must have at least one of these JWT claim roles to access the plugin.
    * Example: ['support', 'super-admin']
    */
   anyRole?: string[];
+  /**
+   * Plugin claim predicates — ALL entries must match the namespaced JWT claim
+   * (`claims.<plugin_id>`) for access to be granted. See
+   * specs/plans/CLAIM_MANAGEMENT.md (fail-closed: an omitted claim never matches).
+   * Example: { entitlements: { tier: 'pro' } }
+   */
+  claims?: Record<string, Record<string, unknown>>;
 }
 
 export type PluginRegistrationKind = 'plugin' | 'webapp';

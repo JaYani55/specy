@@ -83,25 +83,16 @@ export const getVisibleTenants = async (): Promise<TenantRecord[]> => {
   }
 
   const tenants = (data ?? []) as TenantRecord[];
-  let organizations: Array<{ tenant_id: string; name: string }> = [];
-  try {
-    const { data: organizationRows, error: organizationsError } = await supabase
-      .schema('pluradash')
-      .from('organizations')
-      .select('tenant_id, name');
-    if (!organizationsError) {
-      organizations = (organizationRows ?? []) as Array<{ tenant_id: string; name: string }>;
-    }
-  } catch {
-    // Keep legacy tenant names usable before or without the PluraDash schema.
-  }
-  const organizationNames = new Map(
-    organizations.map((organization) => [organization.tenant_id, organization.name]),
-  );
+  // NOTE: tenant display-name enrichment via plugin-owned data (previously
+  // pluradash.organizations) was removed — core must not query plugin schemas
+  // directly (AGENTS.md §4). A plugin that wants to rename tenants should do
+  // so through a documented plugin hook target (src/plugins/hooks-registry.ts),
+  // not a hard-coded schema reference. `organization_slug` on tenants (core)
+  // remains available for slug-based naming.
 
   return tenants.map((tenant) => ({
     ...tenant,
-    organization_name: organizationNames.get(tenant.id) ?? null,
+    organization_name: null,
   }));
 };
 

@@ -38,3 +38,54 @@ export function removeSecretsStoreBinding(jsonc, bindingName) {
 
   return { text: jsonc.slice(0, start) + jsonc.slice(end), removed: true };
 }
+
+/**
+ * Parse wrangler JSONC text into an object — comment-safe: `//` and `/* *\/`
+ * comments are stripped ONLY outside string literals (URLs like
+ * "https://…" contain `//` inside strings and must survive).
+ * Tolerates trailing commas.
+ *
+ * @param {string} text Full wrangler.jsonc content.
+ * @returns {object|null} Parsed config, or null on failure.
+ */
+export function parseJsoncConfig(text) {
+  if (typeof text !== 'string') return null;
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+      continue;
+    }
+    if (char === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++; // skip the closing '/'
+      continue;
+    }
+    out += char;
+  }
+  // Strip trailing commas (common in hand-edited JSONC).
+  out = out.replace(/,(\s*[}\]])/g, '$1');
+  try {
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
+}

@@ -6,13 +6,15 @@
  *
  * Usage:
  *   node scripts/uninstall-plugin.mjs <plugin-id>               # remove plugin
+ *   node scripts/uninstall-plugin.mjs <plugin-id> --keep-files  # unregister only, keep plugins/{id}/
  *   node scripts/uninstall-plugin.mjs <plugin-id> --prune-deps  # also npm uninstall its deps
  *   node scripts/uninstall-plugin.mjs --list                    # show installed plugins
  *   node scripts/uninstall-plugin.mjs --help                    # show usage
  *
  * What it does:
  *   1. Reads the plugin manifest to collect deps, api_entrypoint, and migrations
- *   2. Deletes plugins/{id}/
+ *   2. Deletes plugins/{id}/  (--keep-files: moves it to plugins/.uninstalled/{id}/
+ *      instead — unregistered but re-installable by moving the directory back)
  *   3. Removes the entry from plugins.json
  *   4. Rebuilds generated plugin registry artifacts
  *   5. (--prune-deps) npm-uninstalls packages not used by any other plugin
@@ -23,250 +25,46 @@
  *   npx wrangler deploy
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
-import { rm } from 'fs/promises';
+import { cp, mkdir, rename, rm } from 'fs/promises';
 import { spawn } from 'child_process';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'readline';
 import { rebuildWorkspacePluginArtifacts, scanWorkspacePlugins, WORKSPACE_PLUGINS_DIR } from './lib/plugin-workspace.mjs';
+import { sqlStr } from './lib/sqlStr.mjs';
+import { deletePluginDeploymentState } from './lib/deployment-state.mjs';
+import { loadDotEnv } from './lib/env.mjs';
+import { promptSecret } from './lib/prompts.mjs';
+import {
+  createPatDb,
+  extractProjectRef,
+  patQuery,
+  runSqlQuery,
+} from './lib/remote-sql.mjs';
+import { unexposePluginSchema } from './lib/exposed-schemas.mjs';
+import {
+  collectSqlFiles,
+  escapeRegExp,
+  getAllowedPluginSchemas,
+  stripSqlComments,
+  validateMigrationSchemaUsage,
+} from './lib/migration-validation.mjs';
 
 const __dirname          = dirname(fileURLToPath(import.meta.url));
 const ROOT               = resolve(__dirname, '..');
 const PLUGINS_JSON       = join(ROOT, 'plugins.json');
 const PLUGINS_DIR        = WORKSPACE_PLUGINS_DIR;
-const REGISTRY_FILE      = join(PLUGINS_DIR, 'registry.ts');
-const HOOKS_REGISTRY_FILE = join(PLUGINS_DIR, 'hooks-registry.ts');
 const PLUGIN_DEPS_FILE   = join(ROOT, 'plugin-deps.json');
-const PLUGIN_ROUTES_FILE = join(ROOT, 'api', 'plugin-routes.ts');
-const PLUGIN_METADATA_FILE = join(ROOT, 'api', 'plugin-metadata.ts');
 
-// ─── .env loader ─────────────────────────────────────────────────────────────
-function loadDotEnv() {
-  const vars = {};
-  for (const file of ['.env.local', '.env']) {
-    const p = join(ROOT, file);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, 'utf8').split('\n')) {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
-      const idx = t.indexOf('=');
-      if (idx === -1) continue;
-      const key = t.slice(0, idx).trim();
-      const val = t.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
-      if (!(key in vars)) vars[key] = val;
-    }
-  }
-  return vars;
-}
-
-// ─── Supabase helpers ─────────────────────────────────────────────────────────
-function createAnonClient() {
-  const env = loadDotEnv();
-  const url = process.env.SUPABASE_URL
-           ?? process.env.VITE_SUPABASE_URL
-           ?? env['SUPABASE_URL']
-           ?? env['VITE_SUPABASE_URL'];
-  const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY
-           ?? env['VITE_SUPABASE_PUBLISHABLE_KEY'];
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-}
-
-function getJwtRoles(accessToken) {
+async function markPluginUninstalled(db, slug) {
+  if (!db) return;
   try {
-    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString('utf8'));
-    return Array.isArray(payload.user_roles) ? payload.user_roles : [];
-  } catch { return []; }
-}
-
-// Regular line prompt \u2014 paste-friendly (no raw mode). Used for tokens that
-// are never stored and don't need per-character masking.
-function promptLine(question) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
-}
-
-function promptPassword(question) {
-  return new Promise((resolve) => {
-    process.stdout.write(question);
-    const wasRaw = process.stdin.isRaw ?? false;
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
-    let pwd = '';
-    const onData = (ch) => {
-      if (ch === '\r' || ch === '\n') {
-        process.stdin.setRawMode(wasRaw);
-        process.stdin.pause();
-        process.stdin.removeListener('data', onData);
-        process.stdout.write('\n');
-        resolve(pwd);
-      } else if (ch === '\u0003') {
-        process.stdout.write('\n'); process.exit(0);
-      } else if (ch === '\u007f' || ch === '\b') {
-        if (pwd.length > 0) { pwd = pwd.slice(0, -1); process.stdout.write('\b \b'); }
-      } else {
-        pwd += ch; process.stdout.write('*');
-      }
-    };
-    process.stdin.on('data', onData);
-  });
-}
-
-async function loginInteractive(client) {
-  log('');
-  log(`${c.bold}Plugin uninstaller \u2014 Supabase login required${c.reset}`);
-  info('Only users with the admin or super-admin role can uninstall plugins.');
-  log('');
-
-  const rl    = createInterface({ input: process.stdin, output: process.stdout });
-  const email = await new Promise((resolve) => rl.question(`${c.cyan}Email:${c.reset}    `, (a) => { rl.close(); resolve(a.trim()); }));
-  const pwd   = await promptPassword(`${c.cyan}Password:${c.reset} `);
-
-  const { data, error } = await client.auth.signInWithPassword({ email, password: pwd });
-  if (error) die(`Login failed: ${error.message}`);
-
-  const roles = getJwtRoles(data.session.access_token);
-  if (!roles.includes('admin') && !roles.includes('super-admin')) {
-    await client.auth.signOut();
-    die(`Access denied. Your account (${email}) does not have the admin or super-admin role.`);
+    await patQuery(db, `UPDATE plugins SET status = 'registered', installed_at = NULL WHERE slug = ${sqlStr(slug)}`);
+    ok(`  DB status \u2192 registered  (installed_at cleared)`);
+  } catch (e) {
+    warn(`  Could not update DB status for "${slug}": ${e.message}`);
   }
-
-  ok(`Logged in as ${email}  [roles: ${roles.join(', ')}]`);
-  return client;
-}
-
-async function markPluginUninstalled(client, slug) {
-  if (!client) return;
-  const { error } = await client
-    .from('plugins')
-    .update({ status: 'registered', installed_at: null })
-    .eq('slug', slug);
-  if (error) warn(`  Could not update DB status for "${slug}": ${error.message}`);
-  else ok(`  DB status \u2192 registered  (installed_at cleared)`);
-}
-
-// ─── Supabase Management API helpers (mirrors setup.mjs) ─────────────────────
-
-function extractProjectRef(supabaseUrl) {
-  try { return new URL(supabaseUrl).hostname.split('.')[0]; }
-  catch { return null; }
-}
-
-async function runSqlQuery(projectRef, pat, sql) {
-  const res = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-    {
-      method:  'POST',
-      headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ query: sql }),
-    },
-  );
-  if (!res.ok) {
-    const rawText = await res.text().catch(() => '');
-    let detail = rawText;
-    try { const body = JSON.parse(rawText); detail = body.message || body.error || rawText; } catch {}
-    throw new Error(`HTTP ${res.status}: ${detail}`);
-  }
-  return res.json().catch(() => null);
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function stripSqlComments(sql) {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--.*$/gm, ' ');
-}
-
-function normalizeIdentifierPart(part) {
-  return part.replace(/^"+|"+$/g, '');
-}
-
-function getAllowedPluginSchemas(slug) {
-  return [...new Set([slug.replace(/-/g, '_'), slug])].filter(Boolean);
-}
-
-function collectSqlFiles(dir, filePrefix, reverse = false) {
-  if (!existsSync(dir)) return [];
-  try {
-    const files = readdirSync(dir)
-      .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
-      .sort();
-    if (reverse) files.reverse();
-    return files.map((f) => ({
-      name: f,
-      file: `${filePrefix}/${f}`,
-      sql: readFileSync(join(dir, f), 'utf8'),
-    }));
-  } catch { return []; }
-}
-
-function validateScopedObjectTarget(identifier, allowedSchemas, file, statement, issues) {
-  const parts = identifier.split('.');
-  if (parts.length < 2) {
-    issues.push(`${file}: ${statement} must target an explicit plugin schema, found "${identifier}".`);
-    return;
-  }
-
-  const schema = normalizeIdentifierPart(parts[0]);
-  if (!allowedSchemas.includes(schema)) {
-    issues.push(`${file}: ${statement} targets schema "${schema}", expected one of: ${allowedSchemas.join(', ')}.`);
-  }
-}
-
-function validateMigrationSchemaUsage(files, slug) {
-  const allowedSchemas = getAllowedPluginSchemas(slug);
-  const issues = [];
-  const schemaChecks = [
-    {
-      statement: 'CREATE/ALTER/DROP TABLE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:ONLY\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP VIEW',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|ALTER|DROP)\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/DROP FUNCTION',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)\s*\(/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP TYPE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+TYPE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP SEQUENCE',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+SEQUENCE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/ALTER/DROP POLICY',
-      regex: /\b(?:CREATE|ALTER|DROP)\s+POLICY\s+"?[\w-]+"?\s+ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE/DROP TRIGGER',
-      regex: /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+TRIGGER\s+"?[\w-]+"?\s+ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-    {
-      statement: 'CREATE INDEX',
-      regex: /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:"?[\w-]+"?\s+)?ON\s+((?:"?[\w-]+"?\.)?"?[\w-]+"?)/gi,
-    },
-  ];
-
-  for (const file of files) {
-    const sql = stripSqlComments(file.sql);
-    for (const check of schemaChecks) {
-      for (const match of sql.matchAll(check.regex)) {
-        validateScopedObjectTarget(match[1], allowedSchemas, file.file, check.statement, issues);
-      }
-    }
-  }
-
-  return issues;
 }
 
 function inspectMigrationCompliance(pluginDir, slug) {
@@ -278,7 +76,7 @@ function inspectMigrationCompliance(pluginDir, slug) {
   const upMigrations = collectSqlFiles(migrationsDir, `src/plugins/${slug}/migrations`);
   const downDir = join(migrationsDir, 'down');
   const downMigrations = existsSync(downDir)
-    ? collectSqlFiles(downDir, `src/plugins/${slug}/migrations/down`, true)
+    ? collectSqlFiles(downDir, `src/plugins/${slug}/migrations/down`).reverse()
     : null;
   const issues = [];
   const allowedSchemas = getAllowedPluginSchemas(slug);
@@ -317,7 +115,7 @@ function inspectMigrationCompliance(pluginDir, slug) {
 }
 
 // Returns true if migrations were applied (or there was nothing to apply), false if skipped/failed.
-async function applyDownMigrations(slug, downMigs, hasUpMigs) {
+async function applyDownMigrations(slug, downMigs, hasUpMigs, existingPat = null) {
   if (!hasUpMigs) return true;
   if (downMigs === null) {
     warn(`No migrations/down/ directory found for "${slug}" — manual database rollback is required.`);
@@ -341,13 +139,17 @@ async function applyDownMigrations(slug, downMigs, hasUpMigs) {
     return false;
   }
 
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY && !existingPat) {
     warn('Non-interactive mode — apply down-migrations manually.');
     return false;
   }
 
-  const rl1 = createInterface({ input: process.stdin, output: process.stdout });
-  const doApply = await new Promise((resolve) => {
+  // Create the readline interface ONLY when actually prompting — a dangling
+  // interface on process.stdin keeps the event loop alive, so the process
+  // would never exit (which froze the setup TUI's spawnSync at the deploy
+  // instruction when a PAT was already available via existingPat).
+  const doApply = existingPat ? 'y' : await new Promise((resolve) => {
+    const rl1 = createInterface({ input: process.stdin, output: process.stdout });
     rl1.question(`${c.yellow}?${c.reset}  Apply these down-migrations now? [y/N] `, (a) => { rl1.close(); resolve(a.trim().toLowerCase()); });
   });
   if (doApply !== 'y' && doApply !== 'yes') {
@@ -355,13 +157,16 @@ async function applyDownMigrations(slug, downMigs, hasUpMigs) {
     return false;
   }
 
-  log('');
-  info('Supabase personal access token (PAT) required for the Management API.');
-  log(`  Create one at: ${c.cyan}https://supabase.com/dashboard/account/tokens${c.reset}`);
-  log(`  ${c.yellow}PATs start with sbp_ or sb_pat_ — do NOT use your anon/secret keys.${c.reset}`);
-  log(`  The token is only used locally for this operation and is never stored.`);
-  log('');
-  const pat = await promptLine(`${c.cyan}Supabase PAT:${c.reset} `);
+  let pat = existingPat;
+  if (!pat) {
+    log('');
+    info('Supabase personal access token (PAT) required for the Management API.');
+    log(`  Create one at: ${c.cyan}https://supabase.com/dashboard/account/tokens${c.reset}`);
+    log(`  ${c.yellow}PATs start with sbp_ or sb_pat_ — do NOT use your anon/secret keys.${c.reset}`);
+    log(`  The token is only used locally for this operation and is never stored.`);
+    log('');
+    pat = await promptSecret(`${c.cyan}Supabase PAT:${c.reset} `);
+  }
   if (!pat || pat.length < 10) {
     warn('No PAT entered — skipping. Apply the down-migrations manually if needed.');
     return false;
@@ -444,173 +249,6 @@ function orphanedDeps(removedId) {
   return removedPkgs.filter((pkg) => !stillNeeded.has(pkg));
 }
 
-// ─── Registry rebuild (mirrors install-plugins.mjs) ──────────────────────────
-
-function rebuildRegistry() {
-  const data = readPluginsJson();
-  const slugs = (data.plugins ?? []).map((p) => p.id);
-  const installed = [];
-
-  for (const slug of slugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) { warn(`src/plugins/${slug}/ not found — skipped in registry`); continue; }
-
-    let ep = 'src/index.tsx';
-    const m = loadManifest(dir);
-    if (m?.entrypoint) ep = m.entrypoint;
-
-    if (!existsSync(join(dir, ep))) { warn(`Entrypoint missing: src/plugins/${slug}/${ep} — skipped`); continue; }
-    installed.push({ slug, ep });
-  }
-
-  const imports = installed.map((p, i) => `import plugin${i} from './${p.slug}/${p.ep}';`).join('\n');
-  const items   = installed.map((_, i) => `  plugin${i},`).join('\n');
-
-  writeFileSync(REGISTRY_FILE, `/**
- * AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
- *
- * This file is regenerated every time install-plugins.mjs runs.
- * It imports each installed plugin's default export (a PluginDefinition)
- * and collects them into a single array for the loader to consume.
- *
- * To add a plugin: run \`node scripts/install-plugins.mjs --add <github-url>\`
- * then rebuild and redeploy.
- */
-
-import type { PluginDefinition } from '@/types/plugin';
-
-// ─── Installed Plugin Imports ─────────────────────────────────────────────────
-${imports || '// (no plugins installed)'}
-
-
-// ─── Registry ─────────────────────────────────────────────────────────────────
-const registeredPlugins: PluginDefinition[] = [
-${items || '  // (no plugins installed)'}
-];
-
-export default registeredPlugins;
-`, 'utf8');
-
-  ok(`Registry rebuilt: ${installed.length} plugin(s) remaining`);
-}
-
-function rebuildPluginRoutes() {
-  const data   = readPluginsJson();
-  const slugs  = (data.plugins ?? []).map((p) => p.id);
-  const routes = [];
-
-  for (const slug of slugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) continue;
-    const m = loadManifest(dir);
-    if (!m?.api_entrypoint) continue;
-    const fullEpPath = join(dir, m.api_entrypoint);
-    if (!existsSync(fullEpPath)) { warn(`api_entrypoint not found: src/plugins/${slug}/${m.api_entrypoint} — skipped`); continue; }
-    const importPath = `../src/plugins/${slug}/${m.api_entrypoint.replace(/\.[^.]+$/, '')}`;
-    const varName    = slug.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) + 'Plugin';
-    routes.push({ slug, varName, importPath });
-  }
-
-  const imports = routes.map((r) => `import ${r.varName} from '${r.importPath}';`).join('\n');
-  const mounts  = routes.map((r) => `  app.route('/api/plugin/${r.slug}', ${r.varName});`).join('\n');
-
-  writeFileSync(PLUGIN_ROUTES_FILE, `// AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
-// Re-run \`npm run plugin:install\` to regenerate.
-import type { Hono } from 'hono';
-import type { Env } from './lib/supabase';
-
-${imports || '// (no plugins with API routes installed)'}
-
-export function mountPluginRoutes(app: Hono<{ Bindings: Env }>): void {
-${mounts || '  // (no plugins with API routes installed)'}
-}
-`, 'utf8');
-
-  ok(`Plugin routes rebuilt: api/plugin-routes.ts (${routes.length} route(s))`);
-}
-
-function rebuildHookRegistry() {
-  const data = readPluginsJson();
-  const slugs = (data.plugins ?? []).map((p) => p.id);
-  const installed = [];
-
-  for (const slug of slugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) { warn(`src/plugins/${slug}/ not found — skipped in hook registry`); continue; }
-
-    let ep = 'src/index.tsx';
-    const manifest = loadManifest(dir);
-    if (manifest?.entrypoint) ep = manifest.entrypoint;
-
-    if (!existsSync(join(dir, ep))) { warn(`Entrypoint missing: src/plugins/${slug}/${ep} — skipped in hook registry`); continue; }
-    installed.push({ slug, ep });
-  }
-
-  const imports = installed.map((p, i) => `import plugin${i} from './${p.slug}/${p.ep}';`).join('\n');
-  const items = installed.map((_, i) => `  ...(plugin${i}.hooks ?? []),`).join('\n');
-
-  writeFileSync(HOOKS_REGISTRY_FILE, `/**
- * AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
- *
- * This file is regenerated every time install-plugins.mjs runs.
- * It flattens build-time hook contributions from installed plugins.
- */
-
-import type { PluginHookContribution } from '@/types/plugin';
-
-${imports || '// (no plugins installed)'}
-
-const registeredHooks: PluginHookContribution[] = [
-${items || '  // (no plugin hooks installed)'}
-];
-
-export default registeredHooks;
-`, 'utf8');
-
-  ok(`Hook registry rebuilt: ${installed.length} plugin(s) remaining`);
-}
-
-function rebuildPluginMetadata() {
-  const data = readPluginsJson();
-  const slugs = (data.plugins ?? []).map((p) => p.id);
-  const entries = [];
-
-  for (const slug of slugs) {
-    const dir = join(PLUGINS_DIR, slug);
-    if (!existsSync(dir)) continue;
-
-    const manifest = loadManifest(dir);
-    if (!manifest) continue;
-
-    entries.push({
-      pluginId: manifest.id ?? slug,
-      hookMetadata: Array.isArray(manifest.hook_metadata) ? manifest.hook_metadata : [],
-      apiMetadata: manifest.api_metadata ?? null,
-      capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities : [],
-    });
-  }
-
-  writeFileSync(PLUGIN_METADATA_FILE, `// AUTO-GENERATED by scripts/install-plugins.mjs — do not edit manually.
-// Re-run \`npm run plugin:install\` to regenerate.
-import type { PluginApiMetadata, PluginCapabilityDescriptor, PluginHookDescriptor } from '@/types/plugin';
-
-export interface RegisteredPluginMetadata {
-  pluginId: string;
-  hookMetadata: PluginHookDescriptor[];
-  apiMetadata: PluginApiMetadata | null;
-  capabilities: PluginCapabilityDescriptor[];
-}
-
-const registeredPluginMetadata: RegisteredPluginMetadata[] = ${JSON.stringify(entries, null, 2)};
-
-export function getRegisteredPluginMetadata(): RegisteredPluginMetadata[] {
-  return registeredPluginMetadata;
-}
-`, 'utf8');
-
-  ok(`Plugin metadata rebuilt: ${entries.length} plugin(s) described`);
-}
-
 // ─── npm uninstall ────────────────────────────────────────────────────────────
 
 function runCmd(cmd, args, opts = {}) {
@@ -652,7 +290,50 @@ function confirm(question) {
   });
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
+// ─── Commands ───────────────────────────────────────────────────────────────
+
+const RETRYABLE_FS_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EXDEV']);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Move a directory with Windows-safe fallbacks.
+ *
+ * `rename()` on Windows fails with EBUSY/EPERM when ANY file inside the tree
+ * has an open handle (editor file watchers, a running `npm run dev`, the
+ * search indexer). Strategy:
+ *   1. retry the rename a few times — the handles are often transient
+ *   2. fall back to recursive copy + delete (copying tolerates read handles)
+ *   3. if even the delete fails, remove the copy again and throw — the caller
+ *      aborts BEFORE un-registering anything, so no half-registered state
+ *
+ * @returns {'rename'|'copy'} which strategy succeeded
+ */
+async function moveDirKeepFiles(src, dest) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await rename(src, dest);
+      return 'rename';
+    } catch (e) {
+      if (!RETRYABLE_FS_CODES.has(e.code) || attempt === 5) break;
+      await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
+  }
+  await cp(src, dest, { recursive: true, force: true });
+  try {
+    await rm(src, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    return 'copy';
+  } catch (e) {
+    // Undo the copy — otherwise the plugin would exist twice and, worse,
+    // remain registered from its original location. Retry a little, then warn.
+    try {
+      await rm(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    } catch {
+      warn(`Could not remove the partial copy at ${dest} — it will be overwritten by the next attempt.`);
+    }
+    throw e;
+  }
+}
 
 async function cmdList() {
   const plugins = scanWorkspacePlugins();
@@ -664,7 +345,7 @@ async function cmdList() {
   log('');
 }
 
-async function cmdUninstall(pluginId, pruneDepsFlag) {
+async function cmdUninstall(pluginId, pruneDepsFlag, keepFiles = false) {
   const data    = readPluginsJson();
   const plugins = data.plugins ?? [];
   const entry   = plugins.find((p) => p.id === pluginId) ?? null;
@@ -674,17 +355,12 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     die(`Plugin "${pluginId}" not found in /plugins or plugins.json.\nRun --list to see workspace plugins.`);
   }
 
-  // ── Supabase auth (best-effort — local cleanup proceeds even if login fails) ─
-  let supabaseClient = null;
-  const anonClient = createAnonClient();
-  if (anonClient) {
-    try {
-      supabaseClient = await loginInteractive(anonClient);
-    } catch (e) {
-      warn(`Supabase login skipped (${e.message}) \u2014 DB status will not be updated.`);
-    }
-  } else {
-    warn('Supabase credentials not found \u2014 DB status will not be updated.');
+  // ── Supabase access (best-effort — local cleanup proceeds even without a PAT) ─
+  let db = null;
+  try {
+    db = await createPatDb();
+  } catch (e) {
+    warn(`Supabase access skipped (${e.message}) \u2014 DB status will not be updated.`);
   }
 
   const manifest  = existsSync(pluginDir) ? loadManifest(pluginDir) : null;
@@ -698,8 +374,11 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   log('');
 
   if (!process.argv.includes('--yes') && !process.argv.includes('-y')) {
-    const confirmed = await confirm(`Remove "${pluginId}" and delete plugins/${pluginId}/?`);
-    if (!confirmed) { info('Aborted.'); process.exit(0); }
+    const question = keepFiles
+      ? `Unregister "${pluginId}" and move plugins/${pluginId}/ out of the registry (files kept)?`
+      : `Remove "${pluginId}" and delete plugins/${pluginId}/?`;
+    const confirmed = await confirm(question);
+    if (!confirmed) { info('Aborted.'); process.exitCode = 0; return; }
   }
 
   // ── 1. Collect manual-cleanup info before deleting the directory ───────────
@@ -716,10 +395,30 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     warn('This legacy plugin does not meet the current migration rules. Filesystem uninstall will continue, but database cleanup must be reviewed manually.');
   }
 
-  // ── 2. Delete directory ────────────────────────────────────────────────────
+  // ── 2. Remove the directory from the workspace registry ──────────────────
+  // The generated registries (src/plugins/registry.ts, api/plugin-routes.ts, …)
+  // are built from every plugins/<dir> with a manifest — removing the
+  // plugins.json entry alone never unregisters anything. Full uninstall
+  // deletes the directory; --keep-files moves it to plugins/.uninstalled/<id>/
+  // (gitignored via plugins/*/), so the code survives and can be re-installed
+  // by moving it back into plugins/.
   if (existsSync(pluginDir)) {
-    await rm(pluginDir, { recursive: true, force: true });
-    ok(`Deleted plugins/${pluginId}/`);
+    if (keepFiles) {
+      const parkedDir = join(PLUGINS_DIR, '.uninstalled', pluginId);
+      try {
+        await mkdir(dirname(parkedDir), { recursive: true });
+        const strategy = await moveDirKeepFiles(pluginDir, parkedDir);
+        ok(`Moved plugins/${pluginId}/ → plugins/.uninstalled/${pluginId}/  (kept for re-install, via ${strategy})`);
+      } catch (e) {
+        die(`Could not move plugins/${pluginId}/ to plugins/.uninstalled/ (${e.code ?? e.message}).\n`
+          + `A process still holds the directory open — close editors, dev servers (npm run dev),\n`
+          + `and terminals with a CWD inside plugins/${pluginId}/, then retry.\n`
+          + `Aborting — nothing was unregistered.`);
+      }
+    } else {
+      await rm(pluginDir, { recursive: true, force: true });
+      ok(`Deleted plugins/${pluginId}/`);
+    }
   } else {
     warn(`plugins/${pluginId}/ not found — already deleted?`);
   }
@@ -735,6 +434,12 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   rebuildWorkspacePluginArtifacts();
 
   // ── 5. Clean plugin-deps.json ──────────────────────────────────────────────
+  // --keep-files keeps the npm packages installed (re-install readiness);
+  // --prune-deps combined with --keep-files is ignored with a notice.
+  const effectivePrune = keepFiles ? false : pruneDepsFlag;
+  if (keepFiles && pruneDepsFlag) {
+    warn('--prune-deps ignored in --keep-files mode — packages stay installed for re-install.');
+  }
   const pluginDeps = readPluginDeps();
   if (pluginDeps[pluginId]) {
     const pkgNames = Object.keys(pluginDeps[pluginId]);
@@ -743,7 +448,7 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     ok(`Removed "${pluginId}" from plugin-deps.json`);
 
     // ── 6. Optional: prune orphaned npm deps ──────────────────────────────────
-    if (pruneDepsFlag) {
+    if (effectivePrune) {
       await pruneDeps(pluginId);
     } else if (pkgNames.length > 0) {
       warn(`npm packages from this plugin were NOT removed (pass --prune-deps to remove them):`);
@@ -758,11 +463,82 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
     }
   }
 
+  // ── 5b. Un-expose the plugin schema BEFORE the down-migrations drop it ────
+  // PostgREST exposure: the install flow exposes the plugin schema in the
+  // Supabase API settings (pgrst.db_schemas / platform config). Down-migrations
+  // drop the schema — if it is still exposed at that moment, PostgREST's
+  // schema-cache reload fails (PGRST002: all REST queries 503) until the
+  // exposure is removed. Clean up FIRST so there is no wedge window.
+  let exposedCleanupDone = false;
+  if (migrations.length > 0 && hasUpMigs) {
+    const pluginSchema = getAllowedPluginSchemas(pluginId)[0] ?? pluginId;
+    if (db) {
+      try {
+        const result = await unexposePluginSchema(db.projectRef, db.pat, pluginSchema);
+        if (result.status === 'removed') {
+          ok(`  Removed "${pluginSchema}" from API exposed schemas (via ${result.via}) — PostgREST config reloaded.`);
+          exposedCleanupDone = true;
+        } else if (result.status === 'not-exposed') {
+          exposedCleanupDone = true; // nothing to clean up
+        } else {
+          warn(`  Could not remove "${pluginSchema}" from exposed schemas: ${result.error}`);
+        }
+      } catch (e) {
+        warn(`  Could not clean up exposed schemas: ${e.message}`);
+      }
+    }
+    if (!exposedCleanupDone) {
+      warn(`If "${pluginId}" was exposed in Supabase API settings (Exposed schemas), REMOVE it now:`);
+      log(`  Dashboard → Project Settings → API → Exposed schemas → uncheck "${pluginSchema}"`);
+      log(`  An exposed schema without access/objects wedges PostgREST's schema-cache reload (PGRST002, all REST 503).`);
+    }
+  }
+
   // ── 6. Apply down-migrations ─────────────────────────────────────────────
-  const migrationsDropped = await applyDownMigrations(pluginId, downMigs, hasUpMigs);
+  const migrationsDropped = await applyDownMigrations(pluginId, downMigs, hasUpMigs, db?.pat ?? null);
+
+  // ── 6b. Delete plugin state + claims (clean uninstall, DEPLOYMENT-STATE-
+  //        TRACKING.md §6): explicit teardown of DB state; the FK cascade on
+  //        plugins(id) is the backstop for hard-deletes. ─────────────────────
+  if (db) {
+    try {
+      await deletePluginDeploymentState(db.projectRef, db.pat, pluginId);
+      ok(`  Deployment-state rows for "${pluginId}" removed.`);
+    } catch (e) {
+      warn(`  Could not delete deployment-state rows for "${pluginId}": ${e.message}`);
+    }
+    try {
+      await patQuery(db, `DELETE FROM public.plugin_claims WHERE plugin_id = ${sqlStr(pluginId)}`);
+      ok(`  Claim registry rows for "${pluginId}" removed.`);
+    } catch (e) {
+      warn(`  Could not delete claim registry rows for "${pluginId}": ${e.message}`);
+    }
+  }
 
   // ── 7. Update Supabase status ─────────────────────────────────────────────
-  await markPluginUninstalled(supabaseClient, pluginId);
+  await markPluginUninstalled(db, pluginId);
+
+  // ── 7b. Plugin binding instances (BIPS — specs/platform/binding-management.md) ─
+  // The ledger records the per-environment instances the plugin owns. Offer
+  // teardown of environment-scoped instances (the downmigration analog for
+  // bindings); shared-scoped instances are never deleted — other deployments
+  // may link them.
+  try {
+    const { readLedgerFromPath } = await import('./lib/binding-provisioner.mjs');
+    const ledger = readLedgerFromPath(ROOT);
+    const rows = (ledger?.resources ?? []).filter((r) => r.plugin_id === pluginId);
+    if (rows.length > 0) {
+      log('');
+      info(`This plugin owns ${rows.length} recorded cloud resource instance(s) in the binding ledger:`);
+      for (const row of rows) {
+        const scope = row.scope === 'shared' ? 'shared (kept)' : 'environment';
+        log(`    ${c.cyan}${row.kind}${c.reset}  ${c.bold}${row.resolved_name}${c.reset}  [${scope}]`);
+      }
+      warn('Teardown of environment-scoped instances is interactive — run:');
+      warn(`  npm run bindings:provision -- --teardown ${pluginId}`);
+      warn('Shared-scoped instances are never deleted (other deployments may link them).');
+    }
+  } catch { /* ledger module/absence is non-fatal for uninstall */ }
 
   // ── 8. Manual steps summary ────────────────────────────────────────────────
   log('');
@@ -793,6 +569,13 @@ async function cmdUninstall(pluginId, pruneDepsFlag) {
   log('  1. Complete any manual cleanup listed above');
   log('  2. npm run build');
   log('  3. Deploy  (e.g. npx wrangler deploy)');
+  if (keepFiles) {
+    log('');
+    log(`${c.bold}Re-install later:${c.reset}`);
+    log(`  1. Move plugins/.uninstalled/${pluginId} back to plugins/${pluginId}`);
+    log('  2. npm run build — the generated registries pick it up automatically');
+    log('     (re-install re-writes plugins.json, state/claims/bindings rows; migrations are idempotent)');
+  }
   log('');
 }
 
@@ -804,6 +587,8 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
   log('');
   log('Usage:');
   log('  node scripts/uninstall-plugin.mjs <plugin-id>               Remove a plugin');
+  log('  node scripts/uninstall-plugin.mjs <plugin-id> --keep-files  Unregister only — moves plugins/<id>/ to');
+  log('                                                              plugins/.uninstalled/<id>/ (files kept, re-installable)');
   log('  node scripts/uninstall-plugin.mjs <plugin-id> --prune-deps  Remove + uninstall its npm packages');
   log('  node scripts/uninstall-plugin.mjs <plugin-id> --yes         Skip confirmation prompt');
   log('  node scripts/uninstall-plugin.mjs --list                    List registered plugins');
@@ -817,6 +602,7 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
 } else {
   const pluginId   = args.find((a) => !a.startsWith('--') && a !== '-y');
   const pruneDeps  = args.includes('--prune-deps');
+  const keepFiles  = args.includes('--keep-files');
   if (!pluginId) die('No plugin ID provided. Usage: node scripts/uninstall-plugin.mjs <plugin-id>');
-  await cmdUninstall(pluginId, pruneDeps);
+  await cmdUninstall(pluginId, pruneDeps, keepFiles);
 }

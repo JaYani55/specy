@@ -3,6 +3,8 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
+import { MIGRATION_ORDER_CORE } from './migration-order.mjs';
+import { coreRecordsToStateRows, writeDeploymentState } from './deployment-state.mjs';
 
 export const CORE_UPDATE_NAMESPACE = 'core_update';
 
@@ -13,66 +15,26 @@ export const CORE_EDGE_FUNCTIONS = [
   },
 ];
 
-export const MIGRATION_ORDER = [
-  'preamble.sql',
-  'user_profile.sql',
-  'roles.sql',
-  'employers.sql',
-  'user_roles.sql',
-  'mentor_groups.sql',
-  'companies.sql',
-  'staff_registry.sql',
-  'products.sql',
-  'page_schemas.sql',
-  'page_schema_templates.sql',
-  'managed_secrets.sql',
-  'system_config.sql',
-  'forms.sql',
-  'forms_answers.sql',
-  'forms_notifications.sql',
-  'forms_notification_recipient_rls_fix.sql',
-  'mail_delivery.sql',
-  'forms_published_default.sql',
-  'plugins.sql',
-  'plugins_config_schema.sql',
-  'mentorbooking_products.sql',
-  'llm_specs.sql',
-  '202608030002_frontend_prompt_specs.sql',
-  '202608030003_global_llm_specs.sql',
-  '202608030004_global_llm_specs_super_admin_policy.sql',
-  'page_schema_specs.sql',
-  'llm_specs_default_specy_schema_docs.sql',
-  'pages.sql',
-  'mentorbooking_events.sql',
-  'mentorbooking_events_archive.sql',
-  'mentorbooking_notifications.sql',
-  'agent_logs.sql',
-  'agent_logs_hardening.sql',
-  '202605240001_multi_tenant_foundation.sql',
-  '202605240002_multi_tenant_backfill_and_ownership.sql',
-  '202605240003_multi_tenant_rls_hardening.sql',
-  '202605240004_tenant_assignment_rls_fix.sql',
-  '202605240005_console_visibility_hardening.sql',
-  '202605240006_webapps_multi_tenant.sql',
-  '202605250001_tenant_storage_management.sql',
-  'objects.sql',
-  '202605310001_markdown_objects.sql',
-  '202605310002_markdown_object_share_scope.sql',
-  '202606050001_poll_extensions.sql',
-  '202606050002_poll_participant_config.sql',
-  '202606200001_page_schema_visibility_fix.sql',
-  '202608020001_schema_frontend_targets.sql',
-  '202608020002_schema_frontend_target_rpc.sql',
-  '202608020003_schema_frontend_target_precedence.sql',
-  '202608020004_schema_content_scope.sql',
-  '202608030001_page_publication_timestamp.sql',
-  '202608050001_tenant_organization_alias.sql',
-  'Auth/Access_hook.sql',
-  'Auth/Access_hook_oauth_claims.sql',
-];
+// Source of truth: scripts/lib/migration-order.mjs (validated by
+// tests/coreMigrations.test.mjs). storage.sql is appended separately in
+// getMigrationEntries for the supabase provider.
+export const MIGRATION_ORDER = MIGRATION_ORDER_CORE;
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * Normalize line endings to LF before hashing.
+ *
+ * Checksums must be identical regardless of the checkout platform: with
+ * `core.autocrlf = true` (Windows default) migration files are CRLF on disk
+ * while Linux/CI checkouts see LF — a raw-content hash would report drift
+ * for every migration whenever the recording and checking checkouts differ.
+ * Normalizing once here makes the recorded state platform-independent.
+ */
+export function normalizeSqlEol(sql) {
+  return String(sql).replace(/\r\n/g, '\n');
 }
 
 function escapeSqlLiteral(value) {
@@ -179,7 +141,7 @@ export function buildMigrationManifest(root, storageProvider, storageBucket) {
       id: `migration:${entry.name}`,
       type: 'migration',
       name: entry.name,
-      checksum: sha256(sql),
+      checksum: sha256(normalizeSqlEol(sql)),
       sql,
     };
   });
@@ -190,7 +152,7 @@ export function buildFunctionManifest(root) {
 
   return CORE_EDGE_FUNCTIONS.map((definition) => {
     const source = readFileSync(join(root, 'functions', definition.name, 'index.ts'), 'utf8');
-    const checksum = sha256(`${configToml}\n---\n${source}`);
+    const checksum = sha256(normalizeSqlEol(`${configToml}\n---\n${source}`));
 
     return {
       id: `function:${definition.name}`,
@@ -264,13 +226,62 @@ export async function detectLegacyCoreInstall(projectRef, pat) {
         );
     `,
   );
-
   const tables = extractJsonColumn(payload, 'tables');
 
   return {
     hasCoreSchema: tables.length > 0,
     tables,
   };
+}
+
+// ─── Bootstrap baseline verification ────────────────────────────────────────
+
+/**
+ * Public tables a migration creates (CREATE TABLE, incl. via
+ * `ALTER TABLE … RENAME TO`). Mirrors the creator logic of
+ * tests/coreMigrations.test.mjs so tooling and test agree on the semantics.
+ */
+export function migrationCreatedTables(sql) {
+  const tables = new Set();
+  const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-zA-Z0-9_]+)/gi;
+  const renameRe = /alter\s+table\s+(?:if\s+exists\s+)?public\.[a-zA-Z0-9_]+\s+rename\s+to\s+(?:public\.)?([a-zA-Z0-9_]+)/gi;
+  let m;
+  while ((m = createRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+  while ((m = renameRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+  return tables;
+}
+
+/**
+ * Split a migration manifest for a bootstrap baseline into migrations that can
+ * safely be recorded as applied and those that almost certainly never ran.
+ *
+ * A migration whose created tables are ALL missing from the live schema is
+ * marked `applyInstead` — recording it as a baseline would mark SQL as applied
+ * that never executed (the silent-skip failure mode this guard exists for).
+ * Migrations that create no tables (functions, policies, grants, ALTERs)
+ * cannot be probed this way and are treated as baseline — their idempotent
+ * SQL can be re-applied explicitly via `--replay`.
+ *
+ * @param {{ name: string, sql: string }[]} migrations
+ * @param {string[]} existingPublicTables table names from information_schema
+ * @returns {{ baseline: typeof migrations, applyInstead: typeof migrations }}
+ */
+export function planBaseline(migrations, existingPublicTables) {
+  const existing = new Set((existingPublicTables ?? []).map((t) => String(t).toLowerCase()));
+  const baseline = [];
+  const applyInstead = [];
+
+  for (const migration of migrations) {
+    const created = migrationCreatedTables(normalizeSqlEol(migration.sql ?? ''));
+    const verify = [...created].filter((t) => !existing.has(t));
+    if (created.size > 0 && verify.length === created.size) {
+      applyInstead.push(migration);
+    } else {
+      baseline.push(migration);
+    }
+  }
+
+  return { baseline, applyInstead };
 }
 
 export function analyzeCoreUpdates(migrations, functions, remoteState) {
@@ -343,6 +354,39 @@ export async function upsertCoreUpdateRecords(projectRef, pat, records) {
         updated_at = now();
     `,
   );
+
+  // Dual-write to the typed deployment_state registry (write-after-confirm —
+  // this function is only called after the external system confirmed). The
+  // system_config rows remain as a read shim until prod re-check converges.
+  await writeDeploymentState(projectRef, pat, coreRecordsToStateRows(records));
+}
+
+/**
+ * Record a successful Cloudflare Worker deploy into the deployment-state
+ * registry (public.system_config, namespace `core_update`).
+ *
+ * This closes the "is core deployed?" gap: migration + edge-function state was
+ * already tracked (`migration:*`, `function:*`, `deployment:core_commit`), but
+ * the live Worker's commit was not. `deployment:worker` now records the git
+ * commit that is actually running on the Worker, written only AFTER wrangler
+ * reports success (the external system confirms before we persist state).
+ *
+ * @param {string} projectRef Supabase project ref.
+ * @param {string} pat Supabase PAT.
+ * @param {string|null} commit Short git SHA deployed.
+ * @param {{ workerName?: string|null }} [extra]
+ */
+export async function recordWorkerDeployment(projectRef, pat, commit, extra = {}) {
+  await upsertCoreUpdateRecords(projectRef, pat, [
+    {
+      key: 'deployment:worker',
+      value: {
+        commit: commit ?? null,
+        workerName: extra.workerName ?? null,
+        deployedAt: new Date().toISOString(),
+      },
+    },
+  ]);
 }
 
 export async function registerAuthHook(projectRef, pat) {
@@ -371,6 +415,21 @@ export async function registerAuthHook(projectRef, pat) {
     }
     throw new Error(`HTTP ${hookRes.status}: ${detail}`);
   }
+
+  // Record auth-hook state in the deployment-state registry (write-after-
+  // confirm: the Supabase auth config PATCH succeeded before we persist).
+  await writeDeploymentState(projectRef, pat, [
+    {
+      owner: 'core',
+      component: 'auth_hook',
+      key: 'custom_access_token_hook',
+      value: {
+        status: 'deployed',
+        provider: 'supabase',
+        deployed_at: new Date().toISOString(),
+      },
+    },
+  ]);
 }
 
 export function runSupabaseCli(root, args, envOverrides = {}, options = {}) {

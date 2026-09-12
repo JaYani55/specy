@@ -86,6 +86,24 @@ export const MIGRATION_ORDER_CORE = [
   '202608050001_tenant_organization_alias.sql',
   'Auth/Access_hook.sql',
   'Auth/Access_hook_oauth_claims.sql',
+  // plugin_claims registry must exist before the hook extension reads it.
+  '202609090001_plugin_claims_registry.sql',
+  'Auth/Access_hook_plugin_claims.sql',
+  // Support-role visibility on core tables + is_support() — moved 1:1 from
+  // PluraDash 009 (core/plugin boundary); must run before plugin migrations
+  // that reference public.is_support().
+  '202609090002_support_role_core_rls.sql',
+  // Deployment-state registry (DEPLOYMENT-STATE-TRACKING) — typed replacement
+  // for the core_update namespace; backfills from system_config/plugins/
+  // plugin_claims, so it must run after all three.
+  '202609100001_deployment_state.sql',
+  // plugin_claims → plugins(id) FK (cascade) — must run after both tables.
+  '202609100002_plugin_claims_ownership.sql',
+  // Mail-queue cron gate — replaces trigger_mail_queue_processing() with a
+  // work-presence-gated version (skips idle send_email invocations). Must run
+  // after 202609070001 (creates the function + cron schedule) and after
+  // mail_delivery.sql (mail_delivery_jobs table).
+  '202609110001_mail_queue_cron_gate.sql',
 ];
 
 /**

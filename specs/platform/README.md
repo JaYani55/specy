@@ -9,3 +9,6 @@ Cross-cutting platform concerns: hosting, tenancy, core extensions.
 | [`feature-flags.md`](feature-flags.md) | Client-side feature flags (Beta Features, Developer Mode) — localStorage contract, settings UI, plugin gating |
 | [`core-extension-audio-queues-secrets.md`](core-extension-audio-queues-secrets.md) | AudioBlock content type, Cloudflare Queues, Secrets Store injection, programmatic object creation |
 | [`email-delivery-queue.md`](email-delivery-queue.md) | Mail delivery queue: hybrid instant send + queue fallback, retry/backoff contract, pg_cron scheduling, tenant mail log |
+| [`binding-management.md`](binding-management.md) | Binding Intent & Provisioning System (BIPS): per-environment plugin binding instances, resolution, provisioner, ledger, deployment paths |
+| [`db-snapshots.md`](db-snapshots.md) | Database snapshots (`/data/snapshots`) and critical action logs (`/data/logs`): snapshot/restore contract, setup TUI `DB Snapshots` menu |
+| [`unified-setup-tui.md`](unified-setup-tui.md) | Unified `npm run setup` TUI: phase-aware dispatcher, integrity gate, installation/deployment state model |
