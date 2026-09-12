@@ -53,7 +53,12 @@ function nodeScript(script, args = []) {
     cwd: ROOT,
     stdio: 'inherit',
   });
-  return res.status === 0 || res.status === null;
+  const ok = res.status === 0 || res.status === null;
+  // Surface sub-process failures in the TUI itself — with stdio: 'inherit' the
+  // output scrolled by, but the menu gives no feedback that the operation
+  // failed. `null` means signal-terminated (Ctrl-C) — not an error.
+  if (!ok) p.log.error(`${script} exited with code ${res.status ?? 'signal'}.`);
+  return ok;
 }
 
 // ─── Integrity check ─────────────────────────────────────────────────────────
@@ -99,6 +104,7 @@ const INTEGRITY_TEST_SUITES = [
   'bindingDrift',
   'bindingIntents',
   'coreMigrations',
+  'dbSnapshots',
   'deploymentState',
   'exposedSchemas',
   'pluginClaimsRegistry',

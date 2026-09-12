@@ -24,6 +24,19 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+/**
+ * Normalize line endings to LF before hashing.
+ *
+ * Checksums must be identical regardless of the checkout platform: with
+ * `core.autocrlf = true` (Windows default) migration files are CRLF on disk
+ * while Linux/CI checkouts see LF — a raw-content hash would report drift
+ * for every migration whenever the recording and checking checkouts differ.
+ * Normalizing once here makes the recorded state platform-independent.
+ */
+export function normalizeSqlEol(sql) {
+  return String(sql).replace(/\r\n/g, '\n');
+}
+
 function escapeSqlLiteral(value) {
   return value.replaceAll("'", "''");
 }
@@ -128,7 +141,7 @@ export function buildMigrationManifest(root, storageProvider, storageBucket) {
       id: `migration:${entry.name}`,
       type: 'migration',
       name: entry.name,
-      checksum: sha256(sql),
+      checksum: sha256(normalizeSqlEol(sql)),
       sql,
     };
   });
@@ -139,7 +152,7 @@ export function buildFunctionManifest(root) {
 
   return CORE_EDGE_FUNCTIONS.map((definition) => {
     const source = readFileSync(join(root, 'functions', definition.name, 'index.ts'), 'utf8');
-    const checksum = sha256(`${configToml}\n---\n${source}`);
+    const checksum = sha256(normalizeSqlEol(`${configToml}\n---\n${source}`));
 
     return {
       id: `function:${definition.name}`,
@@ -213,13 +226,62 @@ export async function detectLegacyCoreInstall(projectRef, pat) {
         );
     `,
   );
-
   const tables = extractJsonColumn(payload, 'tables');
 
   return {
     hasCoreSchema: tables.length > 0,
     tables,
   };
+}
+
+// ─── Bootstrap baseline verification ────────────────────────────────────────
+
+/**
+ * Public tables a migration creates (CREATE TABLE, incl. via
+ * `ALTER TABLE … RENAME TO`). Mirrors the creator logic of
+ * tests/coreMigrations.test.mjs so tooling and test agree on the semantics.
+ */
+export function migrationCreatedTables(sql) {
+  const tables = new Set();
+  const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-zA-Z0-9_]+)/gi;
+  const renameRe = /alter\s+table\s+(?:if\s+exists\s+)?public\.[a-zA-Z0-9_]+\s+rename\s+to\s+(?:public\.)?([a-zA-Z0-9_]+)/gi;
+  let m;
+  while ((m = createRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+  while ((m = renameRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+  return tables;
+}
+
+/**
+ * Split a migration manifest for a bootstrap baseline into migrations that can
+ * safely be recorded as applied and those that almost certainly never ran.
+ *
+ * A migration whose created tables are ALL missing from the live schema is
+ * marked `applyInstead` — recording it as a baseline would mark SQL as applied
+ * that never executed (the silent-skip failure mode this guard exists for).
+ * Migrations that create no tables (functions, policies, grants, ALTERs)
+ * cannot be probed this way and are treated as baseline — their idempotent
+ * SQL can be re-applied explicitly via `--replay`.
+ *
+ * @param {{ name: string, sql: string }[]} migrations
+ * @param {string[]} existingPublicTables table names from information_schema
+ * @returns {{ baseline: typeof migrations, applyInstead: typeof migrations }}
+ */
+export function planBaseline(migrations, existingPublicTables) {
+  const existing = new Set((existingPublicTables ?? []).map((t) => String(t).toLowerCase()));
+  const baseline = [];
+  const applyInstead = [];
+
+  for (const migration of migrations) {
+    const created = migrationCreatedTables(normalizeSqlEol(migration.sql ?? ''));
+    const verify = [...created].filter((t) => !existing.has(t));
+    if (created.size > 0 && verify.length === created.size) {
+      applyInstead.push(migration);
+    } else {
+      baseline.push(migration);
+    }
+  }
+
+  return { baseline, applyInstead };
 }
 
 export function analyzeCoreUpdates(migrations, functions, remoteState) {

@@ -146,7 +146,7 @@ Because plugins only depend on the *shape* of core interfaces (not internal logi
 
 - All SQL migrations live in `/migrations/` with ordered, zero-padded numeric prefixes (e.g., `001_preamble.sql`, `002_user_profile.sql`).
 - Migrations must be **idempotent** — safe to run multiple times. Use `CREATE TABLE IF NOT EXISTS`, `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE OR REPLACE FUNCTION`, etc.
-- **When adding a new migration**, you MUST register it in `scripts/setup.mjs` in the `MIGRATION_ORDER` array at the correct position in the dependency chain.
+- **When adding a new migration**, you MUST register it in `scripts/lib/migration-order.mjs` in the `MIGRATION_ORDER_CORE` array at the correct position in the dependency chain (validated by `tests/coreMigrations.test.mjs`).
 - Core migrations target the `public` schema. Plugin migrations must target their own dedicated schema (e.g., `my_plugin`).
 
 ### Plugin Migrations

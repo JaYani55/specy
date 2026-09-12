@@ -37,7 +37,7 @@ import {
   cancel,
 } from '@clack/prompts';
 import { execSync, spawnSync } from 'child_process';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -47,7 +47,7 @@ import { DEFAULT_WORKER_NAME, validateWorkerName } from './worker-name.mjs';
 import { parseSecretsStoreList, findSecretIdInTable } from './secrets-stores.mjs';
 import { removeSecretsStoreBinding } from './wrangler-config.mjs';
 import { getMigrationOrder } from './migration-order.mjs';
-import { recordWorkerDeployment } from './core-update.mjs';
+import { recordWorkerDeployment, upsertCoreUpdateRecords, normalizeSqlEol } from './core-update.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT      = join(__dirname, '..', '..');
@@ -1100,6 +1100,25 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
   const ms = spinner();
   let aborted = false;
 
+  // Write-after-confirm state tracking (DEPLOYMENT-STATE-TRACKING): every
+  // migration that ACTUALLY applied gets its state row recorded (checksum
+  // computed exactly like buildMigrationManifest, so later migrate/recheck
+  // runs see a consistent baseline). Skipped migrations are deliberately NOT
+  // recorded — recording them would mark never-executed SQL as applied.
+  // Records are buffered and flushed after the loop: system_config (the state
+  // store) is created by an early migration in the order.
+  const appliedRecords = [];
+  const skippedFiles = [];
+  const migrationStateRecord = (name, sqlText) => ({
+    key: `migration:${name}`,
+    value: {
+      name,
+      checksum: createHash('sha256').update(normalizeSqlEol(sqlText)).digest('hex'),
+      updatedAt: new Date().toISOString(),
+      commit: 'first-time-setup',
+    },
+  });
+
   for (const file of MIGRATION_ORDER) {
     if (aborted) break;
 
@@ -1112,6 +1131,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
           .replaceAll('REPLACE_WITH_STORAGE_BUCKET', storageBucket.trim());
       } catch {
         ms.stop(pc.yellow(`  ${file} — template storage.default.sql not found, skipping.`));
+        skippedFiles.push(file);
         continue;
       }
     } else {
@@ -1119,6 +1139,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
         sql = readFileSync(join(migrationsDir, file), 'utf8');
       } catch {
         ms.stop(pc.yellow(`  ${file} — file not found, skipping.`));
+        skippedFiles.push(file);
         continue;
       }
     }
@@ -1126,6 +1147,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
     try {
       await runSqlQuery(projectRef, pat.trim(), sql);
       ms.stop(pc.green(`  ${file} ✓`));
+      appliedRecords.push(migrationStateRecord(file, sql));
     } catch (err) {
       ms.stop(pc.red(`  ${file} — failed: ${err.message}`));
 
@@ -1152,6 +1174,7 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
           resolved = true;
         } else if (action === 'skip') {
           log.warn(`Skipped ${pc.yellow(file)} — later migrations may fail if they depend on it.`);
+          skippedFiles.push(file);
           resolved = true;
         } else {
           ms.start(`Retrying ${pc.yellow(file)}…`);
@@ -1172,10 +1195,31 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
       'Migration step aborted. Applied migrations persist (all are idempotent) —\n' +
       '  re-run  npm run setup  to continue from where it stopped.',
     );
-    return;
   }
 
-  log.success('Migrations complete.');
+  // Flush the buffered state records (write-after-confirm: only migrations
+  // that really applied are in here). Runs on success AND on abort.
+  if (appliedRecords.length > 0) {
+    try {
+      await upsertCoreUpdateRecords(projectRef, pat.trim(), appliedRecords);
+      log.success(`Deployment state recorded for ${appliedRecords.length} migration(s).`);
+    } catch (err) {
+      log.warn(`Could not record migration deployment state: ${err.message}`);
+      log.info('  Backfill later with: ' + pc.cyan('npm run state:recheck -- --sync'));
+    }
+  }
+
+  if (skippedFiles.length > 0) {
+    log.warn(`${skippedFiles.length} migration(s) were skipped and are NOT recorded as applied:`);
+    for (const f of skippedFiles) {
+      log.warn(`  - ${f}`);
+      log.info(`    apply + record manually with: ${pc.cyan(`npm run migrations -- --replay ${f}`)}`);
+    }
+  }
+
+  if (!aborted) {
+    log.success('Migrations complete.');
+  }
 
   // ── 3b. Configure the mail queue cron trigger ─────────────────────────
   // The 202609070001_mail_queue_retry.sql migration creates a pg_cron job that

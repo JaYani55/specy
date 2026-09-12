@@ -7,6 +7,7 @@ import {
   parseUncommittedPaths,
   wranglerHasPlaceholders,
 } from '../scripts/lib/state.mjs';
+import { partitionDriftByOwner } from '../scripts/state-recheck.mjs';
 
 test('wranglerHasPlaceholders detects template placeholders', () => {
   assert.equal(wranglerHasPlaceholders('"account_id": "REPLACE_WITH_YOUR_CF_ACCOUNT_ID"'), true);
@@ -71,4 +72,22 @@ test('formatGitStatusLine renders the four git states', () => {
     formatGitStatusLine({ head: 'afbea61', branch: null, upstream: null, ahead: null, behind: null }),
     '(detached) @ afbea61 · no upstream branch',
   );
+});
+
+test('partitionDriftByOwner: core drift requires confirmation, plugin drift is auto re-recordable', () => {
+  const drifted = [
+    { local: { owner: 'core', component: 'migrations', key: 'a.sql' }, recorded: { value: {} } },
+    { local: { owner: 'plugin:acme', component: 'migrations', key: 'b.sql' }, recorded: { value: {} } },
+    { local: { owner: 'core', component: 'worker', key: 'deployment:worker' }, recorded: { value: {} } },
+    { local: { owner: 'plugin:be', component: 'bindings', key: 'x' }, recorded: { value: {} } },
+  ];
+  const { coreDrift, pluginDrift } = partitionDriftByOwner(drifted);
+  assert.equal(coreDrift.length, 2);
+  assert.deepEqual(coreDrift.map((d) => d.local.key), ['a.sql', 'deployment:worker']);
+  assert.equal(pluginDrift.length, 2);
+  assert.ok(pluginDrift.every((d) => d.local.owner.startsWith('plugin:')));
+  // Edge cases: empty/null input, owner-less entries fall into plugin bucket
+  assert.deepEqual(partitionDriftByOwner([]), { coreDrift: [], pluginDrift: [] });
+  assert.deepEqual(partitionDriftByOwner(null), { coreDrift: [], pluginDrift: [] });
+  assert.equal(partitionDriftByOwner([{ local: {} }]).pluginDrift.length, 1);
 });

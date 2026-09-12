@@ -36,7 +36,9 @@ import {
   analyzeCoreUpdates,
   buildFunctionManifest,
   buildMigrationManifest,
+  detectLegacyCoreInstall,
   fetchCoreUpdateState,
+  planBaseline,
   registerAuthHook,
   upsertCoreUpdateRecords,
 } from './lib/core-update.mjs';
@@ -154,21 +156,80 @@ async function main() {
 
   if (plan.bootstrapRequired) {
     info('No core update metadata on this instance (bootstrap).');
-    const proceed = await confirm('Record the current manifest as baseline and apply pending migrations?');
-    if (!proceed) {
-      warn('Aborted.');
-      actionLog.entry('bootstrap baseline confirmation declined');
-      actionLog.finish('aborted');
-      process.exitCode = 1;
-      return;
+
+    // Guard: never silently record never-executed SQL as applied. Probe the
+    // live schema — migrations whose created tables are entirely missing have
+    // almost certainly never run and stay pending instead of being baselined.
+    let existingTables = [];
+    try {
+      const res = await runSqlQuery(
+        projectRef,
+        pat,
+        "select table_name from information_schema.tables where table_schema = 'public' order by table_name;",
+      );
+      existingTables = (Array.isArray(res) ? res : []).map((r) => r?.table_name).filter(Boolean);
+    } catch (e) {
+      warn(`Could not probe the public schema (${e.message}) — treating the instance as empty.`);
     }
-    await upsertCoreUpdateRecords(projectRef, pat, migrations.map(stateRecord));
-    ok('Baseline recorded.');
-    // Recompute the plan against the freshly baselined state.
+
+    const { baseline, applyInstead } = planBaseline(migrations, existingTables);
+    const hasSchema = existingTables.length > 0;
+
+    if (hasSchema) {
+      info(`Existing schema detected (${existingTables.length} public tables) — verifying the manifest against it:`);
+      if (applyInstead.length > 0) {
+        warn(`${applyInstead.length} migration(s) reference only missing tables — they will be APPLIED, not baselined:`);
+        for (const m of applyInstead) log(`    ${c.cyan}+${c.reset} ${m.name}`);
+      }
+      const proceed = await confirm(
+        `Record ${baseline.length} migration(s) as baseline for this existing instance (missing-table migrations stay pending)?`,
+      );
+      if (!proceed) {
+        warn('Aborted.');
+        actionLog.entry('bootstrap baseline confirmation declined');
+        actionLog.finish('aborted');
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      const proceed = await confirm('Empty schema — apply all migrations and record them as baseline afterwards?');
+      if (!proceed) {
+        warn('Aborted.');
+        actionLog.entry('bootstrap baseline confirmation declined (empty schema)');
+        actionLog.finish('aborted');
+        process.exitCode = 1;
+        return;
+      }
+      // Fresh instance: record state only AFTER each migration applied below
+      // (see canRecordState gate) — never before execution.
+    }
+
+    if (baseline.length > 0) {
+      try {
+        await upsertCoreUpdateRecords(projectRef, pat, baseline.map(stateRecord));
+        ok(`Baseline recorded (${baseline.length} migration(s) verified against the schema).`);
+      } catch (e) {
+        fail(`Baseline recording failed: ${e.message}`);
+        info('The baseline was NOT recorded — fix the cause and re-run npm run migrations.');
+        actionLog.entry(`bootstrap baseline recording FAILED: ${e.message}`);
+        actionLog.finish('failed', 'baseline recording');
+        process.exitCode = 1;
+        return;
+      }
+    }
+    actionLog.entry(`bootstrap: ${baseline.length} baselined, ${applyInstead.length} kept pending`);
+
+    // Recompute the plan: baselined entries are applied, the applyInstead set
+    // becomes pending. Migrations applied below record their own state (the
+    // canRecordState gate below only opens after system_config.sql, so the
+    // fresh-instance path also records — the state rows exist by then).
     const fresh = await fetchCoreUpdateState(projectRef, pat);
-    Object.assign(plan, analyzeCoreUpdates(migrations, functions, fresh.state));
+    const baselineState = new Map(fresh.state);
+    for (const m of applyInstead) baselineState.delete(m.id); // ensure pending
+    Object.assign(plan, analyzeCoreUpdates(migrations, functions, baselineState));
+
     if (plan.pendingMigrations.length === 0 && plan.driftedMigrations.length === 0) {
-      info('Baseline complete — all manifest entries recorded as applied.');
+      info('Baseline complete — all manifest entries verified and recorded as applied.');
       info('If this instance is missing specific migrations (e.g. newly added ones), force-apply them with:');
       info(`  ${c.cyan}npm run migrations -- --replay <migration-file>${c.reset}`);
     }
@@ -214,7 +275,10 @@ async function main() {
 
   log('');
   const pendingRecords = [];
-  let canRecordState = !plan.bootstrapRequired;
+  // State rows live in public.system_config — recording can only work once
+  // that table exists (always true on non-bootstrap paths; on bootstrap paths
+  // only when the existing schema actually has it).
+  let canRecordState = !plan.bootstrapRequired || existingTables.includes('system_config');
   for (const migration of toApply) {
     process.stdout.write(`  Applying ${c.yellow}${migration.name}${c.reset}… `);
     try {
@@ -233,7 +297,14 @@ async function main() {
     pendingRecords.push(stateRecord(migration));
     if (migration.name === 'system_config.sql') canRecordState = true;
     if (canRecordState && pendingRecords.length > 0) {
-      await upsertCoreUpdateRecords(projectRef, pat, pendingRecords.splice(0, pendingRecords.length));
+      try {
+        await upsertCoreUpdateRecords(projectRef, pat, pendingRecords.splice(0, pendingRecords.length));
+      } catch (e) {
+        // The migration itself applied fine — a state-write failure must not
+        // abort the run; the next `state:recheck --sync` backfills the rows.
+        warn(`State recording failed for ${pendingRecords.length} migration(s): ${e.message}`);
+        pendingRecords.length = 0;
+      }
     }
   }
   ok(`${toApply.length} migration(s) applied and state recorded.`);

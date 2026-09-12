@@ -331,6 +331,11 @@ async function restoreSnapshot(db, snapshotFile, actionLog, { force = false } = 
       fail('Refusing to restore non-interactively without --yes.');
       return false;
     }
+    warn(
+      'Restore is NOT atomic: each statement runs as its own transaction. An abort mid-way\n' +
+      '  leaves the database partially cleared. Recommended: create a fresh snapshot immediately\n' +
+      '  before restoring — it is your rollback path if the restore fails halfway.',
+    );
     const proceed = await p.confirm({
       message: `Restore will DELETE all rows in ${restorePlan.length} tables and re-insert ${totalRows} rows. This cannot be undone. Continue?`,
       initialValue: false,

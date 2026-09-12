@@ -299,3 +299,30 @@ Legacy core_update keys map onto this taxonomy as:
   (default: abort) — applying a file that exists only on disk would record its
   state in the DB while the file itself is lost on checkout. See
   `specs/changes/2026-09-11-setup-tui-state-summary.md`.
+
+### 5.3 Hardening (2026-09-12) — bootstrap guard, wizard state recording, drift confirmation
+
+Implemented in `specs/changes/2026-09-12-setup-migration-state-hardening.md`:
+
+- **Checksums are EOL-normalized** (`normalizeSqlEol` in
+  `scripts/lib/core-update.mjs`, applied in `buildMigrationManifest`,
+  `buildFunctionManifest` and the plugin-migration hashes of
+  `state-recheck.mjs`). A Windows checkout (`core.autocrlf`) and a
+  Linux/CI checkout produce identical checksums for identical content —
+  recorded state no longer depends on the checking-out platform.
+- **`migrate.mjs` bootstrap verifies before baselining**: an empty
+  remote-state no longer blindly records the whole manifest as applied.
+  The live schema is probed (`information_schema`); migrations whose
+  created tables are entirely missing stay pending and are applied
+  (`planBaseline()` in `core-update.mjs`). On a genuinely empty schema all
+  migrations are applied and state is recorded only after each successful
+  apply.
+- **First-time setup records state per applied migration**
+  (`stepMigrations` → buffered `upsertCoreUpdateRecords` flush after the
+  loop). Skipped migrations are not recorded and reported with a concrete
+  `npm run migrations -- --replay <file>` follow-up.
+- **`state:recheck --sync` confirms core drift per row** before re-recording
+  local values as truth (non-interactive: core drift is left as-is with a
+  warning). Plugin drift continues to re-record automatically. The follow-up
+  hint for drifted core migrations references `--replay <file>` (the
+  previous `--force <file>` hint was wrong).

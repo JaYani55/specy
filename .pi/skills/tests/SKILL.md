@@ -97,7 +97,8 @@ surface here.
 ## If you added a migration
 
 - The migration must be idempotent (see AGENTS.md §5) and registered in
-  `scripts/setup.mjs` → `MIGRATION_ORDER` at the correct dependency position.
+  `scripts/lib/migration-order.mjs` → `MIGRATION_ORDER_CORE` at the correct
+  dependency position.
 - Verify it runs twice without error against a local database when possible.
 
 ## Handoff checklist

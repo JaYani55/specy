@@ -124,6 +124,27 @@ snapshots from `data/snapshots/`).
 FK cycles cannot be ordered — those tables are restored in snapshot order
 (best effort); a failure surfaces the offending table.
 
+### 4.1 Restore safety — non-atomicity
+
+The restore is **not atomic**: every statement runs through the Supabase
+Management API as its own transaction. There is no encompassing
+`BEGIN … COMMIT` around the clear + insert phases. Consequences:
+
+- A failure mid-way (network drop, insert error, timeout) leaves the
+  database in a **partially cleared / partially restored** state.
+- The recommended workflow is therefore always:
+  1. `npm run snapshots` → **Create snapshot** (immediately before the
+     restore — this is the rollback path if the restore fails halfway).
+  2. Restore.
+  3. Check the row-count verification warnings; if any mismatch appears,
+     restore again or roll back from the fresh snapshot.
+- Re-running the restore after a failure is safe (idempotent clear +
+  insert), but the interim state is visible to running workers and API
+  traffic — restore during a maintenance window on production systems.
+- The interactive confirm prompt prints this warning before asking for
+  confirmation; `--yes` (automation) implies the operator accepts the
+  non-atomicity.
+
 ## 5. CLI contract
 
 | Invocation | Behaviour |
