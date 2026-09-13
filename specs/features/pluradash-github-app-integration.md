@@ -69,6 +69,9 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | GET | `/admin/github/repos` | super-admin | List live org repos + workspace assignments + workspaces |
 | POST | `/admin/github/assign` | super-admin | Assign/unassign a repository to a workspace |
 | POST | `/admin/github/token` | super-admin | Mint a short-lived installation access token |
+| POST | `/webhooks/check-run` | **public (HMAC)** | check_run webhook receiver — verifies `X-Hub-Signature-256`, upserts build status + preview URL into `pluradash.repo_deployments`, logs to `pluradash.sync_logs` |
+| GET | `/admin/github/webhooks` | super-admin | check_run webhook provisioning status per assigned repo (+ `secretConfigured`) |
+| POST | `/admin/github/webhooks/sync` | super-admin | Idempotently create/repair the check_run webhook on every assigned repo |
 | GET | `/admin/github/logs` | super-admin | Recent sync operation logs + aggregate stats (filters: `operation`, `tenantId`, `status`, `limit`) |
 | DELETE | `/admin/github/logs` | super-admin | Bulk cleanup: `?before=<ISO>` or `?confirm=true` |
 
@@ -92,8 +95,10 @@ Communication Logs view.
 User-facing surfaces deliberately hide all GitHub details. GitHub is an
 infrastructure/CI-CD concern of the administrator:
 
-- `/plugins/pluradash/apps` shows the app name, stored size (total bytes) and
-  file count — no GitHub link, no branch information, no repository URL.
+- `/plugins/pluradash/apps` shows the app name, stored size (total bytes),
+  file count and the **preview build status** (running/succeeded/failed plus a
+  link to the running preview deployment) — no GitHub link, no branch
+  information, no repository URL.
 - Workspace users can download the app files as a ZIP via the **ZIP** button
   (`GET /sync/archive`) for portability.
 - The storage stats in the PluraDash file overview include an **Apps**
@@ -141,9 +146,21 @@ RLS policies:
 | `GITHUB_CLIENT_ID` | wrangler var | GitHub App client ID |
 | `GITHUB_INSTALLATION_ID` | wrangler var | Installation ID for org-wide operations |
 | `SS_GITHUB_PRIVATE_KEY` | Secrets Store binding | RSA private key (never exposed to browser) |
+| `SS_GITHUB_WEBHOOK_SECRET` | Secrets Store binding | Webhook secret for the check_run feedback loop (secret name `GITHUB_WEBHOOK_SECRET`; plain Worker secret fallback supported) |
 
 These are injected into `wrangler.jsonc` by the pluradash `plugin.json` manifest via
 `ensure-registry.mjs`.
+
+## Preview-Build feedback (check_run webhook)
+
+Sync-engine pushes to `dev` trigger the Cloudflare "Workers Builds" GitHub
+Action, which runs as a check_run on the pushed commit. Repository webhooks
+(`events: ['check_run']`) are provisioned programmatically per assigned repo
+(the app needs **Webhooks: write** + **Checks: read-only**); the verified
+events feed the latest build status and the real preview URL into
+`pluradash.repo_deployments` and onto the tenant app card
+(`/plugins/pluradash/apps`). Full contract:
+`plugins/pluradash/specs/check-run-webhook.md` (plugin workspace).
 
 ## Private key format
 
