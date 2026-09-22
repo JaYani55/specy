@@ -158,16 +158,22 @@ Payload examples and agent workflows: see
 
 ```
 plugins/pluradash/api/sync/
-├── types.ts     — shared types (manifest, payloads, results, SyncError)
-├── keys.ts      — R2 key layout, path normalization, MIME guessing
-├── github.ts    — Octokit: dev provisioning, tree/blob fetch, Git Data commits, prod merge
-├── manifest.ts  — (folded into storage.ts) manifest persistence
-├── storage.ts   — R2 puts/gets/deletes + tenant_storage_objects catalog sync
-├── engine.ts    — orchestration: pull / list / read / save / push / deploy / archive
-├── zip.ts       — dependency-free ZIP writer (STORE method + CRC-32) for /sync/archive
-├── logger.ts    — fire-and-forget operation logging into pluradash.sync_logs
-└── routes.ts    — Hono sub-app mounted at /sync
+├── types.ts        — shared types (manifest, payloads, results, SyncError)
+├── keys.ts         — R2 key layout, path normalization, MIME guessing
+├── github.ts       — Octokit: dev provisioning, tree/blob fetch, Git Data commits, prod merge
+├── manifest.ts     — (folded into storage.ts) manifest persistence
+├── storage.ts      — R2 puts/gets/deletes + tenant_storage_objects catalog sync
+├── engine.ts       — orchestration: pull / list / read / save / push / deploy / archive
+├── provisioning.ts — admin-driven provisioning lifecycle: resync per repo/workspace, cleanup on unlink (GitHub Apps admin panel)
+├── zip.ts          — dependency-free ZIP writer (STORE method + CRC-32) for /sync/archive
+├── logger.ts       — fire-and-forget operation logging into pluradash.sync_logs
+└── routes.ts       — Hono sub-app mounted at /sync
 ```
+
+The provisioning module reuses the exact key layout and storage helpers of the
+engine, so admin-provisioned data and interactive pulls operate on identical
+R2 objects and manifests. Lifecycle contract:
+[GitHub App integration](pluradash-github-app-integration.md#provisioning-lifecycle-re-sync).
 
 ## Operation logging
 
@@ -177,7 +183,7 @@ fire-and-forget promise is cancelled once the response returns, so logging
 MUST NOT bypass the scheduler (`scheduleSyncLog` in `logger.ts`). Logging
 failures never break the request. Logged attributes: tenant, user, repo,
 operation (`pull` | `files.list` | `files.read` | `save` | `push` | `deploy` |
-`archive` | `app.launch` | `repo.assign` | `repo.unassign` | `logs.cleanup`),
+`archive` | `app.launch` | `repo.assign` | `repo.unassign` | `repo.resync` | `logs.cleanup`),
 actor type (`user` | `agent`), status (`success` | `error` | `denied`), HTTP
 status, duration, net byte delta, sanitized message and detail. Secret-looking
 payload keys are redacted.

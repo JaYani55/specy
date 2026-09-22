@@ -67,7 +67,8 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | GET | `/apps` | authenticated | List repos assigned to the active/requested workspace (RLS-filtered); includes per-app `fileCount` and `totalBytes` from the R2 apps prefix |
 | POST | `/apps/launch` | authenticated | Initiate a workspace session for an assigned repository |
 | GET | `/admin/github/repos` | super-admin | List live org repos + workspace assignments + workspaces |
-| POST | `/admin/github/assign` | super-admin | Assign/unassign a repository to a workspace |
+| POST | `/admin/github/assign` | super-admin | Assign/unassign a repository to a workspace. **Assign automatically provisions the data** (see [Provisioning lifecycle](#provisioning-lifecycle-resync)); **unassign automatically removes all provisioned data** (R2 objects + storage catalog rows) |
+| POST | `/admin/github/sync` | super-admin | **Re-Sync** — re-provisions the repo data in every connected workspace (or one `workspaceId`): GitHub dev tree → R2, data objects + data-space verification per user. Returns per-workspace/per-user results |
 | POST | `/admin/github/token` | super-admin | Mint a short-lived installation access token |
 | POST | `/webhooks/check-run` | **public (HMAC)** | check_run webhook receiver — verifies `X-Hub-Signature-256`, upserts build status + preview URL into `pluradash.repo_deployments`, logs to `pluradash.sync_logs` |
 | GET | `/admin/github/webhooks` | super-admin | check_run webhook provisioning status per assigned repo (+ `secretConfigured`) |
@@ -83,6 +84,39 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | `/dashboard/apps` | user | `AppsPage` (alternative) |
 | `/admin/github-apps` | super-admin | `GitHubAppsAdminPage` |
 | `/plugins/pluradash/admin/github-apps` | super-admin | `GitHubAppsAdminPage` |
+
+## Provisioning lifecycle (Re-Sync)
+
+Workspace repository data follows an explicit provisioning lifecycle, driven
+by the GitHub Apps admin panel and implemented in
+`plugins/pluradash/api/sync/provisioning.ts`:
+
+| Event | Behavior |
+|-------|----------|
+| **Re-Sync** ("Re-Sync" button per repo in the admin panel → `POST /admin/github/sync`) | Re-provisions the repo data in **every** workspace the repo is connected to |
+| **Connect** (assign → `POST /admin/github/assign`, action `assign`) | Automatically provisions the data for the newly connected workspace after the access row upsert |
+| **Unlink** (unassign → action `unassign`) | Automatically deletes the access row **and** all provisioned data (R2 objects incl. manifests, all users/branches + `tenant_storage_objects` rows; quota freed via the usage-sync trigger) |
+
+Per (workspace, repo) run the provisioning engine:
+
+1. fetches the GitHub `dev` tree **once per repository** (auto-creates a
+   missing `dev` branch from the default branch),
+2. resolves target users — every user with existing provisioned data (their
+   copy is refreshed) plus every active workspace member holding an active
+   storage allocation (fresh provisioning),
+3. verifies the per-user **data space** (`tenant_storage_allocations`) can
+   absorb the net byte delta; users without an active allocation are skipped
+   with reason `no-allocation` / `suspended-allocation` / `quota-exceeded`,
+4. mirrors the tree into R2, writes the data objects (`tenant_storage_objects`,
+   scope `apps`) and rewrites the manifests using the exact key layout of the
+   sync engine (see [the sync engine doc](pluradash-r2-sync-engine.md)),
+5. logs to `pluradash.sync_logs` (operation `repo.resync`, phases
+   `assign-provision` / `unlink-cleanup` / admin resync).
+
+Provisioning on assign is fail-soft — the assignment stays valid; problems
+are returned in the response (`provisioning` / `provisioningError`) and
+surfaced in the admin panel toasts. The Re-Sync endpoint returns detailed
+per-workspace/per-user results.
 
 ## Operation logging & user-facing behavior
 
