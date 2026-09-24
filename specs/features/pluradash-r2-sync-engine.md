@@ -163,6 +163,7 @@ plugins/pluradash/api/sync/
 ├── github.ts       — Octokit: dev provisioning, tree/blob fetch, Git Data commits, prod merge
 ├── manifest.ts     — (folded into storage.ts) manifest persistence
 ├── storage.ts      — R2 puts/gets/deletes + tenant_storage_objects catalog sync
+├── r2Ops.ts        — pure R2 helpers: shape-tolerant list pagination, delete chunking (unit-tested)
 ├── engine.ts       — orchestration: pull / list / read / save / push / deploy / archive
 ├── provisioning.ts — admin-driven provisioning lifecycle: resync per repo/workspace, cleanup on unlink (GitHub Apps admin panel)
 ├── zip.ts          — dependency-free ZIP writer (STORE method + CRC-32) for /sync/archive

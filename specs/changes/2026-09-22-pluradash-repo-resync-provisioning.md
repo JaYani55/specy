@@ -61,6 +61,12 @@ so a subsequent user pull/push operates on the same objects.
 - `plugins/pluradash/api/sync/provisioning.ts` — admin-driven provisioning
   and cleanup engine (repo snapshot fetch, target resolution, per-user
   mirroring, quota gating, R2 + catalog cleanup)
+- `plugins/pluradash/api/sync/r2Ops.ts` — dependency-free R2 helpers
+  (shape-tolerant list pagination via opaque cursor, 1000-key delete
+  chunking), unit-tested in `tests/pluradashSyncStorage.test.mjs`
+- `tests/pluradashSyncStorage.test.mjs` — regression tests for R2 list
+  pagination (real Workers API shape vs. legacy `truncated`), delete
+  chunking and repo-prefix matching (SQL LIKE wildcard guard)
 
 ## Files Changed
 
@@ -68,7 +74,13 @@ so a subsequent user pull/push operates on the same objects.
   `POST /admin/github/assign` now provisions on assign and cleans up on
   unassign (repo row is read before delete to resolve the R2 prefix)
 - `plugins/pluradash/api/sync/storage.ts` — added `deleteR2Objects` bulk
-  helper
+  helper; `listObjectKeys` now paginates via the real Workers R2 API shape
+  (`list_complete: false` + opaque top-level `cursor`; the previous code
+  checked a nonexistent `truncated` field and always stopped after the first
+  1000 objects); R2 deletes and catalog `in (...)` deletes are chunk-safe
+- `plugins/pluradash/api/sync/keys.ts` — added pure
+  `matchesRepoPrefix(objectKey, workspaceId, repoFullName)` helper (exact
+  post-filter for SQL LIKE results; repo keys may contain `_` LIKE wildcards)
 - `plugins/pluradash/api/sync/logger.ts` — new sync-log operation
   `repo.resync`
 - `plugins/pluradash/plugin.json` — api_metadata entry
@@ -105,7 +117,53 @@ usage-sync trigger.
 ## Verification
 
 - `npm run typecheck` (frontend, includes plugin pages) — exit 0
-- `npm run typecheck:api` — no errors in touched files (68 pre-existing
+- `npm run typecheck:api` — no errors in touched files (pre-existing
   gitignored-plugin errors unchanged)
-- `npm test` — 286/286 pass
+- `npm test` — 294/294 pass (incl. 8 new `pluradashSyncStorage` tests)
 - `npm run build` — succeeds
+
+## Follow-up fixes (same day, runtime smoke tests)
+1. **Assign provisioning crashed** with `Cannot read properties of undefined
+   (reading 'startsWith')`: `resolveProvisionTargets` read `row.object_key`
+   without selecting it. Fixed (`select('object_key, user_id, size_bytes')`)
+   and `matchesRepoPrefix` hardened against null/undefined keys.
+2. **Cleanup/provisioning silently truncated at 1000 objects**: the real
+   Workers R2 list API has no `truncated` field — pagination must follow
+   `list_complete: false` + the opaque top-level `cursor`. Fixed via the new
+   pure module `sync/r2Ops.ts` (`collectR2Keys`, `chunkForR2Delete`);
+   legacy `truncated` shapes fall back to the last object key.
+3. **Large-tree deletes**: R2 `delete()` rejects batches above 1000 keys and
+   PostgREST `in=(...)` filters hit URL-length limits — `deleteHeadTree`,
+   `deleteR2Objects` and `deleteCatalogRows` now chunk (1000 / 25).
+4. **Cleanup failed with `400 Bad Request`** (`Failed to remove deleted files
+   from the storage catalog`): the cleanup deleted thousands of catalog rows
+   via `object_key in ("…","…",…)` — with ~170-char object keys the DELETE
+   request URL exceeded PostgREST/gateway URI limits (supabase-js also does
+   not escape reserved characters inside `in (...)` values). Cleanup now
+   deletes per user via a single exact LIKE filter over the deterministic
+   object-key prefix (`deleteCatalogRowsByPrefix`, wildcards escaped via the
+   new pure helper `escapeLikePattern` in `sync/keys.ts`) — one small
+   request per user, collation-independent, no key lists. The `in (...)`
+   path remains only for small engine batches (chunk 25).
+5. **Launch button removed from the tenant apps grid** (`/plugins/pluradash/apps`):
+   the "Starten" button called `/apps/launch`, whose `launchUrl` points
+   directly at the GitHub repository — users have no direct access to the
+   repository (infrastructure/CI-CD concern of the administrator). The app
+   card footer now offers only the ZIP download. The `/apps/launch` endpoint
+   stays part of the authenticated API surface (agent/PluraPi sessions);
+   the unused frontend wrapper `launchAppSession()` was removed.
+6. **Workspace storage usage showed ~0 bytes** while the file-type stats
+   showed the real data (e.g. 18 media objects / 7.5 MB): `/storage/summary`
+   and `/files` returned `ensureTenantStorageSummary()` — the CALLER's
+   personal allocation (`tenant_storage_allocations.used_bytes_cached` of
+   one (tenant, user) row). The PluraDash file overview is a support/super-
+   admin workspace view whose catalog rows belong to other users, so the
+   usage tile showed the viewer's (near-zero) usage. New plugin helper
+   `readWorkspaceStorageSummary()` (api/index.ts) aggregates the actual
+   catalog across ALL users of the workspace (same source as the file-type
+   stats — always in agreement, immune to `used_bytes_cached` drift) and
+   sums the active allocations of the workspace's active members for the
+   quota display (auto-provisioned policy-hook allocations of non-member
+   viewers are excluded). `/storage/summary` and `/files` now return this
+   workspace-wide summary; per-user quota enforcement on uploads is
+   unchanged.

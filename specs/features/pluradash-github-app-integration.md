@@ -17,7 +17,12 @@ The integration has two surfaces:
    organization repositories, shows current workspace assignments, and lets a
    super-admin assign/unassign repositories to tenant workspaces.
 2. **Tenant apps grid** (`/plugins/pluradash/apps`) — lists the repositories assigned
-   to the active workspace and launches a workspace session for a selected repository.
+   to the active workspace with their storage footprint and preview build status.
+   The dashboard deliberately has NO launch button: the underlying repository
+   location is infrastructure users have no direct access to (GitHub is a
+   CI/CD concern of the administrator). The `/apps/launch` endpoint remains
+   part of the authenticated API surface (agent/PluraPi sessions); the
+   dashboard offers the synced files as a ZIP download instead.
 
 GitHub access is performed through a **GitHub App** using short-lived installation
 access tokens minted server-side. No GitHub credentials ever reach the browser.
@@ -65,7 +70,7 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
 | GET | `/apps` | authenticated | List repos assigned to the active/requested workspace (RLS-filtered); includes per-app `fileCount` and `totalBytes` from the R2 apps prefix |
-| POST | `/apps/launch` | authenticated | Initiate a workspace session for an assigned repository |
+| POST | `/apps/launch` | authenticated | Initiate a workspace session for an assigned repository (agent/API surface — the tenant dashboard has no launch button) |
 | GET | `/admin/github/repos` | super-admin | List live org repos + workspace assignments + workspaces |
 | POST | `/admin/github/assign` | super-admin | Assign/unassign a repository to a workspace. **Assign automatically provisions the data** (see [Provisioning lifecycle](#provisioning-lifecycle-resync)); **unassign automatically removes all provisioned data** (R2 objects + storage catalog rows) |
 | POST | `/admin/github/sync` | super-admin | **Re-Sync** — re-provisions the repo data in every connected workspace (or one `workspaceId`): GitHub dev tree → R2, data objects + data-space verification per user. Returns per-workspace/per-user results |
