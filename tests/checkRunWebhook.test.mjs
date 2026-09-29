@@ -107,6 +107,30 @@ test('extractBuildDetails rejects non-https preview URLs', () => {
   assert.equal(details.previewUrl, null);
 });
 
+// Real Cloudflare Pages summary (repo Pluracon/akademiefreytag, delivery
+// 2e7b5bd0-bc02-11f1-9980-0cad9dba189e): HTML table with the URL only inside
+// an <a href> target. Regression guard for the preview_url: null bug.
+const PAGES_HTML_OUTPUT = `<table><tr><td><strong>Latest commit:</strong> </td><td>\n<code>7f54bd6</code>\n</td></tr>\n<tr><td><strong>Status:</strong></td><td>&nbsp;✅&nbsp; Deploy successful!</td></tr>\n<tr><td><strong>Preview URL:</strong></td><td>\n<a href='https://09920446.freytag-akademie.pages.dev'>https://09920446.freytag-akademie.pages.dev</a>\n</td></tr>\n</table>\n\n[View logs](https://dash.cloudflare.com/?to=/pages/view/freytag-akademie/09920446)`;
+
+test('extractBuildDetails parses the Cloudflare Pages HTML-table output format', () => {
+  const details = extractBuildDetails(PAGES_HTML_OUTPUT);
+  assert.equal(details.previewUrl, 'https://09920446.freytag-akademie.pages.dev/');
+  assert.equal(details.buildId, null);
+  assert.equal(details.versionId, null);
+});
+
+test('extractBuildDetails normalizes HTML entities inside labels', () => {
+  const details = extractBuildDetails(
+    '<tr><td><strong>Status:</strong></td><td>&nbsp;Deploy ok</td></tr>\nPreview URL: https://plain.example.com',
+  );
+  assert.equal(details.previewUrl, 'https://plain.example.com/');
+});
+
+test('extractBuildDetails still rejects non-https URLs wrapped in anchor tags', () => {
+  const details = extractBuildDetails("<a href='http://insecure.example.com'>http://insecure.example.com</a>");
+  assert.equal(details.previewUrl, null);
+});
+
 // ─── Event parsing & state mapping ───────────────────────────────────────────
 
 function buildPayload(overrides = {}) {
@@ -192,6 +216,44 @@ test('parseCheckRunEvent maps queued and rerequested actions to running', () => 
 
 function rerequested(a, b) { return a; }
 function parsedStatus(v) { return v?.buildStatus; }
+
+test('parseCheckRunEvent maps a created+completed check run to its terminal state', () => {
+  // Cloudflare Pages delivers its check run as action=created with
+  // status=completed in one event. Regression guard: this used to be dropped
+  // (buildStatus null) because only queued/in_progress mapped to running.
+  const parsed = parseCheckRunEvent(buildPayload({
+    check_run: {
+      name: 'Cloudflare Pages',
+      status: 'completed',
+      conclusion: 'success',
+      head_sha: '7f54bd6ef4a5',
+      check_suite: { head_branch: 'dev' },
+      output: { title: 'Deployed successfully', summary: PAGES_HTML_OUTPUT },
+    },
+  }));
+  assert.ok(parsed);
+  assert.equal(parsed.buildStatus, 'succeeded');
+  assert.equal(parsed.checkName, 'Cloudflare Pages');
+  assert.equal(parsed.previewUrl, 'https://09920446.freytag-akademie.pages.dev/');
+});
+
+test('parseCheckRunEvent maps a created+completed failure to failed', () => {
+  const parsed = parseCheckRunEvent(buildPayload({
+    check_run: {
+      status: 'completed', conclusion: 'failure', check_suite: { head_branch: 'dev' }, output: {},
+    },
+  }));
+  assert.equal(parsed.buildStatus, 'failed');
+});
+
+test('parseCheckRunEvent still ignores created+completed with untrackable conclusions', () => {
+  const parsed = parseCheckRunEvent(buildPayload({
+    check_run: {
+      status: 'completed', conclusion: 'skipped', check_suite: { head_branch: 'dev' }, output: {},
+    },
+  }));
+  assert.equal(parsed.buildStatus, null);
+});
 
 test('parseCheckRunEvent returns null for non-check_run payloads', () => {
   assert.equal(parseCheckRunEvent({ zen: 'Keep it simple.' }), null);

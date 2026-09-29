@@ -104,6 +104,16 @@ export const MIGRATION_ORDER_CORE = [
   // after 202609070001 (creates the function + cron schedule) and after
   // mail_delivery.sql (mail_delivery_jobs table).
   '202609110001_mail_queue_cron_gate.sql',
+  // Repair: re-asserts the canonical claims-reading helpers from
+  // 202605240001_multi_tenant_foundation.sql (current_user_roles parses the
+  // JWT user_roles claim as a JSON array). Production carried drifted
+  // CSV-string-parsing bodies that made is_super_admin() always false; the
+  // foundation migration is recorded applied (checksum-clean), so the runner
+  // never re-executed the corrected definitions. Must run after 202605240001
+  // (replaces its functions) and after every migration whose policies rely on
+  // the repaired helpers (202609090002, 202609100001/2) so a fresh install
+  // ends in the canonical state.
+  '202609290001_repair_current_user_roles_json_claims.sql',
 ];
 
 /**
