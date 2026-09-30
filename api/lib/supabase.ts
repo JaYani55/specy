@@ -173,6 +173,10 @@ export async function createSupabaseClient(env: Env, token?: string) {
  * Requires SS_SUPABASE_SECRET_KEY to be bound from the Secrets Store.
  * Never falls back to a plain var to prevent accidental exposure.
  */
+export function hasSupabaseAdminCredential(env: Pick<Env, 'SS_SUPABASE_SECRET_KEY' | 'SUPABASE_SECRET_KEY'>): boolean {
+  return Boolean(env.SS_SUPABASE_SECRET_KEY || env.SUPABASE_SECRET_KEY);
+}
+
 export async function createSupabaseAdminClient(env: Env) {
   // 1. Prefer Secrets Store binding (standard for this project in production)
   if (env.SS_SUPABASE_SECRET_KEY) {

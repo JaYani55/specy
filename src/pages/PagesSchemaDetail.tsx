@@ -358,7 +358,7 @@ const PagesSchemaDetail: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <KeyRound className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium">
-                      {language === 'en' ? 'Revalidation Secret' : 'Revalidation-Secret'}
+                      {language === 'en' ? 'Frontend Revalidation Token' : 'Frontend-Revalidierungs-Token'}
                     </span>
                     {revalidationSecretStatus?.configured ? (
                       <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 gap-1">
@@ -374,17 +374,24 @@ const PagesSchemaDetail: React.FC = () => {
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {language === 'en'
-                      ? 'Stored server-side and sent as Authorization: Bearer during revalidation. The value is write-only.'
-                      : 'Wird serverseitig gespeichert und bei der Revalidation als Authorization: Bearer gesendet. Der Wert ist nur schreibbar.'}
+                      ? 'Shared with your frontend revalidation endpoint; Specy sends it as a Bearer token when content changes. Set the same value in both places. Write-only.'
+                      : 'Gemeinsamer Token für Specy und den Revalidierungs-Endpunkt deines Frontends. Specy sendet ihn bei Inhaltsänderungen als Bearer-Token. In beiden Systemen denselben Wert verwenden. Nur schreibbar.'}
                   </p>
-                  {revalidationSecretStatus?.warning && (
+                  {revalidationSecretStatus?.management_available === false && (
                     <p className="text-xs text-amber-700 mt-1">
-                      {revalidationSecretStatus.warning}
+                      {revalidationSecretStatus.warning_code === 'supabase_admin_credential'
+                        ? (language === 'en' ? 'Missing: Supabase admin credential (SS_SUPABASE_SECRET_KEY binding or SUPABASE_SECRET_KEY fallback).' : 'Fehlt: Supabase-Admin-Zugang (SS_SUPABASE_SECRET_KEY-Bindung oder SUPABASE_SECRET_KEY-Fallback).')
+                        : revalidationSecretStatus.warning_code === 'secrets_encryption_key'
+                          ? (language === 'en' ? 'Missing Worker secret: SECRETS_ENCRYPTION_KEY.' : 'Fehlt: Worker-Secret SECRETS_ENCRYPTION_KEY.')
+                          : revalidationSecretStatus.warning_code === 'both_worker_keys'
+                            ? (language === 'en' ? 'Missing: Supabase admin credential and Worker secret SECRETS_ENCRYPTION_KEY.' : 'Fehlen: Supabase-Admin-Zugang und Worker-Secret SECRETS_ENCRYPTION_KEY.')
+                            : (language === 'en' ? 'Managed-secret access failed; check the Worker bindings and Secrets Store.' : 'Zugriff auf verwaltete Secrets fehlgeschlagen; Worker-Bindungen und Secrets Store prüfen.')}
                     </p>
                   )}
                   {revalidationSecretStatus?.secret_name && (
-                    <p className="text-xs text-muted-foreground mt-1 font-mono">
-                      {revalidationSecretStatus.secret_name}
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {language === 'en' ? 'Internal managed-secret name (not the token value):' : 'Interner Speichername (nicht der Token-Wert):'}{' '}
+                      <code className="font-mono">{revalidationSecretStatus.secret_name}</code>
                     </p>
                   )}
                 </div>
@@ -394,15 +401,15 @@ const PagesSchemaDetail: React.FC = () => {
                 <div className="space-y-1.5">
                   <Label htmlFor="revalidation-secret-input">
                     {revalidationSecretStatus?.configured
-                      ? (language === 'en' ? 'Replace secret' : 'Secret ersetzen')
-                      : (language === 'en' ? 'Set secret' : 'Secret setzen')}
+                      ? (language === 'en' ? 'Replace token' : 'Token ersetzen')
+                      : (language === 'en' ? 'Set token' : 'Token setzen')}
                   </Label>
                   <Input
                     id="revalidation-secret-input"
                     type="password"
                     value={revalidationSecretInput}
                     onChange={(event) => setRevalidationSecretInput(event.target.value)}
-                    placeholder={language === 'en' ? 'Enter a shared secret' : 'Gemeinsames Secret eingeben'}
+                    placeholder={language === 'en' ? 'Same value as frontend' : 'Derselbe Wert wie im Frontend'}
                     autoComplete="off"
                     disabled={revalidationSecretStatus?.management_available === false}
                   />

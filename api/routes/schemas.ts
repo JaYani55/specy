@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
-import { createSupabaseClient, type Env } from '../lib/supabase';
-import { createSupabaseAdminClient } from '../lib/supabase';
+import { createSupabaseAdminClient, createSupabaseClient, hasSupabaseAdminCredential, type Env } from '../lib/supabase';
 import { parseBearerToken, requireAppRole } from '../lib/auth';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 import {
@@ -303,9 +302,13 @@ function buildSpecSections(
   return lines;
 }
 
+type ManagedSecretWarningCode = 'supabase_admin_credential' | 'secrets_encryption_key' | 'both_worker_keys' | 'managed_secret_access';
+
 interface SchemaSecretStatusResult {
   schema: SchemaSecretStatusRow | null;
   managementAvailable: boolean;
+  warning: string | null;
+  warningCode: ManagedSecretWarningCode | null;
 }
 
 interface SchemaTemplateRow {
@@ -443,8 +446,27 @@ function isManagedSecretUnavailableError(error: unknown): boolean {
     || message.includes('SECRETS_ENCRYPTION_KEY is not configured');
 }
 
-function getManagedSecretUnavailableMessage(): string {
-  return 'Revalidation secret management is unavailable in this environment because the Supabase admin secret or managed-secret encryption key is not available.';
+function getManagedSecretUnavailableCode(env: Env, error?: unknown): ManagedSecretWarningCode {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const adminMissing = !hasSupabaseAdminCredential(env)
+    || message.includes('SS_SUPABASE_SECRET_KEY is not bound')
+    || message.includes('Secret "SUPABASE_SECRET_KEY" not found');
+  const encryptionKeyMissing = !env.SECRETS_ENCRYPTION_KEY
+    || message.includes('SECRETS_ENCRYPTION_KEY is not configured');
+
+  if (adminMissing && encryptionKeyMissing) return 'both_worker_keys';
+  if (adminMissing) return 'supabase_admin_credential';
+  if (encryptionKeyMissing) return 'secrets_encryption_key';
+  return 'managed_secret_access';
+}
+
+function getManagedSecretUnavailableMessage(env: Env, error?: unknown): string {
+  switch (getManagedSecretUnavailableCode(env, error)) {
+    case 'supabase_admin_credential': return 'Worker Supabase admin credential is missing or unavailable.';
+    case 'secrets_encryption_key': return 'Worker secret SECRETS_ENCRYPTION_KEY is missing.';
+    case 'both_worker_keys': return 'Worker Supabase admin credential and SECRETS_ENCRYPTION_KEY are missing.';
+    default: return 'Worker managed-secret access failed; check its bindings and secret store.';
+  }
 }
 
 async function readSchemaSecretStatusWithUserToken(env: Env, slug: string, token: string): Promise<SchemaSecretStatusRow | null> {
@@ -507,15 +529,17 @@ async function getSchemaSecretStatus(
   slug: string,
   options?: { token?: string; allowReadonlyFallback?: boolean; migrateLegacy?: boolean },
 ): Promise<SchemaSecretStatusResult> {
-  if (!env.SS_SUPABASE_SECRET_KEY) {
+  if (!hasSupabaseAdminCredential(env)) {
     if (options?.allowReadonlyFallback && options.token) {
       return {
         schema: await readSchemaSecretStatusWithUserToken(env, slug, options.token),
         managementAvailable: false,
+        warning: getManagedSecretUnavailableMessage(env),
+        warningCode: getManagedSecretUnavailableCode(env),
       };
     }
 
-    throw new Error('SS_SUPABASE_SECRET_KEY is not bound. Add SUPABASE_SECRET_KEY to your Secrets Store and bind it in wrangler.jsonc.');
+    throw new Error('SS_SUPABASE_SECRET_KEY is not bound and SUPABASE_SECRET_KEY fallback is missing.');
   }
   try {
     const admin = await createSupabaseAdminClient(env);
@@ -530,6 +554,8 @@ async function getSchemaSecretStatus(
         return {
           schema: null,
           managementAvailable: true,
+          warning: null,
+          warningCode: null,
         };
       }
       throw new Error(error.message);
@@ -540,18 +566,24 @@ async function getSchemaSecretStatus(
       return {
         schema: row,
         managementAvailable: true,
+        warning: null,
+        warningCode: null,
       };
     }
 
     return {
       schema: await migrateLegacyRevalidationSecret(env, row),
       managementAvailable: true,
+      warning: null,
+      warningCode: null,
     };
   } catch (error) {
     if (options?.allowReadonlyFallback && options.token && isManagedSecretUnavailableError(error)) {
       return {
         schema: await readSchemaSecretStatusWithUserToken(env, slug, options.token),
         managementAvailable: false,
+        warning: getManagedSecretUnavailableMessage(env, error),
+        warningCode: getManagedSecretUnavailableCode(env, error),
       };
     }
 
@@ -947,7 +979,7 @@ schemas.get('/:slug/revalidation-secret/status', async (c) => {
   if (auth instanceof Response) return auth;
 
   const slug = c.req.param('slug');
-  const { schema, managementAvailable } = await getSchemaSecretStatus(c.env, slug, {
+  const { schema, managementAvailable, warning, warningCode } = await getSchemaSecretStatus(c.env, slug, {
     token: auth.token,
     allowReadonlyFallback: true,
   });
@@ -965,9 +997,8 @@ schemas.get('/:slug/revalidation-secret/status', async (c) => {
     revalidation_endpoint: schema.revalidation_endpoint,
     management_available: managementAvailable,
     readonly_fallback: !managementAvailable,
-    warning: managementAvailable
-      ? null
-      : getManagedSecretUnavailableMessage(),
+    warning: managementAvailable ? null : warning,
+    warning_code: managementAvailable ? null : warningCode,
   });
 });
 
@@ -981,7 +1012,7 @@ schemas.put('/:slug/revalidation-secret', async (c) => {
     ({ schema } = await getSchemaSecretStatus(c.env, slug, { migrateLegacy: false }));
   } catch (error) {
     if (isManagedSecretUnavailableError(error)) {
-      return c.json({ error: getManagedSecretUnavailableMessage() }, 503);
+      return c.json({ error: getManagedSecretUnavailableMessage(c.env, error) }, 503);
     }
     throw error;
   }
@@ -1068,7 +1099,7 @@ schemas.delete('/:slug/revalidation-secret', async (c) => {
     ({ schema } = await getSchemaSecretStatus(c.env, slug, { migrateLegacy: false }));
   } catch (error) {
     if (isManagedSecretUnavailableError(error)) {
-      return c.json({ error: getManagedSecretUnavailableMessage() }, 503);
+      return c.json({ error: getManagedSecretUnavailableMessage(c.env, error) }, 503);
     }
     throw error;
   }
@@ -1107,7 +1138,7 @@ schemas.post('/:slug/unhook', async (c) => {
     ({ schema } = await getSchemaSecretStatus(c.env, slug, { migrateLegacy: false }));
   } catch (error) {
     if (isManagedSecretUnavailableError(error)) {
-      return c.json({ error: getManagedSecretUnavailableMessage() }, 503);
+      return c.json({ error: getManagedSecretUnavailableMessage(c.env, error) }, 503);
     }
     throw error;
   }

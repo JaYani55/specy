@@ -23,6 +23,7 @@ export interface RevalidationSecretStatus {
   management_available?: boolean;
   readonly_fallback?: boolean;
   warning?: string | null;
+  warning_code?: 'supabase_admin_credential' | 'secrets_encryption_key' | 'both_worker_keys' | 'managed_secret_access' | null;
 }
 
 export interface CreateSchemaTemplateInput {
