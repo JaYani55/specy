@@ -18,6 +18,7 @@
  *   --skip-core            Run only the plugin phase
  *   --skip-plugins         Run only the core phase
  *   --allow-dirty          Forwarded to cf-update.mjs
+ *   --force-migrations     Re-apply drifted plugin migrations without prompting
  */
 
 import { spawnSync } from 'child_process';
@@ -50,10 +51,11 @@ const options = {
   skipCore: args.includes('--skip-core'),
   skipPlugins: args.includes('--skip-plugins'),
   dryRun: args.includes('--dry-run'),
+  forceMigrations: args.includes('--force-migrations'),
 };
 
 const forwardArgs = args.filter(
-  (a) => !['--skip-core', '--skip-plugins', '--dry-run'].includes(a),
+  (a) => !['--skip-core', '--skip-plugins', '--dry-run', '--force-migrations'].includes(a),
 );
 
 async function runCoreUpdate() {
@@ -126,7 +128,7 @@ async function runPluginUpdate(db) {
     const item = detected.find((d) => d.id === id);
     spinner.start(`Updating ${id}…`);
     try {
-      const result = await updatePlugin(item, db);
+      const result = await updatePlugin(item, db, { force: options.forceMigrations });
       if (result.error) {
         spinner.stop(`${id}: failed`, 1);
         p.log.error(`${id}: ${result.error}`);
@@ -139,6 +141,7 @@ async function runPluginUpdate(db) {
           (result.migrations?.length ? `, ${result.migrations.length} migration(s)` : ''));
         summary.push(`${id}: v${result.version ?? '?'}${result.migrations?.length ? `, ${result.migrations.length} migration(s) applied` : ''}`);
         for (const w of result.warnings ?? []) p.log.warn(`${id}: ${w}`);
+        for (const f of result.migrationDetails?.failed ?? []) p.log.error(`${id}: ${f.name}: ${f.error}`);
       }
     } catch (e) {
       spinner.stop(`${id}: failed`, 1);

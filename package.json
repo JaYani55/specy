@@ -34,6 +34,7 @@
     "bindings:provision": "node scripts/provision-bindings.mjs",
     "bindings:check": "node scripts/provision-bindings.mjs --check-remote",
     "state:recheck": "node scripts/state-recheck.mjs",
+    "pemkey": "node scripts/pemkeyworkersecret.mjs",
     "predev": "node scripts/ensure-registry.mjs",
     "prebuild": "node scripts/ensure-registry.mjs"
   },
