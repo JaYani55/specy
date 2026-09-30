@@ -29,8 +29,8 @@ import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 const schemas = new Hono<{ Bindings: Env }>();
 
 interface SchemaRow {
-  id: string;
   slug: string;
+  api_slug: string;
   name: string;
   description: string | null;
   registration_status: string | null;
@@ -72,6 +72,7 @@ function buildSpecSections(
     id: string;
     name: string;
     slug: string;
+    api_slug: string;
     description: string | null;
     registration_status: string;
     is_default?: boolean | null;
@@ -108,7 +109,7 @@ function buildSpecSections(
 ): string[] {
   const requirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
   const expectedSlugStructure = requirements.required_slug_structure || schema.slug_structure || '/:slug';
-  const pagesUrl = `${baseUrl}/api/schemas/${schema.slug}/pages`;
+  const pagesUrl = `${baseUrl}/api/schemas/${schema.api_slug}/pages`;
 
   const lines: string[] = [
     '='.repeat(60),
@@ -117,6 +118,7 @@ function buildSpecSections(
     '',
     `Name: ${schema.name}`,
     `Slug: ${schema.slug}`,
+    `API slug: ${schema.api_slug}`,
     `Status: ${schema.registration_status}`,
     `Default: ${schema.is_default ? 'Yes' : 'No'}`,
     `Pages using this schema: ${count ?? 0}`,
@@ -276,7 +278,7 @@ function buildSpecSections(
       `Registration Code: ${schema.registration_code}`,
       '',
       'Register only after the frontend is reachable and verified.',
-      `POST ${baseUrl}/api/schemas/${schema.slug}/register`,
+      `POST ${baseUrl}/api/schemas/${schema.api_slug}/register`,
       '',
       'Request body (JSON):',
       JSON.stringify({
@@ -450,7 +452,7 @@ async function readSchemaSecretStatusWithUserToken(env: Env, slug: string, token
   const { data, error } = await supabase
     .from('page_schemas')
     .select('id, slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status')
-    .eq('slug', slug)
+    .eq('api_slug', slug)
     .single();
 
   if (error) {
@@ -520,7 +522,7 @@ async function getSchemaSecretStatus(
     const { data, error } = await admin
       .from('page_schemas')
       .select('id, slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status')
-      .eq('slug', slug)
+      .eq('api_slug', slug)
       .single();
 
     if (error) {
@@ -564,7 +566,7 @@ schemas.get('/', async (c) => {
 
   const { data, error } = await supabase
     .from('page_schemas')
-    .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+    .select('slug, api_slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
     .order('is_default', { ascending: false })
     .order('name', { ascending: true });
 
@@ -579,7 +581,9 @@ schemas.get('/', async (c) => {
     description: 'Available page schemas. Use the spec_url to fetch the full LLM-readable specification for any schema.',
     mcp_endpoint: `${baseUrl}/mcp`,
     schemas: ((data ?? []) as SchemaRow[]).map((s) => ({
-      slug: s.slug,
+      slug: s.api_slug,
+      schema_slug: s.slug,
+      api_slug: s.api_slug,
       name: s.name,
       description: s.description,
       status: s.registration_status,
@@ -589,10 +593,10 @@ schemas.get('/', async (c) => {
       integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
       content_scope: s.content_scope || 'page-collection',
       page_target: s.page_target || null,
-      spec_url: `${baseUrl}/api/schemas/${s.slug}/spec.txt`,
-      spec_json_url: `${baseUrl}/api/schemas/${s.slug}/spec`,
-      pages_url: `${baseUrl}/api/schemas/${s.slug}/pages`,
-      register_url: `${baseUrl}/api/schemas/${s.slug}/register`,
+      spec_url: `${baseUrl}/api/schemas/${s.api_slug}/spec.txt`,
+      spec_json_url: `${baseUrl}/api/schemas/${s.api_slug}/spec`,
+      pages_url: `${baseUrl}/api/schemas/${s.api_slug}/pages`,
+      register_url: `${baseUrl}/api/schemas/${s.api_slug}/register`,
       created_at: s.created_at,
       updated_at: s.updated_at,
     })),
@@ -707,7 +711,7 @@ schemas.get('/:slug/spec.txt', async (c) => {
   const { data: schema, error } = await supabase
     .from('page_schemas')
     .select('*')
-    .eq('slug', slug)
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {
@@ -751,7 +755,7 @@ schemas.get('/:slug/spec', async (c) => {
   const { data: schema, error } = await supabase
     .from('page_schemas')
     .select('*')
-    .eq('slug', slug)
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {
@@ -767,7 +771,7 @@ schemas.get('/:slug/spec', async (c) => {
   const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
 
   return c.json({
-    schema,
+    schema: { ...schema, slug: schema.api_slug, schema_slug: schema.slug },
     page_count: count ?? 0,
     main_spec: specBundle.main_spec,
     attached_specs: specBundle.attached_specs,
@@ -783,8 +787,8 @@ schemas.get('/:slug/manifest', async (c) => {
   const supabase = await createSupabaseAdminClient(c.env);
   const { data: schema, error } = await supabase
     .from('page_schemas')
-    .select('id, slug, name, registration_status, content_scope, frontend_url, revalidation_endpoint, slug_structure, integration_requirements')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, name, registration_status, content_scope, frontend_url, revalidation_endpoint, slug_structure, integration_requirements')
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {
@@ -807,8 +811,8 @@ schemas.get('/:slug/pages', async (c) => {
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
-    .select('id, slug, name, registration_status, slug_structure, integration_requirements')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, name, registration_status, slug_structure, integration_requirements')
+    .eq('api_slug', slug)
     .single();
 
   if (schemaError || !schema) {
@@ -834,7 +838,9 @@ schemas.get('/:slug/pages', async (c) => {
 
   return c.json({
     schema: {
-      slug: schema.slug,
+      slug: schema.api_slug,
+      schema_slug: schema.slug,
+      api_slug: schema.api_slug,
       name: schema.name,
       slug_structure: schema.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
@@ -853,8 +859,8 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
-    .select('id, slug, name, registration_status')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, name, registration_status')
+    .eq('api_slug', slug)
     .single();
 
   if (schemaError || !schema || schema.registration_status !== 'registered') {
@@ -872,7 +878,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
   if (!page) return c.json({ error: 'Published page not found' }, 404);
 
-  return c.json({ schema: { slug: schema.slug, name: schema.name }, page });
+  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name }, page });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback
@@ -915,8 +921,8 @@ schemas.put('/:slug/frontend-targets', async (c) => {
   const client = await createSupabaseClient(c.env, auth.token);
   const { data: schema, error: schemaError } = await client
     .from('page_schemas')
-    .select('id, slug, tenant_id, integration_requirements')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, tenant_id, integration_requirements')
+    .eq('api_slug', slug)
     .single();
 
   if (schemaError || !schema) return c.json({ error: `Schema "${slug}" not found` }, 404);
@@ -933,7 +939,7 @@ schemas.put('/:slug/frontend-targets', async (c) => {
   if (rpcError) return c.json({ error: rpcError.message }, 500);
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, auth.token);
-  return c.json({ success: true, schema: { slug: schema.slug }, targets });
+  return c.json({ success: true, schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug }, targets });
 });
 
 schemas.get('/:slug/revalidation-secret/status', async (c) => {
@@ -1152,8 +1158,8 @@ schemas.post('/:slug/revalidate', async (c) => {
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
-    .select('id, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status, slug_structure, integration_requirements')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status, slug_structure, integration_requirements')
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {

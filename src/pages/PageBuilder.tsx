@@ -6,10 +6,11 @@ import { getSchema, getPage } from '@/services/pageService';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageBuilderData, PageSchema, PageRecord } from '@/types/pagebuilder';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const PageBuilder: React.FC = () => {
   // Legacy route: /pagebuilder/:id
-  const { id, schemaSlug, pageId } = useParams<{ id?: string; schemaSlug?: string; pageId?: string }>();
+  const { id, schemaSlug, tenantSlug, pageId } = useParams<{ id?: string; schemaSlug?: string; tenantSlug?: string; pageId?: string }>();
   const navigate = useNavigate();
 
   const [initialData, setInitialData] = useState<PageBuilderData | null>(null);
@@ -29,7 +30,7 @@ const PageBuilder: React.FC = () => {
 
         if (isSchemaMode && schemaSlug) {
           // Schema-driven mode
-          const schemaData = await getSchema(schemaSlug);
+          const schemaData = await getSchema(schemaSlug, tenantSlug);
           setSchema(schemaData);
           setProductName(schemaData.name);
 
@@ -54,7 +55,7 @@ const PageBuilder: React.FC = () => {
       }
     };
     fetchData();
-  }, [id, schemaSlug, pageId, isSchemaMode, isEditMode]);
+  }, [id, schemaSlug, tenantSlug, pageId, isSchemaMode, isEditMode]);
 
   if (isLoading) {
     return (
@@ -73,7 +74,7 @@ const PageBuilder: React.FC = () => {
       {isSchemaMode && (
         <Button
           variant="ghost"
-          onClick={() => navigate(`/pages/schema/${schemaSlug}`)}
+          onClick={() => navigate(schema ? getSchemaConsolePath(schema) : `/pages/schema/${schemaSlug}`)}
           className="mb-4"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -92,7 +93,7 @@ const PageBuilder: React.FC = () => {
         productSlug={isSchemaMode ? pageRecord?.slug : undefined}
         productStatus={isSchemaMode ? pageRecord?.status : undefined}
         schema={schema ?? undefined}
-        schemaSlug={schemaSlug}
+        schemaSlug={schema?.api_slug ?? schemaSlug}
       />
     </div>
   );

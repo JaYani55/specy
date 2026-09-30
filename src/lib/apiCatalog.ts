@@ -82,7 +82,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     method: 'GET',
     path: '/api/schemas',
     summary: 'List all registered page schemas',
-    description: 'Primary discovery endpoint for external frontends and agents. Returns schema metadata plus spec and register URLs.',
+    description: 'Primary discovery endpoint for external frontends and agents. Returns a stable API slug for URLs and a tenant-local schema_slug for workspace identity, plus spec and register URLs.',
     auth: 'public',
     mountsAt: '/api/schemas',
     sourceFile: 'api/routes/schemas.ts',
@@ -97,6 +97,8 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
   "schemas": [
     {
       "slug": "blog",
+      "schema_slug": "blog",
+      "api_slug": "blog",
       "name": "Blog",
       "spec_url": "https://cms.example.com/api/schemas/blog/spec.txt",
       "register_url": "https://cms.example.com/api/schemas/blog/register"
@@ -120,7 +122,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/schemas.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug from page_schemas.slug.' },
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stable schema API identifier (api_slug). Existing schemas keep their former slug as this value.' },
     ],
     responseExamples: [
       {
@@ -149,7 +151,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/schemas.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug awaiting registration.' },
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stable schema API identifier (api_slug) awaiting registration.' },
       { name: 'code', in: 'body', required: true, type: 'string', description: 'Registration code issued by the CMS.' },
       { name: 'frontend_url', in: 'body', required: true, type: 'string', description: 'Base URL of the consuming frontend.' },
         { name: 'revalidation_endpoint', in: 'body', required: true, type: 'string', description: 'Relative revalidation endpoint path.' },
@@ -198,7 +200,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/schemas.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug.' },
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stable schema API identifier (api_slug).' },
       { name: 'targets', in: 'body', required: true, type: 'array', description: 'Target definitions with target_key, kind, host_path, and collection placement_key where applicable.' },
     ],
     requestExample: `{
@@ -223,7 +225,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/schemas.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Registered schema slug.' },
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Registered schema API identifier (api_slug).' },
       { name: 'page_slug', in: 'body', required: true, type: 'string', description: 'Frontend page path or slug to revalidate.' },
     ],
     requestExample: `{
@@ -263,7 +265,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     sourceFile: 'api/routes/health.ts',
     logging: 'agentLogger',
     parameters: [
-      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Schema slug.' },
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stable schema API identifier (api_slug).' },
     ],
     responseExamples: [
       {

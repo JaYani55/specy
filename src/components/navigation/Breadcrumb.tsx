@@ -171,26 +171,30 @@ const Breadcrumb: React.FC = () => {
           // Handle dynamic pages/schema routes
           const segments = currentPath.split('/');
           if (segments.length === 4) {
-            // /pages/schema/:slug
+            // Legacy /pages/schema/:apiSlug route
             breadcrumbs.push({
               label: decodeURIComponent(pathnames[i]),
               path: currentPath,
               isActive: i === pathnames.length - 1
             });
-          } else if (segments.length === 5) {
-            const lastSegment = segments[4];
-            if (lastSegment === 'settings') {
-              breadcrumbs.push({
-                label: language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen',
-                isActive: true
-              });
-            } else if (lastSegment === 'new') {
-              breadcrumbs.push({
-                label: language === 'en' ? 'New Page' : 'Neue Seite',
-                isActive: true
-              });
-            }
-          } else if (segments.length === 6 && segments[4] === 'edit') {
+          } else if (segments.length === 5 && !['settings', 'new'].includes(segments[4])) {
+            // Tenant-local /pages/schema/:tenantSlug/:schemaSlug route
+            breadcrumbs.push({
+              label: `${decodeURIComponent(segments[3])} / ${decodeURIComponent(segments[4])}`,
+              path: currentPath,
+              isActive: i === pathnames.length - 1,
+            });
+          } else if ((segments.length === 5 && ['settings', 'new'].includes(segments[4]))
+            || (segments.length === 6 && ['settings', 'new'].includes(segments[5]))) {
+            const isSettings = segments.at(-1) === 'settings';
+            breadcrumbs.push({
+              label: isSettings
+                ? (language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen')
+                : (language === 'en' ? 'New Page' : 'Neue Seite'),
+              isActive: true,
+            });
+          } else if ((segments.length === 6 && segments[4] === 'edit')
+            || (segments.length === 7 && segments[5] === 'edit')) {
             breadcrumbs.push({
               label: language === 'en' ? 'Edit Page' : 'Seite bearbeiten',
               isActive: true

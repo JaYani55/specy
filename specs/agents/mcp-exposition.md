@@ -179,8 +179,8 @@ Recommended workflow for schema-driven frontend generation:
 1. Call `start_here` to get the current Specy workflow and auth model.
 2. Let the MCP client complete OAuth 2.1 automatically after the Worker returns its `WWW-Authenticate` challenge. Do not copy authorization codes or JWTs into chat.
 3. Use `list_schemas` and `get_schema_spec` to inspect existing patterns.
-4. Call `create_schema` to create the schema for the authenticated tenant.
-5. Call `start_schema_registration` to generate the registration code programmatically.
+4. Call `create_schema` to create the schema for the authenticated tenant. The returned `schema_slug` is tenant-local; use the returned `api_slug` (also exposed as the legacy `slug` field) for schema MCP/API tool arguments.
+5. Call `start_schema_registration` with that `api_slug` to generate the registration code programmatically.
 6. Build the frontend against the created schema and call `register_frontend` with the returned code.
 7. Call `create_page` to create page content validated against the schema.
 8. Call `check_health` to verify the registered frontend is reachable.

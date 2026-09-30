@@ -209,7 +209,11 @@ export const DEFAULT_SCHEMA_INTEGRATION_REQUIREMENTS: SchemaIntegrationRequireme
 export interface PageSchema {
   id: string;
   name: string;
+  /** Tenant-local human-facing schema slug. */
   slug: string;
+  /** Stable globally unique API identifier; pre-migration values equal the old slug. */
+  api_slug: string;
+  tenant_slug?: string | null;
   description: string | null;
   schema: Record<string, unknown>;
   llm_instructions: string | null;

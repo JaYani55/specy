@@ -249,6 +249,10 @@ const AppContent = () => {
           {/* Pages Routes */}
           <Route path="/pages" element={<ProtectedRoute requiredRole="user"><Pages /></ProtectedRoute>} />
           <Route path="/pages/schema/new" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug" element={<ProtectedRoute requiredRole="user"><PagesSchemaDetail /></ProtectedRoute>} />
           <Route path="/pages/schema/:schemaSlug" element={<ProtectedRoute requiredRole="user"><PagesSchemaDetail /></ProtectedRoute>} />
           <Route path="/pages/schema/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
           <Route path="/pages/schema/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />

@@ -59,6 +59,9 @@ function generateRegistrationCode(): string {
 
 interface SchemaListRow {
   slug: string;
+  api_slug: string;
+  tenant_id?: string | null;
+  tenants?: { slug?: string } | Array<{ slug?: string }> | null;
   name: string;
   description: string | null;
   registration_status: string | null;
@@ -103,6 +106,7 @@ const newSchemaToolSchema = {
   description: z.string().optional().describe('Optional schema description'),
   schema: z.record(z.string(), z.unknown()).describe('Schema JSON definition to save in page_schemas.schema'),
   llm_instructions: z.string().optional().describe('Optional LLM instructions for builders and agents'),
+  tenant_id: z.string().uuid().optional().describe('Workspace that owns this schema; defaults to the current workspace.'),
   integration_requirements: z.object({
     content_scope: z.enum(['page-collection', 'single-page']).optional().describe('Whether this schema creates many page records or edits one existing page surface.'),
     page_target: z.object({
@@ -209,7 +213,7 @@ async function createMcpServerWithTools(
       'start_schema_registration',
       'Generate a one-time frontend registration code for a schema. This replaces the manual CMS Start Registration action.',
       {
-      slug: z.string().min(1).describe('Schema slug'),
+      slug: z.string().min(1).describe('Schema API slug (api_slug) returned by list_schemas/create_schema'),
       },
       async ({ slug }) => {
       if (!authToken) {
@@ -220,8 +224,8 @@ async function createMcpServerWithTools(
       const { data, error } = await supabase
         .from('page_schemas')
         .update({ registration_code: registrationCode, registration_status: 'waiting' })
-        .eq('slug', slug)
-        .select('id, slug, name, registration_status, registration_code, integration_requirements, slug_structure')
+        .eq('api_slug', slug)
+        .select('id, slug, api_slug, name, registration_status, registration_code, integration_requirements, slug_structure')
         .single();
 
       if (error || !data) {
@@ -233,12 +237,12 @@ async function createMcpServerWithTools(
           type: 'text' as const,
           text: JSON.stringify({
             success: true,
-            schema: data,
+            schema: { ...data, slug: data.api_slug, schema_slug: data.slug },
             registration: {
               code: registrationCode,
-              endpoint: `${baseUrl}/api/schemas/${data.slug}/register`,
+              endpoint: `${baseUrl}/api/schemas/${data.api_slug}/register`,
               request: {
-                slug: data.slug,
+                slug: data.api_slug,
                 code: registrationCode,
                 frontend_url: 'https://your-frontend.example',
                 revalidation_endpoint: '/api/revalidate',
@@ -257,7 +261,7 @@ async function createMcpServerWithTools(
       'create_page',
       'Create a draft page validated against a registered or unregistered page schema. Requires a valid OAuth bearer token.',
       {
-      schema_slug: z.string().min(1).describe('Schema slug'),
+      schema_slug: z.string().min(1).describe('Schema API slug (api_slug) returned by list_schemas/create_schema'),
       name: z.string().min(1).describe('Page display name'),
       slug: z.string().optional().describe('Optional URL slug; generated from name when omitted'),
       content: z.record(z.string(), z.unknown()).describe('Page content matching the schema definition'),
@@ -271,8 +275,8 @@ async function createMcpServerWithTools(
 
       const { data: schema, error: schemaError } = await supabase
         .from('page_schemas')
-        .select('id, slug, frontend_url, slug_structure, content_scope')
-        .eq('slug', schema_slug)
+        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope')
+        .eq('api_slug', schema_slug)
         .single();
       if (schemaError || !schema) {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: schemaError?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
@@ -320,6 +324,13 @@ async function createMcpServerWithTools(
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: pageError?.message || 'Failed to create page.' }, null, 2) }] };
       }
 
+      const { data: tenant } = schema.tenant_id
+        ? await supabase.from('tenants').select('slug').eq('id', schema.tenant_id).maybeSingle()
+        : { data: null };
+      const cmsSchemaPath = tenant?.slug
+        ? `/pages/schema/${tenant.slug}/${schema.slug}`
+        : `/pages/schema/${schema.api_slug}`;
+
       return {
         content: [{
           type: 'text' as const,
@@ -327,7 +338,7 @@ async function createMcpServerWithTools(
             success: true,
             page,
             preview_url: schema.frontend_url ? `${schema.frontend_url}${(schema.slug_structure || '/:slug').replace(':slug', page.slug)}` : null,
-            cms_url: `${baseUrl}/pages/schema/${schema.slug}/edit/${page.id}`,
+            cms_url: `${baseUrl}${cmsSchemaPath}/edit/${page.id}`,
           }, null, 2),
         }],
       };
@@ -386,12 +397,12 @@ async function createMcpServerWithTools(
 
   server.tool(
     'list_schemas',
-    'List all available page schemas in the CMS. Returns slug, name, description, status, and URLs for each schema.',
+    'List all available page schemas. Returns the stable API slug plus the tenant-local schema_slug, status, and integration URLs.',
     {},
     async () => {
       const { data, error } = await supabase
         .from('page_schemas')
-        .select('slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+        .select('slug, api_slug, tenant_id, tenants:tenant_id(slug), name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
         .order('is_default', { ascending: false })
         .order('name', { ascending: true });
 
@@ -399,22 +410,29 @@ async function createMcpServerWithTools(
         return { content: [{ type: 'text' as const, text: `Error fetching schemas: ${error.message}` }] };
       }
 
-      const schemas = ((data ?? []) as SchemaListRow[]).map((s) => ({
-        slug: s.slug,
-        name: s.name,
-        description: s.description,
-        status: s.registration_status,
-        is_default: s.is_default,
-        frontend_url: s.frontend_url,
-        slug_structure: s.slug_structure,
-        integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
-        content_scope: s.content_scope || 'page-collection',
-        page_target: s.page_target || null,
-        spec_url: `${baseUrl}/api/schemas/${s.slug}/spec.txt`,
-        spec_json_url: `${baseUrl}/api/schemas/${s.slug}/spec`,
-        pages_url: `${baseUrl}/api/schemas/${s.slug}/pages`,
-        register_url: `${baseUrl}/api/schemas/${s.slug}/register`,
-      }));
+      const schemas = ((data ?? []) as SchemaListRow[]).map((s) => {
+        const tenant = Array.isArray(s.tenants) ? s.tenants[0] : s.tenants;
+        return {
+          slug: s.api_slug,
+          schema_slug: s.slug,
+          api_slug: s.api_slug,
+          tenant_id: s.tenant_id ?? null,
+          tenant_slug: tenant?.slug ?? null,
+          name: s.name,
+          description: s.description,
+          status: s.registration_status,
+          is_default: s.is_default,
+          frontend_url: s.frontend_url,
+          slug_structure: s.slug_structure,
+          integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
+          content_scope: s.content_scope || 'page-collection',
+          page_target: s.page_target || null,
+          spec_url: `${baseUrl}/api/schemas/${s.api_slug}/spec.txt`,
+          spec_json_url: `${baseUrl}/api/schemas/${s.api_slug}/spec`,
+          pages_url: `${baseUrl}/api/schemas/${s.api_slug}/pages`,
+          register_url: `${baseUrl}/api/schemas/${s.api_slug}/register`,
+        };
+      });
 
       return {
         content: [{
@@ -429,12 +447,12 @@ async function createMcpServerWithTools(
   server.tool(
     'get_schema_spec',
     'Get the full LLM-readable specification for a page schema. Includes field definitions, content block types, LLM instructions, and registration info.',
-    { slug: z.string().describe('The schema slug (e.g. "blog", "service-product")') },
+    { slug: z.string().describe('The schema API identifier (api_slug) returned by list_schemas; existing schemas also accept their legacy slug.') },
     async ({ slug }) => {
       const { data: schema, error } = await supabase
         .from('page_schemas')
         .select('*')
-        .eq('slug', slug)
+        .eq('api_slug', slug)
         .single();
 
       if (error || !schema) {
@@ -455,6 +473,7 @@ async function createMcpServerWithTools(
         '',
         `Name: ${schema.name}`,
         `Slug: ${schema.slug}`,
+        `API slug: ${schema.api_slug}`,
         `Status: ${schema.registration_status}`,
         `Default: ${schema.is_default ? 'Yes' : 'No'}`,
         `Pages using this schema: ${count ?? 0}`,
@@ -629,7 +648,7 @@ async function createMcpServerWithTools(
     'register_frontend',
     'Register a deployed frontend with a schema. Requires the registration code from the CMS and the frontend domain URL.',
     {
-      slug: z.string().describe('The schema slug to register against'),
+      slug: z.string().describe('The schema API identifier (api_slug) returned by list_schemas/create_schema'),
       code: z.string().describe('The registration code shown in the CMS'),
       frontend_url: z.string().url().describe('The deployed frontend URL (e.g. https://my-site.com)'),
       revalidation_endpoint: z.string().optional().describe('Path for ISR revalidation (e.g. /api/revalidate)'),
@@ -768,6 +787,7 @@ async function buildNewSchemaHandler(
     schema,
     llm_instructions,
     integration_requirements,
+    tenant_id,
   }: {
     name: string;
     slug?: string;
@@ -775,6 +795,7 @@ async function buildNewSchemaHandler(
     schema: Record<string, unknown>;
     llm_instructions?: string;
     integration_requirements?: Record<string, unknown>;
+    tenant_id?: string;
   }) => {
     if (!authToken) {
       return {
@@ -810,6 +831,7 @@ async function buildNewSchemaHandler(
         integration_requirements: (integration_requirements ?? null) as Record<string, unknown> | null,
         content_scope: contentContract.contract.content_scope,
         page_target: contentContract.contract.page_target,
+        tenant_id,
       });
 
       return {
@@ -820,16 +842,22 @@ async function buildNewSchemaHandler(
             message: 'Pending schema created. Start registration through the authenticated MCP workflow before calling register_frontend.',
             schema: {
               id: result.schema.id,
-              slug: result.schema.slug,
+              slug: result.schema.api_slug,
+              schema_slug: result.schema.slug,
+              api_slug: result.schema.api_slug,
+              tenant_id: result.schema.tenant_id,
+              tenant_slug: result.schema.tenant_slug ?? null,
               name: result.schema.name,
               description: result.schema.description,
               registration_status: result.schema.registration_status,
               registration_code: result.schema.registration_code,
               content_scope: contentContract.contract.content_scope,
               page_target: contentContract.contract.page_target,
-              cms_url: `${baseUrl}/pages/schema/${result.schema.slug}`,
-              spec_text_url: `${baseUrl}/api/schemas/${result.schema.slug}/spec.txt`,
-              spec_json_url: `${baseUrl}/api/schemas/${result.schema.slug}/spec`,
+              cms_url: result.schema.tenant_slug
+                ? `${baseUrl}/pages/schema/${result.schema.tenant_slug}/${result.schema.slug}`
+                : `${baseUrl}/pages/schema/${result.schema.api_slug}`,
+              spec_text_url: `${baseUrl}/api/schemas/${result.schema.api_slug}/spec.txt`,
+              spec_json_url: `${baseUrl}/api/schemas/${result.schema.api_slug}/spec`,
             },
             main_spec: result.mainSpec,
             created_main_spec: result.createdMainSpec,

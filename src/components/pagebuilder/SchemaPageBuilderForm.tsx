@@ -47,6 +47,7 @@ import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
 import { ImageUploader } from './ImageUploader';
 import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -892,7 +893,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
           console.error('Failed to run afterCreate hooks:', hookErr);
         }
 
-        navigate(`/pages/schema/${schemaSlug}/edit/${result.id}`, { replace: true });
+        navigate(`${getSchemaConsolePath(schema)}/edit/${result.id}`, { replace: true });
       }
 
       toast.success(`Seite "${pageName}" gespeichert als /${result.slug}`);

@@ -187,7 +187,7 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
       const { data } = await supabase
         .from('page_schemas')
         .select('id')
-        .eq('slug', schemaSlug)
+        .eq('api_slug', schemaSlug)
         .single();
       if (data) schemaId = data.id;
     }

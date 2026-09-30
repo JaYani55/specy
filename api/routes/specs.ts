@@ -140,8 +140,8 @@ specs.get('/schema/:schemaSlug', async (c) => {
   const supabase = await createSupabaseClient(c.env, auth.token);
   const { data: schema, error } = await supabase
     .from('page_schemas')
-    .select('id, slug, name, registration_status, frontend_url')
-    .eq('slug', schemaSlug)
+    .select('id, slug, api_slug, name, registration_status, frontend_url')
+    .eq('api_slug', schemaSlug)
     .single();
 
   if (error || !schema) {

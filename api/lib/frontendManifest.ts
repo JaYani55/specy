@@ -4,6 +4,7 @@ import { normalizeSchemaIntegrationRequirements } from './schemaRouting';
 interface ManifestSchema {
   id: string;
   slug: string;
+  api_slug: string;
   name: string;
   registration_status: string;
   content_scope?: 'page-collection' | 'single-page' | null;
@@ -26,7 +27,9 @@ export async function buildFrontendIntegrationManifest(
     manifest_version: '1',
     schema: {
       id: schema.id,
-      slug: schema.slug,
+      slug: schema.api_slug,
+      schema_slug: schema.slug,
+      api_slug: schema.api_slug,
       name: schema.name,
       content_scope: schema.content_scope || requirements.content_scope,
     },
@@ -35,8 +38,8 @@ export async function buildFrontendIntegrationManifest(
       registration_status: schema.registration_status,
     },
     data: {
-      collection_url: `${baseUrl}/api/schemas/${schema.slug}/pages`,
-      detail_url_template: `${baseUrl}/api/schemas/${schema.slug}/pages/:slug`,
+      collection_url: `${baseUrl}/api/schemas/${schema.api_slug}/pages`,
+      detail_url_template: `${baseUrl}/api/schemas/${schema.api_slug}/pages/:slug`,
       authentication: 'public-registered-schema',
       published_only: true,
       page_fields: ['id', 'slug', 'name', 'status', 'content', 'domain_url', 'updated_at', 'published_at'],

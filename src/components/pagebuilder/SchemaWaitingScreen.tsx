@@ -28,20 +28,21 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
   const [selectedFramework, setSelectedFramework] = useState<'nextjs' | 'astro'>('nextjs');
   const [schemaSpecBundle, setSchemaSpecBundle] = useState<SchemaSpecBundle | null>(null);
 
-  const specUrl = `${API_URL}/api/schemas/${schema.slug}/spec.txt`;
-  const specJsonUrl = `${API_URL}/api/schemas/${schema.slug}/spec`;
+  const apiSlug = schema.api_slug || schema.slug;
+  const specUrl = `${API_URL}/api/schemas/${apiSlug}/spec.txt`;
+  const specJsonUrl = `${API_URL}/api/schemas/${apiSlug}/spec`;
   const specsUrl = `${API_URL}/api/specs`;
-  const schemaBundleUrl = `${API_URL}/api/specs/schema/${schema.slug}`;
-  const pagesUrl = `${API_URL}/api/schemas/${schema.slug}/pages`;
-  const registerUrl = `${API_URL}/api/schemas/${schema.slug}/register`;
+  const schemaBundleUrl = `${API_URL}/api/specs/schema/${apiSlug}`;
+  const pagesUrl = `${API_URL}/api/schemas/${apiSlug}/pages`;
+  const registerUrl = `${API_URL}/api/schemas/${apiSlug}/register`;
   const integrationRequirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
   const expectedSlugStructure = getExpectedSlugStructure(schema);
 
   useEffect(() => {
-    getSchemaSpecBundle(schema.slug)
+    getSchemaSpecBundle(apiSlug)
       .then(setSchemaSpecBundle)
       .catch(() => setSchemaSpecBundle(null));
-  }, [schema.slug]);
+  }, [apiSlug]);
 
   // Poll for registration status changes
   useEffect(() => {
@@ -80,6 +81,7 @@ export const SchemaWaitingScreen: React.FC<SchemaWaitingScreenProps> = ({ schema
     let prompt = `You are building a ${isNext ? 'Next.js (App Router)' : 'Astro SSR on Cloudflare Workers'} frontend for the Specy schema "${schema.name}".
 
   Schema slug: ${schema.slug}
+  Schema API identifier: ${apiSlug}
   Unified spec discovery URL: ${specsUrl}
   Schema tool bundle URL: ${schemaBundleUrl}
   Specification URL: ${specUrl}

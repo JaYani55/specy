@@ -15,11 +15,15 @@ export interface CreatePendingSchemaInput {
   integration_requirements?: SchemaIntegrationRequirementsRecord | null;
   content_scope?: 'page-collection' | 'single-page';
   page_target?: { target_key: string; host_path: string; page_slug?: string | null } | null;
+  tenant_id?: string | null;
 }
 
 interface CreatedSchemaRow {
   id: string;
   slug: string;
+  api_slug: string;
+  tenant_id: string | null;
+  tenant_slug?: string | null;
   name: string;
   description: string | null;
   schema: Record<string, unknown>;
@@ -45,25 +49,23 @@ function generateSlug(value: string): string {
 async function ensureUniqueSchemaSlug(
   client: Awaited<ReturnType<typeof createSupabaseClient>>,
   requested: string,
+  tenantId: string | null,
 ): Promise<string> {
   const baseSlug = generateSlug(requested);
   let candidate = baseSlug;
   let suffix = 2;
 
   while (true) {
-    const { data, error } = await client
+    let query = client
       .from('page_schemas')
       .select('id')
       .eq('slug', candidate)
       .limit(1);
+    query = tenantId ? query.eq('tenant_id', tenantId) : query.is('tenant_id', null);
+    const { data, error } = await query;
 
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    if (!data || data.length === 0) {
-      return candidate;
-    }
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) return candidate;
 
     candidate = `${baseSlug}-${suffix}`;
     suffix += 1;
@@ -80,7 +82,16 @@ export async function createPendingSchema(
   createdMainSpec: boolean;
 }> {
   const client = await createSupabaseClient(env, token);
-  const schemaSlug = await ensureUniqueSchemaSlug(client, input.slug || input.name);
+  const auth = await verifyAuthSession(env, token);
+  if (!auth) throw new Error('Invalid or expired session.');
+
+  let tenantId = input.tenant_id ?? null;
+  if (!tenantId) {
+    const { data: currentTenantId, error: tenantError } = await client.rpc('current_tenant_id');
+    if (tenantError) throw new Error(tenantError.message);
+    tenantId = typeof currentTenantId === 'string' ? currentTenantId : null;
+  }
+  const schemaSlug = await ensureUniqueSchemaSlug(client, input.slug || input.name, tenantId);
 
   const { data: createdSchema, error: createError } = await client
     .from('page_schemas')
@@ -91,30 +102,30 @@ export async function createPendingSchema(
       schema: input.schema,
       llm_instructions: input.llm_instructions ?? null,
       integration_requirements: normalizeSchemaIntegrationRequirements(input.integration_requirements),
+      tenant_id: tenantId,
       content_scope: input.content_scope ?? 'page-collection',
       page_target: input.page_target ?? null,
       registration_status: 'pending',
       registration_code: null,
     })
-    .select('id, slug, name, description, schema, llm_instructions, registration_status, frontend_url, registration_code')
+    .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, frontend_url, registration_code')
     .single();
 
   if (createError || !createdSchema) {
     throw new Error(createError?.message || 'Failed to create schema.');
   }
 
-  const auth = await verifyAuthSession(env, token);
-  if (!auth) {
-    throw new Error('Invalid or expired session.');
-  }
-
-  const bootstrap = await bootstrapSchemaMainSpec(env, createdSchema as CreatedSchemaRow, {
+  const { data: tenant } = tenantId
+    ? await client.from('tenants').select('slug').eq('id', tenantId).maybeSingle()
+    : { data: null };
+  const schemaWithTenant = { ...createdSchema, tenant_slug: tenant?.slug ?? null } as CreatedSchemaRow;
+  const bootstrap = await bootstrapSchemaMainSpec(env, schemaWithTenant, {
     token,
     createdBy: auth.userId,
   });
 
   return {
-    schema: createdSchema as CreatedSchemaRow,
+    schema: schemaWithTenant,
     mainSpec: bootstrap.spec
       ? {
           id: bootstrap.spec.id,

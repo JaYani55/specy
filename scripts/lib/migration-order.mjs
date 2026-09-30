@@ -82,6 +82,7 @@ export const MIGRATION_ORDER_CORE = [
   '202608020002_schema_frontend_target_rpc.sql',
   '202608020003_schema_frontend_target_precedence.sql',
   '202608020004_schema_content_scope.sql',
+  '202609300001_tenant_local_page_schema_slugs.sql',
   '202608030001_page_publication_timestamp.sql',
   '202608050001_tenant_organization_alias.sql',
   'Auth/Access_hook.sql',

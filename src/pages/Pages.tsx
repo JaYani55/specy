@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import AgentLogs from '@/components/pagebuilder/AgentLogs';
 import { API_URL } from '@/lib/apiUrl';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const statusConfig: Record<string, { label: { en: string; de: string }; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
   pending: { label: { en: 'Pending', de: 'Ausstehend' }, variant: 'secondary', icon: Clock },
@@ -37,7 +38,7 @@ interface OnboardingScreenProps {
   schemas: PageSchema[];
   tenantNames: Record<string, string>;
   onCreateSchema: () => void;
-  onNavigateSchema: (slug: string) => void;
+  onNavigateSchema: (schema: PageSchema) => void;
   onRefresh: () => void;
 }
 
@@ -95,20 +96,23 @@ Response shape:
     mcp_endpoint: "${API_URL}/mcp",
     schemas: [
       {
-        slug: string,           // e.g. "service-product"
+        slug: string,           // stable API identifier (legacy schemas retain their old slug)
+        schema_slug: string,     // tenant-local name, e.g. "blog"
+        api_slug: string,        // use this value in /api/schemas/{api_slug}/... URLs
+        tenant_slug: string | null,
         name: string,
         description: string,
         status: "pending" | "waiting" | "registered" | "archived",
         is_default: boolean,
         frontend_url: string | null,
-        spec_url: "${API_URL}/api/schemas/{slug}/spec.txt",
-        register_url: "${API_URL}/api/schemas/{slug}/register",
+        spec_url: "${API_URL}/api/schemas/{api_slug}/spec.txt",
+        register_url: "${API_URL}/api/schemas/{api_slug}/register",
       }
     ]
   }
 
 Pick the schema for this frontend. Then fetch its full spec:
-  GET ${API_URL}/api/schemas/{slug}/spec.txt
+  GET ${API_URL}/api/schemas/{api_slug}/spec.txt
 
 The spec includes: field definitions (JSON), content block types,
 LLM instructions, frontend info, and registration payload example.
@@ -119,7 +123,7 @@ LLM instructions, frontend info, and registration payload example.
 ════════════════════════════════════════════════════
 
 Fetch pages through the schema-scoped Worker API:
-  GET ${API_URL}/api/schemas/{slug}/pages
+  GET ${API_URL}/api/schemas/{api_slug}/pages
 
 Do not query the Supabase pages table directly from the public frontend.
 The endpoint returns only published pages after the schema is registered.
@@ -231,7 +235,7 @@ For a single-page schema, render the registered host path and do not create a [s
 Once deployed, call the CMS registration endpoint from your frontend
 (e.g. from a startup script, a one-off CLI command, or CI/CD pipeline):
 
-  POST ${API_URL}/api/schemas/{slug}/register
+  POST ${API_URL}/api/schemas/{api_slug}/register
   Content-Type: application/json
 
   {
@@ -315,7 +319,7 @@ The optional "slug" query parameter still carries the bare page slug for compati
 ════════════════════════════════════════════════════
 
 The CMS monitors your domain via:
-  GET ${API_URL}/api/schemas/{slug}/health
+  GET ${API_URL}/api/schemas/{api_slug}/health
 
 Response: { status: "online"|"offline", latency_ms: number, http_status: number }
 
@@ -346,8 +350,8 @@ Available MCP tools:
       for (const s of waitingSchemas) {
         prompt += `\n\nSchema : ${s.name}  (${s.slug})`;
         prompt += `\n  Code  : ${s.registration_code}`;
-        prompt += `\n  Spec  : ${API_URL}/api/schemas/${s.slug}/spec.txt`;
-        prompt += `\n  POST  : ${API_URL}/api/schemas/${s.slug}/register`;
+        prompt += `\n  Spec  : ${API_URL}/api/schemas/${s.api_slug}/spec.txt`;
+        prompt += `\n  POST  : ${API_URL}/api/schemas/${s.api_slug}/register`;
       }
     }
 
@@ -654,7 +658,7 @@ Available MCP tools:
                       className="bg-white/70 dark:bg-black/30 rounded-xl p-4 border border-amber-200/80 dark:border-amber-700/40 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-md transition-all space-y-3"
                     >
                       <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => onNavigateSchema(schema.slug)}>
+                        <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => onNavigateSchema(schema)}>
                           <FileText className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
                           <span className="font-medium text-sm text-amber-900 dark:text-amber-100 truncate">{schema.name}</span>
                         </div>
@@ -702,7 +706,7 @@ Available MCP tools:
                       )}
 
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center text-xs text-amber-600 dark:text-amber-400 font-medium cursor-pointer" onClick={() => onNavigateSchema(schema.slug)}>
+                        <div className="flex items-center text-xs text-amber-600 dark:text-amber-400 font-medium cursor-pointer" onClick={() => onNavigateSchema(schema)}>
                           {language === 'en' ? 'View schema' : 'Schema ansehen'}
                           <ArrowRight className="h-3 w-3 ml-1" />
                         </div>
@@ -771,7 +775,7 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
 
     setIsUnhooking(true);
     try {
-      await Promise.all(group.schemas.map(s => unhookSchema(s.slug)));
+      await Promise.all(group.schemas.map(s => unhookSchema(s.api_slug)));
       onRefresh();
     } catch (err) {
       console.error('Unhook failed', err);
@@ -882,7 +886,7 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                   <Card
                     key={schema.id}
                     className="cursor-pointer hover:shadow-md transition-shadow border-muted"
-                    onClick={() => onNavigate(`/pages/schema/${schema.slug}`)}
+                    onClick={() => onNavigate(getSchemaConsolePath(schema))}
                   >
                     <CardContent className="p-4 space-y-2">
                       <div className="flex items-start justify-between">
@@ -1006,7 +1010,7 @@ const Pages: React.FC = () => {
         schemas={schemas}
         tenantNames={tenantNames}
         onCreateSchema={() => navigate('/pages/schema/new')}
-        onNavigateSchema={(slug) => navigate(`/pages/schema/${slug}`)}
+        onNavigateSchema={(schema) => navigate(getSchemaConsolePath(schema))}
         onRefresh={fetchAndGroup}
       />
     );

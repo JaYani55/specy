@@ -12,7 +12,7 @@ health.get('/:slug/health', async (c) => {
   const { data: schema, error } = await supabase
     .from('page_schemas')
     .select('frontend_url, registration_status')
-    .eq('slug', slug)
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {

@@ -39,6 +39,7 @@ import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/serv
 import { toast } from 'sonner';
 import { SCHEMA_TEMPLATES, type SchemaTemplate } from '@/config/schemaTemplates';
 import { normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentBlock[]', 'CodeBlock[]', 'media'] as const;
 const VALID_SCHEMA_TYPES = new Set<string>(FIELD_TYPES);
@@ -614,7 +615,7 @@ const FieldEditor: React.FC<FieldEditorProps> = ({ field, onChange, onRemove, de
 };
 
 const SchemaEditor: React.FC = () => {
-  const { schemaSlug } = useParams<{ schemaSlug: string }>();
+  const { schemaSlug, tenantSlug } = useParams<{ schemaSlug: string; tenantSlug?: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
   const { loading: authLoading, user } = useAuth();
@@ -665,7 +666,7 @@ const SchemaEditor: React.FC = () => {
   useEffect(() => {
     if (isEditing && schemaSlug) {
       setIsLoading(true);
-      getSchema(schemaSlug)
+      getSchema(schemaSlug, tenantSlug)
         .then((data) => {
           setExistingSchema(data);
           setName(data.name);
@@ -691,7 +692,7 @@ const SchemaEditor: React.FC = () => {
         })
         .finally(() => setIsLoading(false));
     }
-  }, [isEditing, schemaSlug, navigate]);
+  }, [isEditing, schemaSlug, tenantSlug, navigate]);
 
   useEffect(() => {
     if (authLoading || !user) {
@@ -704,7 +705,7 @@ const SchemaEditor: React.FC = () => {
   }, [authLoading, user]);
 
   useEffect(() => {
-    if (!isEditing || !schemaSlug || authLoading || !user) {
+    if (!isEditing || !schemaSlug || !existingSchema || authLoading || !user) {
       return;
     }
 
@@ -713,7 +714,7 @@ const SchemaEditor: React.FC = () => {
         setIsLoadingSpecs(true);
         const [specs, bundle] = await Promise.all([
           getSpecs(),
-          getSchemaSpecBundle(schemaSlug),
+          getSchemaSpecBundle(existingSchema.api_slug),
         ]);
 
         setAvailableSpecs(specs.filter((spec) => spec.status !== 'archived'));
@@ -728,7 +729,7 @@ const SchemaEditor: React.FC = () => {
     };
 
     void loadSpecsData();
-  }, [authLoading, isEditing, schemaSlug, user]);
+  }, [authLoading, isEditing, schemaSlug, tenantSlug, user, existingSchema]);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -771,7 +772,7 @@ const SchemaEditor: React.FC = () => {
       const schemaJson = fieldsToJsonSchema(fields);
 
       if (isEditing && existingSchema) {
-        await updateSchema(existingSchema.id, {
+        const updatedSchema = await updateSchema(existingSchema.id, {
           name,
           description,
           schema: schemaJson,
@@ -779,9 +780,10 @@ const SchemaEditor: React.FC = () => {
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
         });
-        await saveSchemaFrontendTargets(existingSchema.slug, frontendTargets);
+        await saveSchemaFrontendTargets(existingSchema.api_slug, frontendTargets);
+        const updatedTenantSlug = tenantOptions.find((option) => option.id === updatedSchema.tenant_id)?.slug ?? existingSchema.tenant_slug;
         toast.success(language === 'en' ? 'Schema updated' : 'Schema aktualisiert');
-        navigate(`/pages/schema/${existingSchema.slug}`);
+        navigate(getSchemaConsolePath({ ...updatedSchema, tenant_slug: updatedTenantSlug }));
       } else {
         const newSchema = await createSchema({
           name,
@@ -791,9 +793,10 @@ const SchemaEditor: React.FC = () => {
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
         });
-        await saveSchemaFrontendTargets(newSchema.slug, frontendTargets);
+        await saveSchemaFrontendTargets(newSchema.api_slug, frontendTargets);
+        const newTenantSlug = tenantOptions.find((option) => option.id === newSchema.tenant_id)?.slug ?? null;
         toast.success(language === 'en' ? 'Schema created' : 'Schema erstellt');
-        navigate(`/pages/schema/${newSchema.slug}`);
+        navigate(getSchemaConsolePath({ ...newSchema, tenant_slug: newTenantSlug }));
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save schema');
@@ -844,7 +847,7 @@ const SchemaEditor: React.FC = () => {
     try {
       await startSchemaRegistration(existingSchema.id);
       toast.success(language === 'en' ? 'Registration started' : 'Registrierung gestartet');
-      navigate(`/pages/schema/${existingSchema.slug}`);
+      navigate(getSchemaConsolePath(existingSchema));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to start registration');
     }

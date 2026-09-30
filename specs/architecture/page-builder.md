@@ -31,9 +31,10 @@ The browser URL `https://site.example/#posts` is not a server route. The fragmen
 │                                                                 │
 │  /pages                         Schema Hub (list all schemas)   │
 │  /pages/schema/new              Schema Editor (create new)      │
-│  /pages/schema/:slug            Page list for schema            │
-│  /pages/schema/:slug/edit/:id   PageBuilder (edit page)         │
-│  /pages/schema/:slug/new        PageBuilder (new page)          │
+│  /pages/schema/:tenant/:slug    Tenant-local schema page list   │
+│  /pages/schema/:tenant/:slug/edit/:id   PageBuilder (edit page)│
+│  /pages/schema/:tenant/:slug/new        PageBuilder (new page) │
+│  /pages/schema/:legacyApiSlug   Legacy one-segment schema route│
 │  /forms                         Forms list/editor/answers       │
 └────────────────┬────────────────────────────────────────────────┘
                  │ Direct Supabase client calls
@@ -83,7 +84,8 @@ The browser URL `https://site.example/#posts` is not a server route. The fragmen
 |--------|------|---------|
 | `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
 | `name` | `varchar(255)` | NOT NULL — e.g., "Service-Product", "Blog" |
-| `slug` | `varchar(255)` | UNIQUE NOT NULL — URL-friendly identifier |
+| `slug` | `varchar(255)` | NOT NULL — tenant-local human-facing identifier; unique within a tenant |
+| `api_slug` | `text` | UNIQUE NOT NULL — stable API identifier. Existing schemas retain their former global slug as this value; new schemas receive an opaque identifier. |
 | `description` | `text` | Human-readable description |
 | `schema` | `jsonb` | NOT NULL — JSON schema definition (see Schema Field Format below) |
 | `llm_instructions` | `text` | Custom instructions for the LLM agent |
@@ -96,6 +98,10 @@ The browser URL `https://site.example/#posts` is not a server route. The fragmen
 | `is_default` | `boolean` | `DEFAULT false` — marks built-in schemas |
 | `created_at` | `timestamptz` | `DEFAULT now()` |
 | `updated_at` | `timestamptz` | `DEFAULT now()` (auto-updated via trigger) |
+
+Tenant-owned schema slugs are scoped by `(tenant_id, slug)`, so different workspaces may each use names such as `blog`. CMS routes use `/pages/schema/:tenantSlug/:schemaSlug`; existing one-segment CMS links continue to resolve through `api_slug`.
+
+All existing `/api/schemas/:slug/...` endpoints remain compatible: the path `slug` is the stable `api_slug` (for every pre-existing schema, it is exactly the old slug). Discovery responses expose `slug` (legacy/API identifier), `schema_slug` (tenant-local name), and `api_slug`. Use `api_slug` in API URLs and the tenant-qualified route for CMS navigation.
 
 ### `pages`
 
@@ -252,7 +258,7 @@ Returns the full schema index with registration status, spec URLs, and register 
 Returns the LLM-ready plaintext specification for a schema. Includes field definitions (including `meta_description`), content block types, LLM instructions, and a registration payload example. Content-Type: `text/plain`.
 
 ### `POST /api/schemas/:slug/register`
-Completes frontend registration. Validates the one-time `registration_code`, frontend origin, and target definitions. Stores the frontend connection and `targets`; legacy `slug_structure` requests remain supported and map to a primary `detail-page` target. A root requirement `/` maps to a collection slot rather than being forced into `/:slug`. Returns `403` on invalid code.
+Completes frontend registration. Here `:slug` is the stable `api_slug` identifier, not the tenant-local schema slug. Validates the one-time `registration_code`, frontend origin, and target definitions. Stores the frontend connection and `targets`; legacy `slug_structure` requests remain supported and map to a primary `detail-page` target. A root requirement `/` maps to a collection slot rather than being forced into `/:slug`. Returns `403` on invalid code.
 
 Request body:
 ```json
@@ -305,6 +311,8 @@ These endpoints resolve forms by `share_slug` for the direct ServiceCMS share-pa
 ---
 
 ## Schema Registration Flow
+
+Tenant-local schemas can share names/slugs across workspaces. Internal CMS links use `/pages/schema/{tenant_slug}/{schema_slug}`; legacy one-segment links remain supported for schemas created before tenant-local slugs were introduced. Public/API routes continue using the stable `api_slug`, so existing integrations are not invalidated when schema slugs become tenant-local.
 
 ```
 1. Staff creates schema in CMS → status='pending'
@@ -646,7 +654,8 @@ This architecture enables:
 |--------|------|---------|
 | `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
 | `name` | `varchar(255)` | NOT NULL — e.g., "Service-Product", "Blog" |
-| `slug` | `varchar(255)` | UNIQUE NOT NULL — URL-friendly identifier |
+| `slug` | `varchar(255)` | NOT NULL — tenant-local human-facing identifier; unique within a tenant |
+| `api_slug` | `text` | UNIQUE NOT NULL — stable API identifier; existing schemas keep their former slug as this value. |
 | `description` | `text` | Human-readable description |
 | `schema` | `jsonb` | NOT NULL — JSON schema definition (keys, types, nesting) |
 | `llm_instructions` | `text` | Custom instructions for the LLM agent |

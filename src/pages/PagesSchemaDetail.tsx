@@ -49,6 +49,7 @@ import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   draft: 'secondary',
@@ -57,7 +58,7 @@ const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive'
 };
 
 const PagesSchemaDetail: React.FC = () => {
-  const { schemaSlug } = useParams<{ schemaSlug: string }>();
+  const { schemaSlug, tenantSlug } = useParams<{ schemaSlug: string; tenantSlug?: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
@@ -82,12 +83,12 @@ const PagesSchemaDetail: React.FC = () => {
     if (!schemaSlug) return;
     try {
       setIsLoading(true);
-      const schemaData = await getSchema(schemaSlug);
+      const schemaData = await getSchema(schemaSlug, tenantSlug);
       setSchema(schemaData);
 
       const [pagesData, specBundle] = await Promise.all([
         getPagesBySchema(schemaData.id, activeTenantId),
-        getSchemaSpecBundle(schemaData.slug).catch(() => null),
+        getSchemaSpecBundle(schemaData.api_slug).catch(() => null),
       ]);
       setPages(pagesData);
       setSchemaSpecBundle(specBundle);
@@ -105,7 +106,7 @@ const PagesSchemaDetail: React.FC = () => {
         });
 
         if (canManageRevalidationSecret) {
-          getRevalidationSecretStatus(schemaData.slug)
+          getRevalidationSecretStatus(schemaData.api_slug)
             .then((status) => setRevalidationSecretStatus(status))
             .catch(() => setRevalidationSecretStatus(null));
         }
@@ -115,7 +116,7 @@ const PagesSchemaDetail: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTenantId, canManageRevalidationSecret, schemaSlug]);
+  }, [activeTenantId, canManageRevalidationSecret, schemaSlug, tenantSlug]);
 
   useEffect(() => {
     fetchData();
@@ -158,7 +159,7 @@ const PagesSchemaDetail: React.FC = () => {
 
       if (status === 'published' && currentPage?.slug && schema.registration_status === 'registered') {
         try {
-        const rev = await triggerRevalidation(schema.slug, currentPage.slug);
+        const rev = await triggerRevalidation(schema.api_slug, currentPage.slug);
         if (rev.success) {
           toast.success(language === 'en'
             ? `ISR triggered for /${currentPage.slug}`
@@ -190,9 +191,9 @@ const PagesSchemaDetail: React.FC = () => {
 
     setIsSavingRevalidationSecret(true);
     try {
-      await setRevalidationSecret(schema.slug, secret);
+      await setRevalidationSecret(schema.api_slug, secret);
       setRevalidationSecretInput('');
-      const status = await getRevalidationSecretStatus(schema.slug);
+      const status = await getRevalidationSecretStatus(schema.api_slug);
       setRevalidationSecretStatus(status);
       toast.success(language === 'en' ? 'Revalidation secret saved' : 'Revalidation-Secret gespeichert');
     } catch (err) {
@@ -207,7 +208,7 @@ const PagesSchemaDetail: React.FC = () => {
 
     setIsDeletingRevalidationSecret(true);
     try {
-      await deleteRevalidationSecret(schema.slug);
+      await deleteRevalidationSecret(schema.api_slug);
       setRevalidationSecretStatus((current) => current ? { ...current, configured: false, secret_name: null, legacy_plaintext: false } : null);
       toast.success(language === 'en' ? 'Revalidation secret removed' : 'Revalidation-Secret entfernt');
     } catch (err) {
@@ -276,11 +277,11 @@ const PagesSchemaDetail: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate(`/pages/schema/${schemaSlug}/settings`)}>
+          <Button variant="outline" onClick={() => navigate(`${getSchemaConsolePath(schema)}/settings`)}>
             <Settings className="h-4 w-4 mr-2" />
             {language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen'}
           </Button>
-          <Button onClick={() => navigate(`/pages/schema/${schemaSlug}/new`)}>
+          <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
             <Plus className="h-4 w-4 mr-2" />
             {language === 'en' ? 'New Page' : 'Neue Seite'}
           </Button>
@@ -488,7 +489,7 @@ const PagesSchemaDetail: React.FC = () => {
           )}
 
           <div className="flex items-center justify-end">
-            <Button variant="outline" onClick={() => navigate(`/pages/schema/${schemaSlug}/settings`)}>
+            <Button variant="outline" onClick={() => navigate(`${getSchemaConsolePath(schema)}/settings`)}>
               <Settings className="h-4 w-4 mr-2" />
               {language === 'en' ? 'Manage Tool Exposure' : 'Tool-Freigabe verwalten'}
             </Button>
@@ -571,7 +572,7 @@ const PagesSchemaDetail: React.FC = () => {
                   ? 'Create your first page using this schema.'
                   : 'Erstelle deine erste Seite mit diesem Schema.'}
               </p>
-              <Button onClick={() => navigate(`/pages/schema/${schemaSlug}/new`)}>
+              <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
                 <Plus className="h-4 w-4 mr-2" />
                 {language === 'en' ? 'Create Page' : 'Seite erstellen'}
               </Button>
@@ -608,7 +609,7 @@ const PagesSchemaDetail: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => navigate(`/pages/schema/${schemaSlug}/edit/${page.id}`)}
+                          onClick={() => navigate(`${getSchemaConsolePath(schema)}/edit/${page.id}`)}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>

@@ -194,8 +194,8 @@ export async function completeSchemaRegistration(
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
-    .select('id, slug, registration_code, registration_status, revalidation_secret_name, slug_structure, integration_requirements, tenant_id')
-    .eq('slug', slug)
+    .select('id, slug, api_slug, registration_code, registration_status, revalidation_secret_name, slug_structure, integration_requirements, tenant_id')
+    .eq('api_slug', slug)
     .single();
 
   if (error || !schema) {
@@ -273,7 +273,9 @@ export async function completeSchemaRegistration(
       success: true,
       message: 'Schema registration completed successfully',
       schema: {
-        slug,
+        slug: schema.api_slug,
+        schema_slug: schema.slug,
+        api_slug: schema.api_slug,
         frontend_url: validatedFrontendUrl.url.origin,
         slug_structure: primaryDetail?.host_path ?? schema.slug_structure,
         targets,

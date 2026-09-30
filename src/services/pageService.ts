@@ -75,6 +75,29 @@ const normalizeSlug = (value: string): string => {
   return normalized || 'page';
 };
 
+const ensureUniqueSchemaSlug = async (requestedSlug: string, tenantId: string | null, schemaId?: string): Promise<string> => {
+  const baseSlug = normalizeSlug(requestedSlug);
+  let candidate = baseSlug;
+  let suffix = 2;
+
+  while (true) {
+    let query = supabase
+      .from('page_schemas')
+      .select('id')
+      .eq('slug', candidate)
+      .limit(1);
+    query = tenantId ? query.eq('tenant_id', tenantId) : query.is('tenant_id', null);
+    if (schemaId) query = query.neq('id', schemaId);
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) return candidate;
+
+    candidate = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+};
+
 const ensureUniquePageSlug = async (requestedSlug: string, pageId?: string): Promise<string> => {
   const baseSlug = normalizeSlug(requestedSlug);
   let candidate = baseSlug;
@@ -116,7 +139,7 @@ const generateRegistrationCode = (): string => {
 export const getSchemas = async (tenantId?: string | null): Promise<PageSchema[]> => {
   let query = supabase
     .from('page_schemas')
-    .select('*')
+    .select('*, tenants:tenant_id(slug)')
     .neq('registration_status', 'archived')
     .order('is_default', { ascending: false })
     .order('created_at', { ascending: true });
@@ -124,7 +147,11 @@ export const getSchemas = async (tenantId?: string | null): Promise<PageSchema[]
   const { data, error } = await query;
 
   if (error) throw new Error(error.message);
-  return data as PageSchema[];
+  return (data ?? []).map((row) => {
+    const schema = row as PageSchema & { tenants?: { slug?: string } | Array<{ slug?: string }> | null };
+    const tenant = Array.isArray(schema.tenants) ? schema.tenants[0] : schema.tenants;
+    return { ...schema, tenant_slug: tenant?.slug ?? null };
+  });
 };
 
 export const getSchemaTemplates = async (): Promise<PageSchemaTemplate[]> => {
@@ -202,28 +229,52 @@ export const importSchemaTemplate = async (url: string): Promise<PageSchemaTempl
   return body.template;
 };
 
-export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_count: number }> => {
-  // Try by slug first, then by id
-  const query = supabase
-    .from('page_schemas')
-    .select('*')
-    .eq('slug', slugOrId)
-    .single();
+export const getSchema = async (slugOrId: string, tenantSlug?: string): Promise<PageSchema & { page_count: number }> => {
+  let data: Record<string, unknown> | null = null;
+  let error: { message: string } | null = null;
 
-  let { data, error } = await query;
+  if (tenantSlug) {
+    const { data: tenant, error: tenantError } = await supabase
+      .from('tenants')
+      .select('id')
+      .eq('slug', tenantSlug)
+      .single();
+    if (tenantError || !tenant) throw new Error(tenantError?.message || 'Workspace not found');
 
-  if (error || !data) {
-    // Try by id
     const result = await supabase
       .from('page_schemas')
-      .select('*')
+      .select('*, tenants:tenant_id(slug)')
+      .eq('tenant_id', tenant.id)
+      .eq('slug', slugOrId)
+      .single();
+    data = result.data as Record<string, unknown> | null;
+    error = result.error;
+  } else {
+    // The one-segment route is the compatibility path. api_slug preserves the
+    // original globally unique slug for every schema that predates this change.
+    const result = await supabase
+      .from('page_schemas')
+      .select('*, tenants:tenant_id(slug)')
+      .eq('api_slug', slugOrId)
+      .single();
+    data = result.data as Record<string, unknown> | null;
+    error = result.error;
+  }
+
+  if (error || !data) {
+    const result = await supabase
+      .from('page_schemas')
+      .select('*, tenants:tenant_id(slug)')
       .eq('id', slugOrId)
       .single();
-    data = result.data;
+    data = result.data as Record<string, unknown> | null;
     error = result.error;
   }
 
   if (error || !data) throw new Error(error?.message || 'Schema not found');
+  const tenantRelation = data.tenants as { slug?: string } | Array<{ slug?: string }> | null | undefined;
+  const tenant = Array.isArray(tenantRelation) ? tenantRelation[0] : tenantRelation;
+  data.tenant_slug = tenant?.slug ?? null;
 
   // Get page count
   const { count } = await supabase
@@ -234,7 +285,7 @@ export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_c
   let frontendTargets: SchemaFrontendTarget[] = [];
   if (API_URL) {
     try {
-      const response = await fetch(`${API_URL}/api/schemas/${data.slug}/spec`, {
+      const response = await fetch(`${API_URL}/api/schemas/${data.api_slug}/spec`, {
         headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
       });
       if (response.ok) {
@@ -246,7 +297,7 @@ export const getSchema = async (slugOrId: string): Promise<PageSchema & { page_c
     }
   }
 
-  return { ...(data as PageSchema), frontend_targets: frontendTargets, page_count: count ?? 0 };
+  return { ...(data as unknown as PageSchema), frontend_targets: frontendTargets, page_count: count ?? 0 };
 };
 
 export const saveSchemaFrontendTargets = async (
@@ -277,7 +328,7 @@ export const createSchema = async (input: {
   integration_requirements?: Partial<SchemaIntegrationRequirements> | null;
   tenant_id?: string | null;
 }): Promise<PageSchema> => {
-  const slug = generateSlug(input.name);
+  const slug = await ensureUniqueSchemaSlug(input.name, input.tenant_id ?? null);
   const registrationCode = generateRegistrationCode();
 
   const { data, error } = await supabase
@@ -332,7 +383,14 @@ export const updateSchema = async (
 ): Promise<PageSchema> => {
   const updateData: Record<string, unknown> = { ...input };
   if (input.name) {
-    updateData.slug = generateSlug(input.name);
+    const { data: currentSchema, error: currentSchemaError } = await supabase
+      .from('page_schemas')
+      .select('tenant_id')
+      .eq('id', id)
+      .single();
+    if (currentSchemaError || !currentSchema) throw new Error(currentSchemaError?.message || 'Schema not found');
+    const tenantId = Object.prototype.hasOwnProperty.call(input, 'tenant_id') ? input.tenant_id ?? null : currentSchema.tenant_id;
+    updateData.slug = await ensureUniqueSchemaSlug(input.name, tenantId, id);
   }
   if (Object.prototype.hasOwnProperty.call(input, 'integration_requirements')) {
     updateData.integration_requirements = normalizeIntegrationRequirements(input.integration_requirements);
