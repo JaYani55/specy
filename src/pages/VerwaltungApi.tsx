@@ -407,6 +407,7 @@ const VerwaltungApi: React.FC = () => {
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
               <div>• {language === 'de' ? 'Die meisten /api und /mcp Aufrufe laufen durch agentLogger.' : 'Most /api and /mcp calls pass through agentLogger.'}</div>
+              <div>• {language === 'de' ? 'MCP-Einträge zeigen Tool-Name, verifiziertes Konto und effektiven Tool-Status getrennt vom HTTP-Transportstatus.' : 'MCP entries show tool name, verified account, and effective tool status separately from HTTP transport status.'}</div>
               <div>• {language === 'de' ? 'Die Log-Routen sind bewusst separat montiert, um rekursive Logerzeugung zu vermeiden.' : 'The log routes are mounted separately to avoid recursive log generation.'}</div>
               <div>• {language === 'de' ? 'Secrets-Endpunkte sind operator-orientiert und hängen von Worker-Konfiguration statt Browser-Auth ab.' : 'Secrets endpoints are operator-facing and depend on worker configuration rather than browser auth.'}</div>
             </CardContent>
@@ -513,8 +514,8 @@ const VerwaltungApi: React.FC = () => {
                 <CardTitle>{language === 'de' ? 'Verbosity Settings' : 'Verbosity Settings'}</CardTitle>
                 <CardDescription>
                   {language === 'de'
-                    ? 'Super-Admin-Allowlist fuer agentLogger. Die Liste wird aus dem API-Katalog gefiltert und zeigt nur Endpunkte, die tatsaechlich durch die Kommunikationslogs laufen koennen.'
-                    : 'Super-admin allowlist for agentLogger. The list is filtered from the API catalog and only shows endpoints that can actually flow into the communication logs.'}
+                    ? 'Super-Admin-Allowlist fuer agentLogger. POST /mcp schaltet alle MCP-Methoden und Tools gemeinsam; einzelne Tools werden im Log ueber operation_name unterschieden.'
+                    : 'Super-admin allowlist for agentLogger. POST /mcp toggles all MCP methods and tools together; individual tools are distinguished in logs by operation_name.'}
                 </CardDescription>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -592,7 +593,8 @@ const VerwaltungApi: React.FC = () => {
               <CardTitle className="flex items-center gap-2 text-base"><Eye className="h-4 w-4" /> {language === 'de' ? 'Logging-Sicht' : 'Logging View'}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
-              <div>• {language === 'de' ? 'agentLogger sitzt vor /api/* und /mcp*.' : 'agentLogger sits in front of /api/* and /mcp*.'}</div>
+              <div>• {language === 'de' ? 'agentLogger sitzt vor /api/* und /mcp*; MCP-SSE-Ergebnisse werden fuer die Tool-Auswertung mitgelesen.' : 'agentLogger sits in front of /api/* and /mcp*; MCP SSE results are read for tool-level outcomes.'}</div>
+              <div>• {language === 'de' ? 'POST /mcp ist ein gemeinsamer Verbosity-Schalter; operation_name unterscheidet die einzelnen Tools.' : 'POST /mcp is one shared verbosity toggle; operation_name distinguishes individual tools.'}</div>
               <div>• {language === 'de' ? 'Die Log-Endpunkte werden vor /api/schemas montiert, damit /api/schemas/logs nicht erneut geloggt wird.' : 'The log endpoints are mounted before /api/schemas so /api/schemas/logs does not recursively re-log itself.'}</div>
               <div>• {language === 'de' ? 'Super-Admins koennen ueber die Verbosity Settings einzelne agentLogger-Endpunkte gezielt ein- oder ausschalten.' : 'Super-admins can selectively enable or disable individual agentLogger endpoints through Verbosity Settings.'}</div>
             </CardContent>

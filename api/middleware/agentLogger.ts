@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 import { getLoggingConfig, type LoggingConfigValues } from '../lib/systemConfig';
 import { parseBearerToken, verifyAuthSession } from '../lib/auth';
-import { extractMcpRequestMetadata, extractMcpToolOutcome } from '../lib/mcpObservability';
+import { extractMcpRequestMetadata, extractMcpToolOutcome, parseMcpSseResponse } from '../lib/mcpObservability';
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -77,6 +77,31 @@ async function shouldLogRequest(env: Env, method: string, pathname: string): Pro
 function shouldSkipBodyLogging(pathname: string): boolean {
   return /^\/api\/forms\/(share\/[^/]+\/[^/]+\/answers|[^/]+\/answers)$/.test(pathname)
     || pathname === '/api/media/upload';
+}
+
+async function readMcpSseResponse(response: Response): Promise<JsonValue | null> {
+  const reader = response.clone().body?.getReader();
+  if (!reader) return null;
+
+  const decoder = new TextDecoder();
+  let buffered = '';
+  const timeout = setTimeout(() => { void reader.cancel().catch(() => undefined); }, 2000);
+  try {
+    while (buffered.length < 128_000) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      const message = parseMcpSseResponse(buffered);
+      if (message !== null) return sanitizeLogValue(message);
+    }
+  } catch {
+    // Observability must never interrupt the actual MCP response.
+  } finally {
+    clearTimeout(timeout);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  return null;
 }
 
 function sanitizeLogValue(value: unknown, depth = 0): JsonValue {
@@ -180,6 +205,8 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     const ct = c.res.headers.get('content-type') || '';
     if (!skipBodyLogging && ct.includes('application/json')) {
       responseBody = sanitizeLogValue(await c.res.clone().json());
+    } else if (isMcpRequest && method === 'POST' && ct.includes('text/event-stream')) {
+      responseBody = await readMcpSseResponse(c.res);
     }
   } catch {
     // Skip non-JSON responses

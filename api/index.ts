@@ -193,7 +193,8 @@ app.get('/.well-known/oauth-protected-resource', (c) => {
 
 // Logging middleware — logs ALL API and MCP requests (skips /api/schemas/logs internally)
 app.use('/api/*', agentLogger);
-app.use('/mcp', agentLogger);
+// /mcp/* also matches the root /mcp in Hono, so mounting both patterns would
+// write duplicate agent_logs rows for every JSON-RPC request.
 app.use('/mcp/*', agentLogger);
 
 // OAuth callback — displays the authorization code to the user

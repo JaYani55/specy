@@ -18,6 +18,27 @@ function asRecord(value: unknown): JsonRecord | null {
     : null;
 }
 
+/** Parse the first complete JSON-RPC message from a finite/streaming SSE response body. */
+export function parseMcpSseResponse(buffer: string): unknown | null {
+  const eventBlocks = buffer.split(/\r?\n\r?\n/);
+  for (const block of eventBlocks) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n');
+    if (!data) continue;
+    try {
+      const parsed = JSON.parse(data) as unknown;
+      const message = asRecord(parsed);
+      if (message && (message.result !== undefined || message.error !== undefined)) return parsed;
+    } catch {
+      // Ignore heartbeats, partial frames, and non-JSON server events.
+    }
+  }
+  return null;
+}
+
 function parseToolErrorText(content: unknown): { error: string | null; statusCode: number | null } {
   if (!Array.isArray(content)) return { error: null, statusCode: null };
 

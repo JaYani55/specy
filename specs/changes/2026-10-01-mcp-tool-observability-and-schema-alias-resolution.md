@@ -2,13 +2,13 @@
 
 ## Summary
 
-Improved operational visibility for MCP tool calls. Logs now identify the JSON-RPC/MCP operation (including the tool name), distinguish an inner tool failure from the outer HTTP transport response, and record a Supabase user ID/email only after verifying the bearer session. MCP tool errors now return `isError` and structured HTTP status for `update_system_data`, so clients no longer mistake a failed update for a successful tool call.
+Improved operational visibility for MCP tool calls. Logs now identify the JSON-RPC/MCP operation (including the tool name), distinguish an inner tool failure from the outer HTTP transport response, and record a Supabase user ID/email only after verifying the bearer session. MCP tool errors now return `isError` and structured HTTP status for `update_system_data`, so clients no longer mistake a failed update for a successful tool call. The logger now reads the first JSON-RPC event from Streamable HTTP SSE responses; previously it only inspected JSON HTTP bodies, so it could not see the MCP tool result. The overlapping Hono mounts `/mcp` and `/mcp/*` also both matched the root endpoint, writing duplicate rows; a single `/mcp/*` mount now covers root and nested MCP paths.
 
-The failed URL update used `schema_slug: "blog"`. The update implementation passed that value to REST `PATCH /api/schemas/:slug/system-data`, whose route resolves `:slug` as the stable `api_slug`, not the tenant-local `page_schemas.slug`. The tenant-local-slug migration gives new schemas opaque UUID API identifiers, so this mismatch explains the observed 404 when `blog` is the local schema slug. The MCP tool now resolves a stable `api_slug` directly or accepts a tenant-local slug only when it uniquely identifies one schema visible under the caller's RLS; ambiguous values return a clear 409 with candidate API identifiers.
+The request used `schema_slug: "blog"`. The MCP tool resolves this as an API identifier first, then as a tenant-local `page_schemas.slug` if that slug uniquely identifies a schema visible under caller RLS. The previous tool also made an internal HTTP call to a URL from `system_config.public_url`. That indirection could send the write to a stale/different Worker even after resolving `blog`; the tool now updates through its authenticated Supabase client directly, sharing the same validation rules as the REST endpoint and enforcing RLS. Without the old response body or `public_url` value, I cannot prove which of those two paths caused the observed 404. Both failure modes are removed or made explicit: an unmatched/ambiguous schema becomes an MCP error, while validation or RLS failures are reported with useful status and error details.
 
 ## Files Added
 
-- `api/lib/mcpObservability.ts` — parses MCP logical operation names and inner tool outcomes.
+- `api/lib/mcpObservability.ts` — parses MCP logical operation names, SSE responses, and inner tool outcomes.
 - `migrations/202610010001_agent_logs_mcp_context.sql` — adds operation, verified actor, and transport-status columns to `agent_logs`.
 - `tests/mcpObservability.test.mjs` — locks in MCP tool outcome and auth/public-page endpoint contracts.
 - `specs/changes/2026-10-01-mcp-tool-observability-and-schema-alias-resolution.md` — this record.
@@ -16,8 +16,8 @@ The failed URL update used `schema_slug: "blog"`. The update implementation pass
 ## Files Changed
 
 - `api/middleware/agentLogger.ts` — stores MCP operation/tool names, verified user ID/email, schema linkage, inner effective status, separate outer transport status, and nested MCP errors.
-- `api/routes/mcp.ts` — resolves unambiguous tenant-local schema slugs for system-data edits and returns standard MCP tool errors with structured HTTP status.
-- `api/index.ts` — allows PATCH through CORS preflight for REST clients.
+- `api/routes/mcp.ts` — resolves unambiguous tenant-local schema slugs, updates schema system data directly through the authenticated Supabase client, and returns structured MCP tool errors.
+- `api/index.ts` — allows PATCH through CORS preflight and removes the duplicate MCP logger mount.
 - `scripts/lib/migration-order.mjs` — registers the additive log-context migration after the agent-log table/hardening migrations.
 - `src/types/pagebuilder.ts`, `src/components/pagebuilder/AgentLogs.tsx` — display operation/account identity and show transport status when it differs from the effective operation status.
 - `specs/agents/agent-system-prompt.md`, `specs/agents/mcp-exposition.md` — clarify accepted schema identifiers, MCP OAuth, log semantics, and public published-page delivery.
@@ -39,7 +39,7 @@ The failed URL update used `schema_slug: "blog"`. The update implementation pass
 ## Verification
 
 - `npm run typecheck` — passed.
-- `npm test` — passed (333 tests, including migration-order validation).
+- `npm test` — passed (334 tests, including migration-order validation and MCP SSE parsing).
 - API TypeScript check — no diagnostics for changed core API files; the overall check remains blocked by existing git-ignored PluraDash/generated plugin errors.
 - `npm run build` — passed.
 - `git diff --check` — passed.

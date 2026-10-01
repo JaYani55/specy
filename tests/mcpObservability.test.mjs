@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   extractMcpRequestMetadata,
   extractMcpToolOutcome,
+  parseMcpSseResponse,
 } from '../api/lib/mcpObservability.ts';
 
 test('identifies MCP tool calls by logical name and extracts their schema identifier', () => {
@@ -51,12 +52,38 @@ test('keeps successful MCP tool responses successful', () => {
   assert.deepEqual(outcome, { failed: false, statusCode: null, error: null });
 });
 
+test('parses MCP JSON-RPC results from Streamable HTTP SSE frames', () => {
+  const message = parseMcpSseResponse(`event: message
+data: {"jsonrpc":"2.0","id":22,"result":{"isError":true}}
+
+`);
+  assert.deepEqual(message, { jsonrpc: '2.0', id: 22, result: { isError: true } });
+  assert.equal(parseMcpSseResponse(`event: ping
+
+`), null);
+});
+
+test('admin API catalog documents MCP auth, page delivery, actor/status fields, and verbosity scope', () => {
+  const catalog = readFileSync(new URL('../src/lib/apiCatalog.ts', import.meta.url), 'utf8');
+  const adminApi = readFileSync(new URL('../src/pages/VerwaltungApi.tsx', import.meta.url), 'utf8');
+  assert.match(catalog, /path: '\/api\/schemas\/:slug\/pages'/);
+  assert.match(catalog, /path: '\/api\/schemas\/:slug\/pages\/:pageSlug'/);
+  assert.match(catalog, /path: '\/api\/schemas\/:slug\/system-data'/);
+  assert.match(catalog, /operation_name/);
+  assert.match(catalog, /transport_status_code/);
+  assert.match(catalog, /POST \/mcp key controls all MCP JSON-RPC operations/);
+  assert.match(catalog, /auth: 'bearer-required'/);
+  assert.match(adminApi, /POST \/mcp toggles all MCP methods and tools together/);
+});
+
 test('MCP page management requires OAuth while published page delivery remains intentionally public', () => {
   const mcpSource = readFileSync(new URL('../api/routes/mcp.ts', import.meta.url), 'utf8');
   const schemaSource = readFileSync(new URL('../api/routes/schemas.ts', import.meta.url), 'utf8');
+  const indexSource = readFileSync(new URL('../api/index.ts', import.meta.url), 'utf8');
   assert.match(mcpSource, /if \(!authSession && c\.req\.method === 'POST'\)/);
   assert.match(mcpSource, /if \(isAuthenticated\) \{/);
   assert.match(schemaSource, /schemas\.get\('\/:slug\/pages', async \(c\) =>/);
   assert.match(schemaSource, /\.eq\('status', 'published'\)/);
   assert.match(schemaSource, /schemas\.patch\('\/:slug\/system-data'/);
+  assert.equal((indexSource.match(/app\.use\('\/mcp/g) ?? []).length, 1);
 });

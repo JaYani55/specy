@@ -11,11 +11,7 @@ import {
   upsertManagedSecret,
 } from '../lib/managedSecrets';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
-import {
-  isFrontendUrlAllowed,
-  normalizeSchemaIntegrationRequirements,
-  validateSlugStructure,
-} from '../lib/schemaRouting';
+import { normalizeSchemaIntegrationRequirements } from '../lib/schemaRouting';
 import { getOptionalAuthSession, unauthorizedWithChallenge } from '../lib/auth';
 import {
   getDiscoverableSpecBySlug,
@@ -30,6 +26,7 @@ import { validateSchemaContentContract, type SchemaContentContractInput } from '
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 import { serializeMcpError } from '../lib/apiError';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
+import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -87,6 +84,15 @@ interface SchemaListRow {
   integration_requirements?: Record<string, unknown> | null;
   content_scope?: 'page-collection' | 'single-page' | null;
   page_target?: Record<string, unknown> | null;
+}
+
+function mcpToolFailure(message: string, httpStatus: number, extra: Record<string, unknown> = {}) {
+  const payload = { error: message, http_status: httpStatus, ...extra };
+  return {
+    isError: true,
+    structuredContent: payload,
+    content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+  };
 }
 
 function buildSpecToolDescription(spec: DiscoverableSpecSummary): string {
@@ -576,36 +582,37 @@ async function createMcpServerWithTools(
         revalidation_endpoint: z.string().nullable().optional().describe('Strict relative revalidation path, such as /api/revalidate.'),
       },
       async ({ schema_slug, frontend_url, slug_structure, revalidation_endpoint }) => {
+        const schemaProjection = 'id, api_slug, slug, tenant_id, integration_requirements';
         const { data: apiMatch, error: apiMatchError } = await supabase
           .from('page_schemas')
-          .select('api_slug')
+          .select(schemaProjection)
           .eq('api_slug', schema_slug)
           .maybeSingle();
-        if (apiMatchError) {
-          const message = `Could not resolve schema "${schema_slug}": ${apiMatchError.message}`;
-          return { isError: true, structuredContent: { error: message, http_status: 500 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 500 }, null, 2) }] };
-        }
+        if (apiMatchError) return mcpToolFailure(`Could not resolve schema "${schema_slug}": ${apiMatchError.message}`, 500);
 
-        let resolvedApiSlug = apiMatch?.api_slug;
-        if (!resolvedApiSlug) {
+        let resolvedSchema = apiMatch;
+        if (!resolvedSchema) {
           const { data: localMatches, error: localMatchError } = await supabase
             .from('page_schemas')
-            .select('api_slug, slug, tenant_id')
-            .eq('slug', schema_slug);
-          if (localMatchError) {
-            const message = `Could not resolve schema "${schema_slug}": ${localMatchError.message}`;
-            return { isError: true, structuredContent: { error: message, http_status: 500 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 500 }, null, 2) }] };
-          }
+            .select(schemaProjection)
+            .eq('slug', schema_slug)
+            .limit(2);
+          if (localMatchError) return mcpToolFailure(`Could not resolve schema "${schema_slug}": ${localMatchError.message}`, 500);
           if (!localMatches?.length) {
-            const message = `Schema "${schema_slug}" was not found. Use the api_slug from specy_pages_schemas_list; a tenant-local slug is accepted only when it is unambiguous.`;
-            return { isError: true, structuredContent: { error: message, http_status: 404 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 404 }, null, 2) }] };
+            return mcpToolFailure(
+              `Schema "${schema_slug}" was not found. Use the api_slug from specy_pages_schemas_list; a tenant-local slug is accepted only when it is unambiguous.`,
+              404,
+            );
           }
           if (localMatches.length > 1) {
             const candidates = localMatches.map((candidate) => ({ api_slug: candidate.api_slug, tenant_id: candidate.tenant_id }));
-            const message = `Schema slug "${schema_slug}" is ambiguous across visible workspaces. Retry with one of the api_slug values in candidates.`;
-            return { isError: true, structuredContent: { error: message, http_status: 409, candidates }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 409, candidates }, null, 2) }] };
+            return mcpToolFailure(
+              `Schema slug "${schema_slug}" is ambiguous across visible workspaces. Retry with one of the api_slug values in candidates.`,
+              409,
+              { candidates },
+            );
           }
-          resolvedApiSlug = localMatches[0].api_slug;
+          resolvedSchema = localMatches[0];
         }
 
         const patch = {
@@ -613,30 +620,33 @@ async function createMcpServerWithTools(
           ...(slug_structure !== undefined ? { slug_structure } : {}),
           ...(revalidation_endpoint !== undefined ? { revalidation_endpoint } : {}),
         };
-        try {
-          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(resolvedApiSlug)}/system-data`, {
-            method: 'PATCH',
-            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify(patch),
-          });
-          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
-          if (!response.ok) {
-            const message = typeof result.error === 'string' ? result.error : `System-data update failed (${response.status}).`;
-            return {
-              isError: true,
-              structuredContent: { error: message, http_status: response.status },
-              content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: response.status }, null, 2) }],
-            };
-          }
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'System-data update failed.';
-          return {
-            isError: true,
-            structuredContent: { error: message, http_status: 502 },
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 502 }, null, 2) }],
-          };
+        const validation = validateSchemaSystemDataPatch(patch, resolvedSchema.integration_requirements);
+        if (!validation.ok) return mcpToolFailure(validation.error, 400);
+
+        const { data: updatedSchema, error: updateError } = await supabase
+          .from('page_schemas')
+          .update(validation.patch)
+          .eq('id', resolvedSchema.id)
+          .select('id, slug, api_slug, registration_status, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, updated_at')
+          .single();
+        if (updateError || !updatedSchema) {
+          const status = updateError?.code === '42501' || updateError?.code === 'PGRST116' ? 403 : 500;
+          const message = status === 403
+            ? 'Schema system-data update was denied or the schema is no longer accessible. Verify the caller has edit access to this schema.'
+            : updateError?.message || 'Schema system-data update failed.';
+          return mcpToolFailure(message, status);
         }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              schema: { ...updatedSchema, slug: updatedSchema.api_slug, schema_slug: updatedSchema.slug },
+              updated_fields: Object.keys(validation.patch),
+            }, null, 2),
+          }],
+        };
       },
     );
 
