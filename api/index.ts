@@ -99,7 +99,7 @@ app.get('*', async (c, next) => {
 // CORS — allow CMS and any frontend to call the API
 app.use('*', cors({
   origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id'],
   exposeHeaders: ['Mcp-Session-Id', 'WWW-Authenticate'],
 }));
@@ -155,6 +155,14 @@ app.get('/.well-known/mcp.json', (c) => {
       'check_health',
       'list_objects',
       'get_object',
+      'specy_pages_schemas_list',
+      'specy_pages_schemas_get',
+      'specy_pages_schemas_list_pages',
+      'specy_pages_schemas_get_page',
+      'specy_pages_schemas_create_page',
+      'specy_pages_schemas_update_page',
+      'specy_pages_schemas_update_system_data',
+      'specy_pages_schemas_replace_frontend_targets',
     ],
     authentication: {
       required: true,

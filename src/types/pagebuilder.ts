@@ -317,6 +317,10 @@ export interface AgentLog {
   method: string;
   path: string;
   status_code: number | null;
+  transport_status_code: number | null;
+  operation_name: string | null;
+  user_id: string | null;
+  user_email: string | null;
   request_body: Record<string, unknown> | null;
   response_body: Record<string, unknown> | null;
   duration_ms: number | null;

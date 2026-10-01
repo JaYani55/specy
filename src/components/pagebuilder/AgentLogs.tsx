@@ -101,7 +101,7 @@ const LogRow: React.FC<{
         </span>
 
         {/* Path */}
-        <span className="font-mono text-xs truncate flex-1 text-foreground/80">{log.path}</span>
+        <span className="font-mono text-xs truncate flex-1 text-foreground/80" title={log.path}>{log.operation_name || log.path}</span>
 
         {/* Status */}
         <span className={`font-mono text-xs font-semibold shrink-0 ${statusColor(log.status_code)}`}>
@@ -126,6 +126,16 @@ const LogRow: React.FC<{
             {log.schema_slug && (
               <span className="flex items-center gap-1">
                 <Globe className="h-3 w-3" /> {log.schema_slug}
+              </span>
+            )}
+            {(log.user_email || log.user_id) && (
+              <span title={log.user_id ?? undefined}>
+                {language === 'en' ? 'Account:' : 'Konto:'} {log.user_email || log.user_id}
+              </span>
+            )}
+            {log.transport_status_code !== null && log.transport_status_code !== log.status_code && (
+              <span>
+                {language === 'en' ? 'HTTP transport:' : 'HTTP-Transport:'} {log.transport_status_code}
               </span>
             )}
             {log.ip_address && (

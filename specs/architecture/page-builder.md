@@ -277,6 +277,9 @@ Request body:
 ### `PUT /api/schemas/:slug/frontend-targets`
 Authenticated schema editors can atomically replace target metadata. The endpoint validates target keys, server paths, semantic placement keys, primary-target rules, and detail-route cardinality. It never changes `page_schemas.schema` or `pages.content`.
 
+### `PATCH /api/schemas/:slug/system-data`
+Authenticated schema editors can correct non-secret integration fields: `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. The endpoint validates outbound/canonical frontend URLs and route/path shapes, and does not change schema JSON, page content, registration codes, or revalidation secrets. This supports repairing a wrong frontend URL without issuing another registration code.
+
 ### `GET /api/schemas/:slug/pages`
 Returns published pages through the schema-scoped Worker API after registration. The response includes enabled target metadata and returns `content` as stored JSONB without field filtering or key normalization.
 
@@ -290,7 +293,7 @@ Server-side domain health check. Returns `{ status: 'online' | 'offline', latenc
 Triggers target-aware ISR revalidation on the registered frontend. Collection targets invalidate their `host_path`, while detail targets replace `:slug` with the page slug. Fragments such as `#posts` are never sent to the frontend server.
 
 ### `/mcp`
-MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT.
+MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT. Authenticated page-management tools are organized under the `specy-pages > schemas` hierarchy (`specy_pages_schemas_*`): list/get schemas, list/get pages, create/update page content and system fields, repair schema integration metadata, and replace frontend targets. Page reads and writes remain constrained by Supabase RLS.
 
 ### `GET /api/forms`
 Returns the published forms index for CMS and agent use.

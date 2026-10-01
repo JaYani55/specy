@@ -2,7 +2,7 @@ import { getPluginApiRoutes } from '@/plugins/loader';
 
 export type ApiParameterLocation = 'path' | 'query' | 'header' | 'body';
 
-export type ApiEndpointMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+export type ApiEndpointMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface ApiParameterDefinition {
   name: string;
@@ -212,6 +212,30 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     responseExamples: [{ status: 200, description: 'Targets replaced successfully.', example: '{ "success": true, "targets": [ ... ] }' }],
     sideEffects: ['Replaces enabled and disabled target metadata for the schema.', 'Does not change page_schemas.schema or pages.content.'],
     tables: ['schema_frontend_targets', 'page_schemas'],
+  },
+  {
+    id: 'schema-system-data',
+    tag: 'Schemas',
+    method: 'PATCH',
+    path: '/api/schemas/:slug/system-data',
+    summary: 'Nicht geheime Schema-Integrationsdaten korrigieren',
+    description: 'Authentifizierte Aktualisierung von frontend_url, dem Legacy-Feld slug_structure und revalidation_endpoint. Frontend-URLs werden auf sichere Ziele und die kanonischen Schema-Vorgaben geprüft. Schema-JSON, Seiteninhalte, Registrierungscodes und Geheimnisse werden nicht angenommen.',
+    auth: 'bearer-required',
+    mountsAt: '/api/schemas',
+    sourceFile: 'api/routes/schemas.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stabile Schema-API-Kennung (api_slug).' },
+      { name: 'frontend_url', in: 'body', required: false, type: 'string', description: 'Korrigierte absolute Frontend-URL. Gespeichert wird der Origin.' },
+      { name: 'slug_structure', in: 'body', required: false, type: 'string', description: 'Legacy-Detailroute mit genau einem :slug-Token.' },
+      { name: 'revalidation_endpoint', in: 'body', required: false, type: 'string|null', description: 'Strikter relativer Revalidierungs-Pfad oder null zum Leeren.' },
+    ],
+    requestExample: `{
+  "frontend_url": "https://www.example.com"
+}`,
+    responseExamples: [{ status: 200, description: 'Systemdaten wurden aktualisiert.', example: '{ "success": true, "schema": { "frontend_url": "https://www.example.com" } }' }],
+    sideEffects: ['Aktualisiert nur die explizit angegebenen, nicht geheimen Integrationsfelder in page_schemas.', 'Ändert weder Schema-JSON noch Seiteninhalte, Registrierungsstatus oder verwaltete Geheimnisse.'],
+    tables: ['page_schemas'],
   },
   {
     id: 'schema-revalidate',

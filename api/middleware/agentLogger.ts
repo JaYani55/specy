@@ -1,6 +1,8 @@
 import type { MiddlewareHandler } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 import { getLoggingConfig, type LoggingConfigValues } from '../lib/systemConfig';
+import { parseBearerToken, verifyAuthSession } from '../lib/auth';
+import { extractMcpRequestMetadata, extractMcpToolOutcome } from '../lib/mcpObservability';
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -152,18 +154,25 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     }
   }
 
-  // Extract schema slug from path if present  (e.g. /api/schemas/:slug/...)
-  let schemaSlug: string | null = null;
-  const slugMatch = path.match(/^\/api\/schemas\/([^/]+)/);
-  if (slugMatch && slugMatch[1] !== '' && !['logs'].includes(slugMatch[1])) {
-    schemaSlug = slugMatch[1];
+  // MCP JSON-RPC shares one transport route; capture the logical tool/method
+  // separately so operational logs distinguish individual calls.
+  const isMcpRequest = pathname === '/mcp' || pathname.startsWith('/mcp/');
+  const mcpMetadata = isMcpRequest ? extractMcpRequestMetadata(requestBody) : null;
+
+  // Extract schema identifier from a schema REST path or MCP tool arguments.
+  let schemaSlug: string | null = mcpMetadata?.schemaIdentifier ?? null;
+  if (!schemaSlug) {
+    const slugMatch = pathname.match(/^\/api\/schemas\/([^/]+)/);
+    if (slugMatch && slugMatch[1] !== '' && !['logs'].includes(slugMatch[1])) {
+      schemaSlug = slugMatch[1];
+    }
   }
 
-  // Run the actual handler
+  // Run the actual handler.
   await next();
 
   const duration = Date.now() - start;
-  const status = c.res.status;
+  const transportStatus = c.res.status;
 
   // Capture response body (clone to avoid consuming)
   let responseBody: unknown = null;
@@ -176,34 +185,76 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     // Skip non-JSON responses
   }
 
-  // Resolve schema_id from slug if we have one
+  // MCP tools can fail inside a successful HTTP/JSON-RPC exchange. Preserve
+  // both statuses while making status_code reflect the operation outcome.
+  const mcpOutcome = mcpMetadata?.toolName ? extractMcpToolOutcome(responseBody) : null;
+  const status = mcpOutcome?.failed ? (mcpOutcome.statusCode ?? 500) : transportStatus;
+  const logError = mcpOutcome?.failed
+    ? mcpOutcome.error
+    : status >= 400 ? extractErrorMessage(responseBody) : null;
+
+  // Resolve the authenticated caller from a verified Supabase session. Do not
+  // trust an unverified JWT payload for operational attribution.
+  let userId: string | null = null;
+  let userEmail: string | null = null;
+  const bearerToken = isMcpRequest ? parseBearerToken(c.req.header('Authorization')) : undefined;
+  if (bearerToken) {
+    try {
+      const session = await verifyAuthSession(c.env, bearerToken);
+      if (session) {
+        userId = session.userId;
+        const email = session.claims.email;
+        userEmail = typeof email === 'string' ? email : null;
+      }
+    } catch {
+      // Logging must not affect request handling; anonymous/unverified is null.
+    }
+  }
+
+  // Resolve schema_id with the verified caller's RLS context when available.
   let schemaId: string | null = null;
 
-  // Fire-and-forget: write the log entry
+  // Fire-and-forget: write the log entry.
   try {
     const supabase = await createSupabaseClient(c.env);
+    const lookupClient = bearerToken && userId
+      ? await createSupabaseClient(c.env, bearerToken)
+      : supabase;
 
     if (schemaSlug) {
-      const { data } = await supabase
+      const { data: apiMatch } = await lookupClient
         .from('page_schemas')
         .select('id')
         .eq('api_slug', schemaSlug)
-        .single();
-      if (data) schemaId = data.id;
+        .maybeSingle();
+      if (apiMatch) {
+        schemaId = apiMatch.id;
+      } else {
+        const { data: localMatches } = await lookupClient
+          .from('page_schemas')
+          .select('id')
+          .eq('slug', schemaSlug)
+          .limit(2);
+        if (localMatches?.length === 1) schemaId = localMatches[0].id;
+      }
     }
 
     await supabase.from('agent_logs').insert({
       schema_id: schemaId,
       schema_slug: schemaSlug,
+      operation_name: mcpMetadata?.operationName ?? null,
+      user_id: userId,
+      user_email: userEmail,
       method,
       path,
       status_code: status,
+      transport_status_code: transportStatus,
       request_body: requestBody as JsonValue,
       response_body: responseBody as JsonValue,
       duration_ms: duration,
       ip_address: ip,
       user_agent: userAgent,
-      error: status >= 400 ? extractErrorMessage(responseBody) : null,
+      error: logError,
     });
   } catch (err) {
     // Never let logging break a real request

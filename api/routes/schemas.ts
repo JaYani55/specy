@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { createSupabaseAdminClient, createSupabaseClient, hasSupabaseAdminCredential, type Env } from '../lib/supabase';
-import { parseBearerToken, requireAppRole } from '../lib/auth';
+import { parseBearerToken, requireAppRole, requireAuthSession } from '../lib/auth';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 import {
   buildRevalidationSecretName,
@@ -24,6 +24,7 @@ import {
 import { getSchemaSpecBundle } from '../lib/specRegistry';
 import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
+import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
@@ -935,7 +936,9 @@ schemas.post('/:slug/register', async (c) => {
 
 // PUT /api/schemas/:slug/frontend-targets — replace target metadata atomically
 schemas.put('/:slug/frontend-targets', async (c) => {
-  const auth = await requireAppRole(c, 'user');
+  // MCP OAuth agent accounts are not in the human AppRole ladder; row-level
+  // security on page_schemas still determines which schemas they can mutate.
+  const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
 
   const slug = c.req.param('slug');
@@ -972,6 +975,47 @@ schemas.put('/:slug/frontend-targets', async (c) => {
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, auth.token);
   return c.json({ success: true, schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug }, targets });
+});
+
+// PATCH /api/schemas/:slug/system-data — repair non-secret schema integration metadata.
+schemas.patch('/:slug/system-data', async (c) => {
+  // Allow user and OAuth agent sessions; RLS remains the authoritative scope.
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  const slug = c.req.param('slug');
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const client = await createSupabaseClient(c.env, auth.token);
+  const { data: schema, error: schemaError } = await client
+    .from('page_schemas')
+    .select('id, slug, api_slug, integration_requirements')
+    .eq('api_slug', slug)
+    .single();
+
+  if (schemaError || !schema) return c.json({ error: `Schema "${slug}" not found` }, 404);
+
+  const validation = validateSchemaSystemDataPatch(body, schema.integration_requirements);
+  if (!validation.ok) return c.json({ error: validation.error }, 400);
+
+  const { data, error } = await client
+    .from('page_schemas')
+    .update(validation.patch)
+    .eq('id', schema.id)
+    .select('id, slug, api_slug, registration_status, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, updated_at')
+    .single();
+
+  if (error || !data) return c.json({ error: error?.message || 'Failed to update schema system data.' }, 500);
+
+  return c.json({
+    success: true,
+    schema: { ...data, slug: data.api_slug, schema_slug: data.slug },
+  });
 });
 
 schemas.get('/:slug/revalidation-secret/status', async (c) => {

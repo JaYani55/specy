@@ -68,8 +68,9 @@ The application has been migrated to a **Supabase-only architecture**. Historica
 
 ### Agent Communication Logs
 -   **Middleware Placement:** `api/index.ts` mounts `agentLogger` in front of `/api/*` and `/mcp*`, while explicitly mounting `/api/schemas/logs` first and skipping `/api/secrets*` inside the middleware to avoid recursive log creation and secret-adjacent payload capture.
--   **Captured Data:** Each log row stores request method, path, status code, duration, sanitized JSON request/response payloads, IP address, user agent, optional schema linkage, and an extracted error message for failing responses.
--   **Persistence Model:** Logs are stored in `public.agent_logs`, linked to `page_schemas` when a schema slug is present, and hardened by `agent_logs_hardening.sql` so read/delete access is restricted to `super-admin`.
+-   **Captured Data:** Each log row stores request method/path, MCP logical operation name, effective status and outer transport status, duration, sanitized JSON request/response payloads, IP address, user agent, optional schema linkage, and an extracted error message. For verified bearer sessions it also stores the Supabase user ID and email claim; unverified credentials are never attributed.
+-   **MCP Outcome Semantics:** A tool failure inside a successful JSON-RPC HTTP `200` is logged using the tool's actual inner status (for example, `404`) while retaining `transport_status_code = 200`. UI rows display the logical tool name instead of showing every MCP call only as `/mcp`.
+-   **Persistence Model:** Logs are stored in `public.agent_logs`, linked to `page_schemas` when a schema identifier resolves, and hardened by `agent_logs_hardening.sql` so read/delete access is restricted to `super-admin`.
 -   **Verbosity Controls:** The interface now derives the list of loggable endpoints dynamically from the API catalog entries marked with `logging: 'agentLogger'`. Super-admins can enable or disable individual endpoints with checkboxes in API Administration; the resulting allowlist is persisted in `system_config` (`logging.mode`, `logging.enabled_endpoints`) and consulted by the middleware through a short-lived cache.
 -   **Intentional Exclusions:** `/api/secrets*` remains unlogged even though it is operator-facing, and `/api/schemas/logs*` is excluded to prevent the observability feature from logging itself.
 
@@ -165,6 +166,7 @@ All database tables are defined as plain SQL files under `migrations/`. They are
 | `mentorbooking_notifications.sql` | Per-user event notifications. FK to `user_profile`. |
 | `agent_logs.sql` | Page-builder AI agent request/response log. FK to `page_schemas`. |
 | `agent_logs_hardening.sql` | Tightens `agent_logs` access so only `super-admin` can read/delete operational logs. |
+| `202610010001_agent_logs_mcp_context.sql` | Adds verified user attribution, logical MCP operation names, and separate tool/transport status columns to `agent_logs`. |
 | `objects.sql` | Arbitrarily-definable data objects (`public.objects`). Each row stores a schema JSONB (field definitions) and a data JSONB payload. Access controlled via `requires_auth` and `api_enabled`. Admin/super-admin can write; super-admin can delete. Uses `set_current_timestamp_updated_at` trigger. |
 | `system_config.sql` | Generic key/value store for non-sensitive runtime settings such as storage configuration and communication-log verbosity. |
 | `Auth/Access_hook.sql` | Supabase Auth hook function (`custom_access_token_hook`) that injects `user_roles` into JWT claims. Requires `roles` and `user_roles` tables to exist. Also includes `GRANT EXECUTE … TO supabase_auth_admin`, `GRANT USAGE ON SCHEMA public`, and the corresponding `REVOKE` from `authenticated`, `anon`, `public` — required for the hook to be callable by Supabase Auth internals. |

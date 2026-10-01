@@ -59,6 +59,7 @@ export const MIGRATION_ORDER_CORE = [
   'mentorbooking_notifications.sql',
   'agent_logs.sql',
   'agent_logs_hardening.sql',
+  '202610010001_agent_logs_mcp_context.sql',
   '202605240001_multi_tenant_foundation.sql',
   // objects.sql creates public.objects — must run BEFORE the multi-tenant
   // backfill/RLS migrations (202605240002–005), which alter that table.

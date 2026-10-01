@@ -29,6 +29,7 @@ import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../l
 import { validateSchemaContentContract, type SchemaContentContractInput } from '../lib/schemaRegistration';
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 import { serializeMcpError } from '../lib/apiError';
+import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -46,7 +47,22 @@ const BUILT_IN_MCP_TOOLS = [
   'check_health',
   'list_objects',
   'get_object',
+  'specy_pages_schemas_list',
+  'specy_pages_schemas_get',
+  'specy_pages_schemas_list_pages',
+  'specy_pages_schemas_get_page',
+  'specy_pages_schemas_create_page',
+  'specy_pages_schemas_update_page',
+  'specy_pages_schemas_update_system_data',
+  'specy_pages_schemas_replace_frontend_targets',
 ] as const;
+
+const AUTHENTICATED_MCP_TOOLS = new Set([
+  'create_schema', 'new_schema', 'start_schema_registration', 'create_page', 'register_frontend',
+  'specy_pages_schemas_list', 'specy_pages_schemas_get', 'specy_pages_schemas_list_pages',
+  'specy_pages_schemas_get_page', 'specy_pages_schemas_create_page', 'specy_pages_schemas_update_page',
+  'specy_pages_schemas_update_system_data', 'specy_pages_schemas_replace_frontend_targets',
+]);
 
 function generateRegistrationCode(): string {
   const bytes = new Uint8Array(32);
@@ -144,25 +160,25 @@ async function createMcpServerWithTools(
 
   server.tool(
     'start_here',
-    'Explain what Specy is and outline the ideal agent workflow for creating a schema, building a site, and registering a frontend.',
+    'Explain Specy and outline how to inspect/manage schemas and pages, correct integration metadata, or create/register a frontend.',
     {},
     async () => ({
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
           service: 'specy',
-          workflow_version: '2026-08-01-autonomous-schema-pages-v1',
+          workflow_version: '2026-10-01-schema-page-management-v1',
           purpose: 'Specy is a CMS and MCP server for schema-driven website generation and frontend registration workflows.',
           workflow: [
             '1. Call start_here to understand the system and available workflow tools.',
-            '2. Call list_schemas or get_schema_spec to inspect existing schema patterns and requirements.',
-            '3. BEFORE attempting any schema, page, registration, or closed-content operation, authenticate this MCP connection. If create_schema, new_schema, start_schema_registration, create_page, or register_frontend are absent from tools/list, the connection is anonymous and you must stop the workflow and ask the MCP client to complete OAuth 2.1 in the browser.',
-            '4. After OAuth completes, reconnect or refresh the MCP session and call tools/list again. Do not continue until the authenticated tools are visible.',
-            '5. Authenticated tools include create_schema, start_schema_registration, register_frontend, and create_page. Use them to complete the requested workflow.',
-            '6. Call create_schema with the blog schema definition. This creates the schema for the authenticated tenant.',
-            '7. Call start_schema_registration to generate a registration code without asking the user to use the CMS.',
+            '2. For existing content, authenticate and use specy_pages_schemas_list/get, then specy_pages_schemas_list_pages/get_page. Use specy_pages_schemas_update_page to edit content or page system fields.',
+            '3. Correct a mistaken frontend URL with specy_pages_schemas_update_system_data after checking the schema and the intended canonical frontend; this does not require a new registration code.',
+            '4. BEFORE any schema, page, registration, or closed-content operation, authenticate this MCP connection. If authenticated tools such as specy_pages_schemas_update_page or specy_pages_schemas_update_system_data are absent from tools/list, ask the MCP client to complete OAuth 2.1 in the browser.',
+            '5. After OAuth completes, reconnect or refresh the MCP session and call tools/list again. Do not continue until the authenticated tools are visible.',
+            '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, create_page, and the specy_pages_schemas_* page-management tools.',
+            '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
-            '9. Call create_page to create blog content, then optionally call check_health.',
+            '9. Create content with create_page or specy_pages_schemas_create_page, then optionally call check_health.',
           ],
           how_to_authenticate: {
             mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
@@ -174,10 +190,10 @@ async function createMcpServerWithTools(
               '3. Open the authorization URL in the browser and let the user approve.',
               '4. Capture the callback in the MCP client, exchange the code, store/refresh the token, and reconnect.',
               '5. Re-run tools/list after authentication.',
-              '6. Confirm that create_schema, start_schema_registration, register_frontend, and create_page are now present before proceeding.',
+              '6. Confirm that the required authenticated tools, including specy_pages_schemas_update_system_data and specy_pages_schemas_list_pages, are now present before proceeding.',
             ],
             anonymous_tools: ['start_here', 'list_schemas', 'get_schema_spec', 'list_objects', 'get_object', 'check_health', 'list_available_tools', 'get_spec_definition'],
-            authenticated_tools: ['create_schema', 'new_schema', 'start_schema_registration', 'register_frontend', 'create_page', 'closed MCP registry tools'],
+            authenticated_tools: [...AUTHENTICATED_MCP_TOOLS, 'closed MCP registry tools'],
             stop_condition: 'If the authenticated_tools are not returned by tools/list, do not claim that schema creation or registration is unavailable and do not proceed with a local-only implementation. Report that OAuth has not completed for this MCP connection.',
             legacy_tools: 'No manual OAuth tools are exposed on the normal MCP surface. VS Code, Cursor, Claude Desktop, and standards-compliant MCP clients must use the HTTP 401 challenge and manage OAuth themselves.',
           },
@@ -185,7 +201,7 @@ async function createMcpServerWithTools(
             'CRITICAL: The normal MCP surface has no manual authorization-code tools. Let the MCP client manage OAuth automatically.',
             'CRITICAL: An anonymous tools/list is not sufficient for schema work. Authenticate first, then call tools/list again and verify the private tools are present.',
             'new_schema intentionally creates schemas in pending state with no registration code.',
-            'The user must explicitly start registration in the frontend to generate a registration code.',
+            'start_schema_registration can generate a registration code programmatically. A registered frontend URL can be corrected later through specy_pages_schemas_update_system_data; use the unhook workflow to disconnect a frontend.',
             'Published public MCP entries are visible without auth; published closed entries require a valid OAuth 2.1 bearer token.',
             'Password-based login was removed; normal MCP clients use client-managed OAuth through the HTTP challenge.',
           ],
@@ -289,16 +305,7 @@ async function createMcpServerWithTools(
         }, null, 2) }] };
       }
 
-      const requestedSlug = (slug || name)
-        .toLowerCase()
-        .replace(/ä/g, 'ae')
-        .replace(/ö/g, 'oe')
-        .replace(/ü/g, 'ue')
-        .replace(/ß/g, 'ss')
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '') || 'page';
+      const requestedSlug = normalizeSchemaPageSlug(slug || name);
 
       const { data: existing } = await supabase.from('pages').select('id').eq('slug', requestedSlug).limit(1);
       const uniqueSlug = existing && existing.length > 0 ? `${requestedSlug}-${Date.now().toString(36)}` : requestedSlug;
@@ -342,6 +349,326 @@ async function createMcpServerWithTools(
           }, null, 2),
         }],
       };
+      },
+    );
+
+    // Hierarchical page tools: specy-pages > schemas.
+    server.tool(
+      'specy_pages_schemas_list',
+      '[specy-pages > schemas] List schemas accessible to the authenticated caller, including their API identifiers and frontend system metadata.',
+      {},
+      async () => {
+        const { data, error } = await supabase
+          .from('page_schemas')
+          .select('slug, api_slug, tenant_id, name, description, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, updated_at')
+          .neq('registration_status', 'archived')
+          .order('name', { ascending: true });
+        if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }] };
+
+        const schemas = (data ?? []).map((schema) => ({
+          slug: schema.api_slug,
+          api_slug: schema.api_slug,
+          schema_slug: schema.slug,
+          tenant_id: schema.tenant_id,
+          name: schema.name,
+          description: schema.description,
+          registration_status: schema.registration_status,
+          is_default: schema.is_default,
+          frontend_url: schema.frontend_url,
+          revalidation_endpoint: schema.revalidation_endpoint,
+          slug_structure: schema.slug_structure,
+          integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
+          content_scope: schema.content_scope || 'page-collection',
+          page_target: schema.page_target,
+          spec_url: `${baseUrl}/api/schemas/${schema.api_slug}/spec.txt`,
+          pages_url: `${baseUrl}/api/schemas/${schema.api_slug}/pages`,
+        }));
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ schemas, total: schemas.length }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_get',
+      '[specy-pages > schemas] View one full schema definition and its safe system metadata. Secrets and registration codes are never returned.',
+      { schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list') },
+      async ({ schema_slug }) => {
+        const { data: schema, error } = await supabase
+          .from('page_schemas')
+          .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+          .eq('api_slug', schema_slug)
+          .single();
+        if (error || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
+
+        const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              schema: {
+                ...schema,
+                slug: schema.api_slug,
+                schema_slug: schema.slug,
+                integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
+              },
+              targets,
+              system_data_edit_endpoint: `${baseUrl}/api/schemas/${schema.api_slug}/system-data`,
+            }, null, 2),
+          }],
+        };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_list_pages',
+      '[specy-pages > schemas > pages] List every page record for a schema, including drafts and archived records visible under RLS. Content is omitted unless requested.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list'),
+        include_content: z.boolean().optional().describe('Include full arbitrary JSON page content; defaults to false.'),
+      },
+      async ({ schema_slug, include_content }) => {
+        const { data: schema, error: schemaError } = await supabase
+          .from('page_schemas')
+          .select('id, api_slug')
+          .eq('api_slug', schema_slug)
+          .single();
+        if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+
+        const projection = include_content
+          ? 'id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at'
+          : 'id, slug, name, status, is_draft, schema_id, tenant_id, domain_url, updated_at, published_at';
+        const { data: pages, error } = await supabase
+          .from('pages')
+          .select(projection)
+          .eq('schema_id', schema.id)
+          .order('updated_at', { ascending: false });
+        if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ schema_slug, pages: pages ?? [], total: pages?.length ?? 0 }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_get_page',
+      '[specy-pages > schemas > pages] Load one page record, including its complete stored JSON content and system fields.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
+        page_id: z.string().uuid().describe('Page UUID from specy_pages_schemas_list_pages'),
+      },
+      async ({ schema_slug, page_id }) => {
+        const { data: schema } = await supabase.from('page_schemas').select('id').eq('api_slug', schema_slug).single();
+        if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { data: page, error } = await supabase
+          .from('pages')
+          .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
+          .eq('schema_id', schema.id)
+          .eq('id', page_id)
+          .single();
+        if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Page not found in the requested schema.' }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ page }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_create_page',
+      '[specy-pages > schemas > pages] Add a draft page with content conforming to the selected schema. Single-page schemas cannot receive additional records.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
+        name: z.string().min(1),
+        slug: z.string().optional().describe('Optional URL slug; generated from name when omitted.'),
+        content: z.record(z.string(), z.unknown()).describe('Complete page JSON content; keys and casing are preserved.'),
+        status: z.enum(['draft', 'published']).optional().describe('Defaults to draft. Publish only when explicitly requested.'),
+        domain_url: z.string().max(2048).nullable().optional().describe('Optional page-owned domain URL system field.'),
+      },
+      async ({ schema_slug, name, slug, content, status, domain_url }) => {
+        const { data: schema, error: schemaError } = await supabase
+          .from('page_schemas')
+          .select('id, api_slug, tenant_id, content_scope')
+          .eq('api_slug', schema_slug)
+          .single();
+        if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        if (schema.content_scope === 'single-page') {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is a single-page schema; edit its existing page record instead of adding another page.' }, null, 2) }] };
+        }
+
+        const requestedSlug = normalizeSchemaPageSlug(slug || name);
+        let uniqueSlug = requestedSlug;
+        for (let suffix = 2; suffix <= 100; suffix += 1) {
+          const { data: matches, error } = await supabase.from('pages').select('id').eq('slug', uniqueSlug).limit(1);
+          if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }] };
+          if (!matches?.length) break;
+          uniqueSlug = `${requestedSlug}-${suffix}`;
+        }
+
+        const pageInsert: Record<string, unknown> = {
+          name,
+          slug: uniqueSlug,
+          content,
+          status: status ?? 'draft',
+          schema_id: schema.id,
+          ...(domain_url !== undefined ? { domain_url } : {}),
+        };
+        if (schema.tenant_id) pageInsert.tenant_id = schema.tenant_id;
+        const { data: page, error } = await supabase
+          .from('pages')
+          .insert(pageInsert)
+          .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
+          .single();
+        if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Failed to create page.' }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_update_page',
+      '[specy-pages > schemas > pages] Edit page content or system fields (name, slug, publication status, domain_url). Only fields supplied are changed; schema linkage and tenant ownership cannot be reassigned.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
+        page_id: z.string().uuid().describe('Page UUID from the schema page list'),
+        content: z.record(z.string(), z.unknown()).optional().describe('Full replacement JSON content. Existing keys are not normalized or filtered.'),
+        name: z.string().min(1).optional(),
+        slug: z.string().min(1).optional(),
+        status: z.enum(['draft', 'published', 'archived']).optional(),
+        domain_url: z.string().max(2048).nullable().optional(),
+      },
+      async ({ schema_slug, page_id, content, name, slug, status, domain_url }) => {
+        const { data: schema } = await supabase.from('page_schemas').select('id').eq('api_slug', schema_slug).single();
+        if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { data: currentPage, error: pageError } = await supabase
+          .from('pages')
+          .select('id, slug')
+          .eq('schema_id', schema.id)
+          .eq('id', page_id)
+          .single();
+        if (pageError || !currentPage) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: pageError?.message || 'Page not found in the requested schema.' }, null, 2) }] };
+
+        const patch: Record<string, unknown> = {};
+        if (content !== undefined) patch.content = content;
+        if (name !== undefined) patch.name = name;
+        if (slug !== undefined) {
+          const normalizedSlug = normalizeSchemaPageSlug(slug);
+          const { data: duplicate, error } = await supabase.from('pages').select('id').eq('slug', normalizedSlug).neq('id', page_id).limit(1);
+          if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }] };
+          if (duplicate?.length) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Page slug "${normalizedSlug}" is already in use.` }, null, 2) }] };
+          patch.slug = normalizedSlug;
+        }
+        if (status !== undefined) patch.status = status;
+        if (domain_url !== undefined) patch.domain_url = domain_url;
+        if (Object.keys(patch).length === 0) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Provide at least one page field to update.' }, null, 2) }] };
+
+        const { data: page, error } = await supabase
+          .from('pages')
+          .update(patch)
+          .eq('schema_id', schema.id)
+          .eq('id', page_id)
+          .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
+          .single();
+        if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Failed to update page.' }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_update_system_data',
+      '[specy-pages > schemas] Correct non-secret schema integration settings such as frontend_url. This does not change page content or the schema definition.',
+      {
+        schema_slug: z.string().min(1).describe('Stable api_slug, or a tenant-local schema slug when it resolves to exactly one schema visible to you.'),
+        frontend_url: z.string().url().optional().describe('Correct frontend URL origin. Use the explicit unhook workflow to disconnect a frontend.'),
+        slug_structure: z.string().optional().describe('Legacy detail route template containing exactly one :slug token.'),
+        revalidation_endpoint: z.string().nullable().optional().describe('Strict relative revalidation path, such as /api/revalidate.'),
+      },
+      async ({ schema_slug, frontend_url, slug_structure, revalidation_endpoint }) => {
+        const { data: apiMatch, error: apiMatchError } = await supabase
+          .from('page_schemas')
+          .select('api_slug')
+          .eq('api_slug', schema_slug)
+          .maybeSingle();
+        if (apiMatchError) {
+          const message = `Could not resolve schema "${schema_slug}": ${apiMatchError.message}`;
+          return { isError: true, structuredContent: { error: message, http_status: 500 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 500 }, null, 2) }] };
+        }
+
+        let resolvedApiSlug = apiMatch?.api_slug;
+        if (!resolvedApiSlug) {
+          const { data: localMatches, error: localMatchError } = await supabase
+            .from('page_schemas')
+            .select('api_slug, slug, tenant_id')
+            .eq('slug', schema_slug);
+          if (localMatchError) {
+            const message = `Could not resolve schema "${schema_slug}": ${localMatchError.message}`;
+            return { isError: true, structuredContent: { error: message, http_status: 500 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 500 }, null, 2) }] };
+          }
+          if (!localMatches?.length) {
+            const message = `Schema "${schema_slug}" was not found. Use the api_slug from specy_pages_schemas_list; a tenant-local slug is accepted only when it is unambiguous.`;
+            return { isError: true, structuredContent: { error: message, http_status: 404 }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 404 }, null, 2) }] };
+          }
+          if (localMatches.length > 1) {
+            const candidates = localMatches.map((candidate) => ({ api_slug: candidate.api_slug, tenant_id: candidate.tenant_id }));
+            const message = `Schema slug "${schema_slug}" is ambiguous across visible workspaces. Retry with one of the api_slug values in candidates.`;
+            return { isError: true, structuredContent: { error: message, http_status: 409, candidates }, content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 409, candidates }, null, 2) }] };
+          }
+          resolvedApiSlug = localMatches[0].api_slug;
+        }
+
+        const patch = {
+          ...(frontend_url !== undefined ? { frontend_url } : {}),
+          ...(slug_structure !== undefined ? { slug_structure } : {}),
+          ...(revalidation_endpoint !== undefined ? { revalidation_endpoint } : {}),
+        };
+        try {
+          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(resolvedApiSlug)}/system-data`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(patch),
+          });
+          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+          if (!response.ok) {
+            const message = typeof result.error === 'string' ? result.error : `System-data update failed (${response.status}).`;
+            return {
+              isError: true,
+              structuredContent: { error: message, http_status: response.status },
+              content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: response.status }, null, 2) }],
+            };
+          }
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'System-data update failed.';
+          return {
+            isError: true,
+            structuredContent: { error: message, http_status: 502 },
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: message, http_status: 502 }, null, 2) }],
+          };
+        }
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_replace_frontend_targets',
+      '[specy-pages > schemas] Replace a schema frontend target registry after correcting collection or detail route metadata.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
+        targets: z.array(z.object({
+          target_key: z.string(),
+          kind: z.enum(['collection-slot', 'detail-page']),
+          host_path: z.string(),
+          placement_key: z.string().nullable().optional(),
+          supports_preview: z.boolean().optional(),
+          is_primary: z.boolean().optional(),
+          sort_order: z.number().int().optional(),
+          enabled: z.boolean().optional(),
+        })).describe('Complete replacement target list; use server paths, never browser fragments.'),
+      },
+      async ({ schema_slug, targets }) => {
+        try {
+          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(schema_slug)}/frontend-targets`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ targets }),
+          });
+          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+          if (!response.ok) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: result.error || `Frontend-target update failed (${response.status}).` }, null, 2) }] };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error instanceof Error ? error.message : 'Frontend-target update failed.' }, null, 2) }] };
+        }
       },
     );
   }
@@ -897,12 +1224,10 @@ mcpRoute.all('/', async (c) => {
   // Browsers/REST clients hitting GET /mcp without SSE headers
   if (c.req.method === 'GET' && !c.req.header('accept')?.includes('text/event-stream')) {
     const exposedSpecs = await listRegistryMcpSpecs(c.env, { includeClosed });
-    const publicBuiltInTools = BUILT_IN_MCP_TOOLS.filter((tool) => ![
-      'create_schema', 'new_schema', 'start_schema_registration', 'create_page', 'register_frontend',
-    ].includes(tool));
+    const publicBuiltInTools = BUILT_IN_MCP_TOOLS.filter((tool) => !AUTHENTICATED_MCP_TOOLS.has(tool));
     const toolNames = Array.from(new Set([
       ...publicBuiltInTools,
-      ...(authSession ? ['create_schema', 'start_schema_registration', 'create_page', 'register_frontend'] : []),
+      ...(authSession ? AUTHENTICATED_MCP_TOOLS : []),
       ...exposedSpecs.map((spec) => spec.slug),
     ]));
 
