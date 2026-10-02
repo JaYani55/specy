@@ -116,6 +116,12 @@ export const MIGRATION_ORDER_CORE = [
   // the repaired helpers (202609090002, 202609100001/2) so a fresh install
   // ends in the canonical state.
   '202609290001_repair_current_user_roles_json_claims.sql',
+  // Schema classification and definition revisions build on content_scope and tenant-local slugs.
+  '202610020001_schema_entity_contract.sql',
+  '202610020002_product_page_delete_safety.sql',
+  '202610020003_service_product_aggregates.sql',
+  '202610020004_product_content_validation.sql',
+  '202610020005_product_sequence_permissions.sql',
 ];
 
 /**

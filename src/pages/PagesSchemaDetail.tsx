@@ -40,12 +40,12 @@ import {
   type RevalidationSecretStatus,
 } from '@/services/pageService';
 import { getSchemaSpecBundle } from '@/services/specService';
+import { archiveServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
 import type { SchemaSpecBundle } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
@@ -61,7 +61,6 @@ const PagesSchemaDetail: React.FC = () => {
   const { schemaSlug, tenantSlug } = useParams<{ schemaSlug: string; tenantSlug?: string }>();
   const navigate = useNavigate();
   const { language } = useTheme();
-  const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const canManageRevalidationSecret = permissions.hasRole('admin');
 
@@ -87,7 +86,7 @@ const PagesSchemaDetail: React.FC = () => {
       setSchema(schemaData);
 
       const [pagesData, specBundle] = await Promise.all([
-        getPagesBySchema(schemaData.id, activeTenantId),
+        getPagesBySchema(schemaData.id, schemaData.tenant_id ?? null),
         getSchemaSpecBundle(schemaData.api_slug).catch(() => null),
       ]);
       setPages(pagesData);
@@ -116,7 +115,7 @@ const PagesSchemaDetail: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTenantId, canManageRevalidationSecret, schemaSlug, tenantSlug]);
+  }, [canManageRevalidationSecret, schemaSlug, tenantSlug]);
 
   useEffect(() => {
     fetchData();
@@ -153,11 +152,22 @@ const PagesSchemaDetail: React.FC = () => {
     const currentPage = pages.find((page) => page.id === pageId) ?? null;
 
     try {
-      await updatePageStatus(pageId, status);
+      if (schema.entity_kind === 'service-product') {
+        if (!schema.tenant_id) throw new Error('Produktschema ohne Workspace-Zuordnung.');
+        const product = await getServiceProductByPage(pageId, schema.tenant_id);
+        if (status === 'archived') {
+          await archiveServiceProduct({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version });
+        } else {
+          await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
+        }
+      } else {
+        await updatePageStatus(pageId, status);
+      }
       setPages(prev => prev.map(p => p.id === pageId ? { ...p, status, is_draft: status === 'draft' } : p));
       toast.success(language === 'en' ? `Status changed to ${status}` : `Status geändert zu ${status}`);
 
-      if (status === 'published' && currentPage?.slug && schema.registration_status === 'registered') {
+      if (currentPage?.slug && schema.registration_status === 'registered'
+        && (status === 'published' || currentPage.status === 'published')) {
         try {
         const rev = await triggerRevalidation(schema.api_slug, currentPage.slug);
         if (rev.success) {
@@ -281,10 +291,16 @@ const PagesSchemaDetail: React.FC = () => {
             <Settings className="h-4 w-4 mr-2" />
             {language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen'}
           </Button>
-          <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
-            <Plus className="h-4 w-4 mr-2" />
-            {language === 'en' ? 'New Page' : 'Neue Seite'}
-          </Button>
+          {schema.entity_kind === 'service-product' ? (
+            <Button onClick={() => navigate('/products')}>
+              {language === 'en' ? 'Open products' : 'Produkte öffnen'}
+            </Button>
+          ) : schema.entity_kind === 'event' ? null : (
+            <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
+              <Plus className="h-4 w-4 mr-2" />
+              {language === 'en' ? 'New Page' : 'Neue Seite'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -657,13 +673,15 @@ const PagesSchemaDetail: React.FC = () => {
                                 {language === 'en' ? 'Archive' : 'Archivieren'}
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => setDeletePageId(page.id)}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              {language === 'en' ? 'Delete' : 'Löschen'}
-                            </DropdownMenuItem>
+                            {schema.entity_kind === 'page' && (
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => setDeletePageId(page.id)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                {language === 'en' ? 'Delete' : 'Löschen'}
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

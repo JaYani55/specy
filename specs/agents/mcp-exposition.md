@@ -120,9 +120,12 @@ Built-in tools remain available:
 - `specy_pages_schemas_list`, `specy_pages_schemas_get`
 - `specy_pages_schemas_list_pages`, `specy_pages_schemas_get_page`
 - `specy_pages_schemas_create_page`, `specy_pages_schemas_update_page`
-- `specy_pages_schemas_update_system_data`, `specy_pages_schemas_replace_frontend_targets`
+- `specy_pages_schemas_update_definition`, `specy_pages_schemas_update_system_data`, `specy_pages_schemas_replace_frontend_targets`
+- `specy_products_list`, `specy_products_create`, `specy_products_get`, `specy_products_update`, `specy_products_publish`, `specy_products_archive`
 
-The `specy_pages_schemas_*` tools form the hierarchy **`specy-pages > schemas`**. They expose schema inspection, schema-scoped page/content CRUD, and controlled system metadata repair. Page writes use the authenticated Supabase session/RLS; they cannot reassign schema or tenant ownership. `update_system_data` supports the non-secret schema fields `frontend_url`, `slug_structure`, and `revalidation_endpoint`; frontend URLs are checked against outbound URL restrictions and the schema's canonical URL policy. Revalidation secrets and registration codes are never exposed or accepted by that update operation. Target changes use the existing validated `PUT /api/schemas/:slug/frontend-targets` contract.
+The `specy_products_*` tools form the **`specy-products`** aggregate workflow and require an explicit tenant UUID. They share REST aggregate operations and never use generic page CRUD for product schemas. Event aggregate tools are not implemented.
+
+The `specy_pages_schemas_*` tools form the hierarchy **`specy-pages > schemas`**. They expose schema inspection, schema-scoped page/content CRUD, revision-checked schema definition updates, and controlled system metadata repair. Page writes use the authenticated Supabase session/RLS; they cannot reassign schema or tenant ownership. `update_definition` requires `expected_revision`, preserves the uploaded schema JSON, and reports conflicts instead of overwriting a newer definition. Generic create/update page tools reject schemas classified as `service-product` or `event`; those aggregate operations are not part of this release. `update_system_data` supports the non-secret schema fields `frontend_url`, `slug_structure`, and `revalidation_endpoint`; frontend URLs are checked against outbound URL restrictions and the schema's canonical URL policy. Revalidation secrets and registration codes are never exposed or accepted by that update operation. Target changes use the existing validated `PUT /api/schemas/:slug/frontend-targets` contract.
 
 Dynamic MCP registration now works as follows:
 
@@ -218,6 +221,8 @@ Recommended workflow for schema-driven frontend generation:
 Collection slots are suitable when a schema is rendered inside an existing landing page. A URL such as `/#posts` is a browser fragment and must not be registered. The frontend maps `placement_key` to its own component; Specy only stores and revalidates the server path `/`.
 
 Published content is read through `GET /api/schemas/:slug/pages` and optional detail content through `GET /api/schemas/:slug/pages/:pageSlug`. Those public delivery endpoints remain published-only and are not page-management APIs. Authenticated management tools `specy_pages_schemas_list_pages` and `specy_pages_schemas_get_page` can inspect records visible to the caller through RLS, including drafts, and `specy_pages_schemas_create_page` / `specy_pages_schemas_update_page` add or edit page records without normalizing arbitrary JSON keys.
+
+Schema discovery and schema specs include `entity_kind`, `definition_revision`, and non-executable `editor_config` metadata. Product/event classifications must be tenant-owned page collections. Existing schemas with pages cannot be reclassified or moved until an explicit conversion workflow exists.
 
 A mistaken schema frontend URL can be corrected without restarting the registration flow. Use `specy_pages_schemas_get` to inspect the current system metadata, then `specy_pages_schemas_update_system_data` with the corrected `frontend_url`. Supply `api_slug` when possible; a tenant-local schema slug is accepted only when it resolves to exactly one visible schema. The equivalent REST contract is authenticated `PATCH /api/schemas/:slug/system-data`; it accepts only `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. `frontend_url` is normalized to its origin and validated against URL safety and canonical frontend requirements. Schema content, page content, registration codes, and secret values are not part of this update.
 

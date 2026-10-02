@@ -7,6 +7,7 @@ import { Loader2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageBuilderData, PageSchema, PageRecord } from '@/types/pagebuilder';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { getServiceProductByPage, type ServiceProduct } from '@/services/productService';
 
 const PageBuilder: React.FC = () => {
   // Legacy route: /pagebuilder/:id
@@ -14,11 +15,13 @@ const PageBuilder: React.FC = () => {
   const navigate = useNavigate();
 
   const [initialData, setInitialData] = useState<PageBuilderData | null>(null);
+  const [schemaInitialData, setSchemaInitialData] = useState<Record<string, unknown> | null>(null);
   const [productName, setProductName] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [schema, setSchema] = useState<PageSchema | null>(null);
   const [pageRecord, setPageRecord] = useState<PageRecord | null>(null);
+  const [productAggregate, setProductAggregate] = useState<ServiceProduct | null>(null);
 
   const isSchemaMode = !!schemaSlug;
   const isEditMode = !!pageId;
@@ -27,6 +30,9 @@ const PageBuilder: React.FC = () => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
+        setProductAggregate(null);
+        setSchemaInitialData(null);
+        setPageRecord(null);
 
         if (isSchemaMode && schemaSlug) {
           // Schema-driven mode
@@ -37,9 +43,16 @@ const PageBuilder: React.FC = () => {
           if (isEditMode && pageId) {
             // Load existing page
             const page = await getPage(pageId);
+            if (page.schema_id !== schemaData.id || (page.tenant_id ?? null) !== (schemaData.tenant_id ?? null)) {
+              throw new Error('Die Seite gehört nicht zum ausgewählten Schema und Workspace.');
+            }
             setPageRecord(page);
-            setInitialData(page.content as unknown as PageBuilderData);
+            setSchemaInitialData(page.content);
             setProductName(page.name);
+            if (schemaData.entity_kind === 'service-product') {
+              if (!schemaData.tenant_id) throw new Error('Produktschema ohne Workspace-Zuordnung.');
+              setProductAggregate(await getServiceProductByPage(page.id, schemaData.tenant_id));
+            }
           }
         } else if (id) {
           // Legacy mode
@@ -94,6 +107,9 @@ const PageBuilder: React.FC = () => {
         productStatus={isSchemaMode ? pageRecord?.status : undefined}
         schema={schema ?? undefined}
         schemaSlug={schema?.api_slug ?? schemaSlug}
+        schemaInitialData={schemaInitialData}
+        productAggregateId={productAggregate?.id}
+        productVersion={productAggregate?.version}
       />
     </div>
   );

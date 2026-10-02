@@ -57,10 +57,10 @@ function validateJsonAgainstSchema(
   const obj = parsed as Record<string, unknown>;
   const knownKeys = new Set(fields.map((f) => f.name));
 
-  // 3. Warn about unknown keys
+  // Unknown keys are valid extension data and are kept during import.
   for (const key of Object.keys(obj)) {
     if (!knownKeys.has(key)) {
-      warnings.push(`Unbekanntes Feld "${key}" — wird ignoriert.`);
+      warnings.push(`Unbekanntes Feld "${key}" — bleibt als Erweiterungsdaten erhalten.`);
     }
   }
 
@@ -91,7 +91,11 @@ function checkFieldType(
   errors: string[],
   warnings: string[],
 ) {
-  if (val === null || val === undefined) return; // let empty values through
+  if (val === undefined) return;
+  if (val === null) {
+    if (!field.nullable) errors.push(`"${path}" erlaubt keinen null-Wert.`);
+    return;
+  }
 
   switch (field.type) {
     case 'string':
@@ -132,22 +136,14 @@ function checkFieldType(
       if (!Array.isArray(val)) {
         errors.push(`"${path}" erwartet ein Array (ContentBlock[]), erhalten: ${typeof val}.`);
       } else {
-        const validTypes = ['text', 'heading', 'image', 'quote', 'list', 'video'];
         (val as unknown[]).forEach((block, idx) => {
           if (typeof block !== 'object' || block === null || Array.isArray(block)) {
             errors.push(`"${path}[${idx}]" muss ein Objekt sein.`);
             return;
           }
           const b = block as Record<string, unknown>;
-          if (!b.id || typeof b.id !== 'string') {
-            warnings.push(
-              `"${path}[${idx}]" hat kein gültiges "id"-Feld — wird beim Import automatisch gesetzt.`,
-            );
-          }
-          if (!b.type || !validTypes.includes(b.type as string)) {
-            errors.push(
-              `"${path}[${idx}].type" muss einer sein von: ${validTypes.join(', ')}. Erhalten: "${b.type}".`,
-            );
+          if (typeof b.type !== 'string' || !b.type) {
+            errors.push(`"${path}[${idx}].type" muss als nicht-leerer Blocktyp angegeben werden.`);
           }
         });
       }
@@ -165,7 +161,7 @@ function checkFieldType(
           const codeBlock = block as Record<string, unknown>;
           if (!codeBlock.id || typeof codeBlock.id !== 'string') {
             warnings.push(
-              `"${path}[${idx}]" hat kein gültiges "id"-Feld — wird beim Import automatisch gesetzt.`,
+              `"${path}[${idx}]" hat kein gültiges "id"-Feld; der Import verändert oder ergänzt es nicht.`,
             );
           }
           if ('language' in codeBlock && typeof codeBlock.language !== 'string') {
@@ -222,37 +218,6 @@ function checkFieldType(
   }
 }
 
-/** Ensure every ContentBlock has a valid `id`. Mutates in place and returns the same array. */
-function ensureBlockIds(obj: Record<string, unknown>, fields: SchemaFieldDefinition[]) {
-  for (const field of fields) {
-    if (field.type === 'ContentBlock[]' && Array.isArray(obj[field.name])) {
-      obj[field.name] = (obj[field.name] as Record<string, unknown>[]).map((block) => ({
-        ...block,
-        id:
-          block.id ||
-          `${field.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      }));
-    }
-    if (field.type === 'CodeBlock[]' && Array.isArray(obj[field.name])) {
-      obj[field.name] = (obj[field.name] as Record<string, unknown>[]).map((block) => ({
-        ...block,
-        id:
-          block.id ||
-          `${field.name}-code-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      }));
-    }
-    if (field.type === 'object' && field.properties && typeof obj[field.name] === 'object') {
-      ensureBlockIds(obj[field.name] as Record<string, unknown>, field.properties);
-    }
-    if (field.type === 'array' && Array.isArray(obj[field.name]) && field.items?.type === 'object' && field.items.properties) {
-      obj[field.name] = (obj[field.name] as Record<string, unknown>[]).map((item) => {
-        ensureBlockIds(item, field.items!.properties!);
-        return item;
-      });
-    }
-  }
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface JsonImporterProps {
@@ -287,9 +252,7 @@ export const JsonImporter: React.FC<JsonImporterProps> = ({ fields, onImport }) 
 
   const handleImport = () => {
     if (!result?.parsed) return;
-    const data = structuredClone(result.parsed);
-    ensureBlockIds(data, fields);
-    onImport(data);
+    onImport(structuredClone(result.parsed));
     setOpen(false);
     setRaw('');
     setResult(null);
@@ -331,7 +294,7 @@ export const JsonImporter: React.FC<JsonImporterProps> = ({ fields, onImport }) 
             Import via JSON
           </DialogTitle>
           <DialogDescription>
-            Füge valides JSON ein, das dem Schema entspricht. Die Felder werden in den Editor geladen — du kannst sie danach noch bearbeiten.
+            Füge valides JSON ein. Bekannte Felder werden geprüft; unbekannte Schlüssel und Blockdaten bleiben unverändert erhalten.
           </DialogDescription>
         </DialogHeader>
 

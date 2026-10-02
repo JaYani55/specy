@@ -9,6 +9,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | [`agent-system-prompt.md`](agent-system-prompt.md) | The Specy agent system prompt |
 | [`oauth-unified-authentication.md`](oauth-unified-authentication.md) | Implementing OAuth in another microservice for unified authentication (client + resource-server guide, claim contract) |
 | [`frontend-integration-manifest.md`](frontend-integration-manifest.md) | Manifest contract for frontend integrations |
+| [`product-catalogue-integration.md`](product-catalogue-integration.md) | Product-schema setup, aggregate MCP/REST operations, and safe public product delivery |
 | [`frontend-prompt-specs.md`](frontend-prompt-specs.md) | Prompt specs served via `/api/specs` for frontends |
 | [`r2-file-storage.md`](r2-file-storage.md) | Unified R2 file & media storage: API vs. binding decision, auth, DB schema, key conventions |
 | [`plurapi-file-sync-integration.md`](plurapi-file-sync-integration.md) | Handoff spec for PluraPi: workspace file sync endpoints, auth, workflows, error recovery |

@@ -16,6 +16,7 @@ import mailRoute from './routes/mail';
 import objectsRoute from './routes/objects';
 import specsRoute from './routes/specs';
 import knowledgeBase from './routes/knowledgeBase';
+import products from './routes/products';
 import { mountPluginRoutes } from './plugin-routes';
 import { getRegisteredApiPluginHooks } from './plugin-hooks';
 import { agentLogger } from './middleware/agentLogger';
@@ -112,6 +113,7 @@ app.get('/', (c) => {
     timestamp: new Date().toISOString(),
     endpoints: {
       schemas: `${baseUrl}/api/schemas`,
+      products: `${baseUrl}/api/products`,
       specs: `${baseUrl}/api/specs`,
       objects: `${baseUrl}/api/objects`,
       plugins: `${baseUrl}/api/plugins`,
@@ -162,7 +164,14 @@ app.get('/.well-known/mcp.json', (c) => {
       'specy_pages_schemas_create_page',
       'specy_pages_schemas_update_page',
       'specy_pages_schemas_update_system_data',
+      'specy_pages_schemas_update_definition',
       'specy_pages_schemas_replace_frontend_targets',
+      'specy_products_list',
+      'specy_products_create',
+      'specy_products_get',
+      'specy_products_update',
+      'specy_products_publish',
+      'specy_products_archive',
     ],
     authentication: {
       required: true,
@@ -219,6 +228,7 @@ app.get('/oauth/callback', (c) => {
 app.route('/api/schemas/logs', logs);
 app.route('/api/schemas', schemas);
 app.route('/api/schemas', health);
+app.route('/api/products', products);
 app.route('/api/secrets', secretsRoute);
 app.route('/api/config', configRoute);
 app.route('/api/media', mediaRoute);

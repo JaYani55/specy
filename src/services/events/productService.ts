@@ -146,84 +146,17 @@ export const updateProduct = async (id: number, Product: Partial<Product>, tenan
 
 // Delete a Product
 export const deleteProduct = async (id: number, tenantId?: string | null): Promise<boolean> => {
-  try {
-    console.log(`Deleting Product with ID: ${id}`);
-    
-    // First check if the Product exists and get its product_page_id
-    let existingQuery = supabase
-      .from('mentorbooking_products')
-      .select('id, product_page_id')
-      .eq('id', id);
-    if (tenantId) existingQuery = existingQuery.eq('tenant_id', tenantId);
-    const { data: existingProduct, error: checkError } = await existingQuery.single();
-      
-    if (checkError) {
-      console.error('Error checking Product:', checkError);
-      throw new Error(`Failed to find Product: ${checkError.message}`);
-    }
-
-    if (!existingProduct) {
-      throw new Error(`Product with ID ${id} not found`);
-    }
-    
-    // If there's a linked product page, delete it first
-    if (existingProduct.product_page_id) {
-      console.log(`Deleting linked product page with ID: ${existingProduct.product_page_id}`);
-      let pageDeleteQuery = supabase
-        .from('pages')
-        .delete()
-        .eq('id', existingProduct.product_page_id);
-      if (tenantId) pageDeleteQuery = pageDeleteQuery.eq('tenant_id', tenantId);
-      const { error: pageDeleteError } = await pageDeleteQuery;
-      
-      if (pageDeleteError) {
-        console.error('Error deleting product page:', pageDeleteError);
-        // Continue with product deletion even if page deletion fails
-        console.warn('Continuing with product deletion despite page deletion error');
-      } else {
-        console.log('Product page deleted successfully');
-      }
-    }
-    
-    // Delete the Product from mentorbooking_products
-    let deleteQuery = supabase
-      .from('mentorbooking_products')
-      .delete()
-      .eq('id', id);
-    if (tenantId) deleteQuery = deleteQuery.eq('tenant_id', tenantId);
-    const { error } = await deleteQuery;
-
-    if (error) {
-      console.error('Error deleting Product:', error);
-      throw new Error(`Failed to delete Product: ${error.message}`);
-    }
-    
-    console.log('Product deleted successfully from mentorbooking_products');
-    
-    // Double-check deletion was successful
-    let afterQuery = supabase
-      .from('mentorbooking_products')
-      .select('id')
-      .eq('id', id);
-    if (tenantId) afterQuery = afterQuery.eq('tenant_id', tenantId);
-    const { data: checkAfter, error: afterError } = await afterQuery.maybeSingle();
-      
-    if (afterError) {
-      console.error('Error verifying deletion:', afterError);
-      // Continue anyway since the delete operation didn't report an error
-    }
-    
-    if (checkAfter) {
-      console.warn('Product still exists after deletion attempt');
-      return false;
-    }
-    
-    return true;
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-    console.error('Exception in deleteProduct:', e);
-    throw new Error(`Exception while deleting Product: ${errorMessage}`);
+  if (!tenantId) throw new Error('A workspace is required to delete a product.');
+  const { error } = await supabase.rpc('delete_mentorbooking_product_aggregate', {
+    target_product_id: id,
+    expected_tenant_id: tenantId,
+  });
+  if (error) {
+    // The database performs both deletes in one transaction and refuses to
+    // remove products still referenced by active or archived events.
+    throw new Error(`Product could not be deleted: ${error.message}`);
   }
+  return true;
 };
 
 export interface Mentor {

@@ -25,6 +25,8 @@ import { getSchemaSpecBundle } from '../lib/specRegistry';
 import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
+import { parseSchemaDefinitionPatch } from '../lib/schemaDefinition';
+import { parsePublicEntityIncludes, projectPublicProductRelations, type PublicPageRecord } from '../lib/publicEntityProjection';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
@@ -40,6 +42,9 @@ interface SchemaRow {
   integration_requirements: SchemaIntegrationRequirementsRecord | null;
   content_scope?: 'page-collection' | 'single-page' | null;
   page_target?: Record<string, unknown> | null;
+  entity_kind?: 'page' | 'service-product' | 'event';
+  definition_revision?: number;
+  editor_config?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +90,9 @@ function buildSpecSections(
     registration_code: string | null;
     slug_structure: string;
     integration_requirements: SchemaIntegrationRequirementsRecord | null;
+    entity_kind?: 'page' | 'service-product' | 'event';
+    definition_revision?: number;
+    editor_config?: Record<string, unknown>;
   },
   count: number,
   baseUrl: string,
@@ -120,6 +128,9 @@ function buildSpecSections(
     `Slug: ${schema.slug}`,
     `API slug: ${schema.api_slug}`,
     `Status: ${schema.registration_status}`,
+    `Entity kind: ${schema.entity_kind || 'page'}`,
+    `Definition revision: ${schema.definition_revision || 1}`,
+    `Editor hints: ${JSON.stringify(schema.editor_config || {})}`,
     `Default: ${schema.is_default ? 'Yes' : 'No'}`,
     `Pages using this schema: ${count ?? 0}`,
     schema.created_at ? `Created: ${schema.created_at}` : null,
@@ -599,7 +610,7 @@ schemas.get('/', async (c) => {
 
   const { data, error } = await supabase
     .from('page_schemas')
-    .select('slug, api_slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+    .select('slug, api_slug, name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, created_at, updated_at')
     .order('is_default', { ascending: false })
     .order('name', { ascending: true });
 
@@ -626,6 +637,9 @@ schemas.get('/', async (c) => {
       integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
       content_scope: s.content_scope || 'page-collection',
       page_target: s.page_target || null,
+      entity_kind: s.entity_kind || 'page',
+      definition_revision: s.definition_revision || 1,
+      editor_config: s.editor_config || {},
       spec_url: `${baseUrl}/api/schemas/${s.api_slug}/spec.txt`,
       spec_json_url: `${baseUrl}/api/schemas/${s.api_slug}/spec`,
       pages_url: `${baseUrl}/api/schemas/${s.api_slug}/pages`,
@@ -735,6 +749,107 @@ schemas.post('/templates/import', async (c) => {
   }
 });
 
+// PATCH /api/schemas/:slug/definition — update the JSON contract with revision checks.
+schemas.patch('/:slug/definition', async (c) => {
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  const parsed = parseSchemaDefinitionPatch(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const client = await createSupabaseClient(c.env, auth.token);
+  const { data: current, error: readError } = await client
+    .from('page_schemas')
+    .select('id, api_slug, tenant_id, content_scope, entity_kind, definition_revision')
+    .eq('api_slug', c.req.param('slug'))
+    .maybeSingle();
+  if (readError) return c.json({ error: readError.message }, 500);
+  if (!current) return c.json({ error: 'Schema not found.' }, 404);
+
+  if (parsed.patch.expected_revision !== current.definition_revision) {
+    return c.json({
+      error: 'Schema definition changed since it was loaded. Reload it before saving.',
+      code: 'definition_revision_conflict',
+      expected_revision: parsed.patch.expected_revision,
+      current_revision: current.definition_revision,
+    }, 409);
+  }
+
+  const entityKindChanges = parsed.patch.entity_kind !== undefined
+    && parsed.patch.entity_kind !== current.entity_kind;
+  const tenantChanges = parsed.patch.tenant_id !== undefined
+    && parsed.patch.tenant_id !== current.tenant_id;
+  const nextEntityKind = parsed.patch.entity_kind ?? current.entity_kind;
+  const nextTenantId = parsed.patch.tenant_id !== undefined ? parsed.patch.tenant_id : current.tenant_id;
+  const requestedScope = parsed.patch.integration_requirements?.content_scope;
+  if (requestedScope !== undefined && requestedScope !== 'page-collection' && requestedScope !== 'single-page') {
+    return c.json({ error: 'integration_requirements.content_scope must be page-collection or single-page.' }, 400);
+  }
+  const nextContentScope = requestedScope ?? current.content_scope;
+  if (nextEntityKind !== 'page' && nextTenantId == null) {
+    return c.json({ error: 'Product and event schemas must belong to a workspace.' }, 400);
+  }
+  if (nextEntityKind !== 'page' && nextContentScope !== 'page-collection') {
+    return c.json({ error: 'Product and event schemas must use page-collection content scope.' }, 400);
+  }
+  if (parsed.patch.slug) {
+    let slugQuery = client.from('page_schemas').select('id').eq('slug', parsed.patch.slug).neq('id', current.id).limit(1);
+    slugQuery = nextTenantId ? slugQuery.eq('tenant_id', nextTenantId) : slugQuery.is('tenant_id', null);
+    const { data: slugMatches, error: slugError } = await slugQuery;
+    if (slugError) return c.json({ error: slugError.message }, 500);
+    if (slugMatches?.length) return c.json({ error: 'That schema slug is already used in this workspace.', code: 'schema_slug_conflict' }, 409);
+  }
+
+  if (tenantChanges && current.entity_kind !== 'page') {
+    return c.json({ error: 'Product/event schemas cannot be moved between workspaces until an explicit aggregate migration is available.', code: 'schema_tenant_migration_required' }, 409);
+  }
+  if (entityKindChanges || tenantChanges) {
+    const { count, error: countError } = await client
+      .from('pages')
+      .select('id', { count: 'exact', head: true })
+      .eq('schema_id', current.id);
+    if (countError) return c.json({ error: countError.message }, 500);
+    if ((count ?? 0) > 0) {
+      return c.json({
+        error: entityKindChanges
+          ? 'Schemas with existing pages cannot be reclassified until an explicit conversion workflow is available.'
+          : 'Schemas with existing pages cannot be moved to another workspace until an explicit migration workflow is available.',
+        code: entityKindChanges ? 'schema_conversion_required' : 'schema_tenant_migration_required',
+        affected_pages: count,
+      }, 409);
+    }
+  }
+
+  const { expected_revision: _expectedRevision, ...update } = parsed.patch;
+  const updateData: Record<string, unknown> = { ...update };
+  if (requestedScope !== undefined) updateData.content_scope = requestedScope;
+  if (parsed.patch.integration_requirements && Object.prototype.hasOwnProperty.call(parsed.patch.integration_requirements, 'page_target')) {
+    updateData.page_target = parsed.patch.integration_requirements.page_target ?? null;
+  }
+  const { data: schema, error: updateError } = await client
+    .from('page_schemas')
+    .update(updateData)
+    .eq('id', current.id)
+    .eq('definition_revision', parsed.patch.expected_revision)
+    .select('id, slug, api_slug, tenant_id, name, schema, entity_kind, definition_revision, editor_config, content_scope, page_target, updated_at')
+    .maybeSingle();
+  if (updateError) {
+    if (updateError.code === '23505') return c.json({ error: 'That schema slug is already in use.', code: 'schema_slug_conflict' }, 409);
+    return c.json({ error: updateError.message }, 500);
+  }
+  if (!schema) {
+    return c.json({ error: 'Schema definition changed during save. Reload it and retry.', code: 'definition_revision_conflict' }, 409);
+  }
+
+  return c.json({ success: true, schema, changed_fields: Object.keys(updateData) });
+});
+
 // GET /api/schemas/:slug/spec.txt — LLM-ready plaintext schema specification
 schemas.get('/:slug/spec.txt', async (c) => {
   const slug = c.req.param('slug');
@@ -820,7 +935,7 @@ schemas.get('/:slug/manifest', async (c) => {
   const supabase = await createSupabaseAdminClient(c.env);
   const { data: schema, error } = await supabase
     .from('page_schemas')
-    .select('id, slug, api_slug, name, registration_status, content_scope, frontend_url, revalidation_endpoint, slug_structure, integration_requirements')
+    .select('id, slug, api_slug, name, registration_status, content_scope, entity_kind, frontend_url, revalidation_endpoint, slug_structure, integration_requirements')
     .eq('api_slug', slug)
     .single();
 
@@ -844,7 +959,7 @@ schemas.get('/:slug/pages', async (c) => {
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
-    .select('id, slug, api_slug, name, registration_status, slug_structure, integration_requirements')
+    .select('id, slug, api_slug, tenant_id, name, registration_status, entity_kind, slug_structure, integration_requirements')
     .eq('api_slug', slug)
     .single();
 
@@ -855,16 +970,35 @@ schemas.get('/:slug/pages', async (c) => {
   if ((schema as { registration_status?: string }).registration_status !== 'registered') {
     return c.json({ error: `Schema "${slug}" is not publicly registered` }, 404);
   }
+  const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
+  if (entityKind === 'event') return c.json({ error: 'Event public delivery is not enabled for this schema yet.' }, 404);
+  const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
+  if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
 
-  const { data, error } = await supabase
+  let pageQuery = supabase
     .from('pages')
     .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
     .eq('status', 'published')
     .order('updated_at', { ascending: false });
+  if (schema.tenant_id) pageQuery = pageQuery.eq('tenant_id', schema.tenant_id);
+  const { data, error } = await pageQuery;
 
-  if (error) {
-    return c.json({ error: error.message }, 500);
+  if (error) return c.json({ error: error.message }, 500);
+
+  let publicPages = (data ?? []) as PublicPageRecord[];
+  let productRefs: Array<{ id: string; page_id: string }> = [];
+  if (entityKind === 'service-product') {
+    const { data: productsData, error: productsError } = await supabase
+      .from('service_products')
+      .select('id, page_id')
+      .eq('tenant_id', schema.tenant_id)
+      .is('retired_at', null);
+    if (productsError) return c.json({ error: productsError.message }, 500);
+    productRefs = (productsData ?? []).filter((product): product is { id: string; page_id: string } => Boolean(product.page_id));
+    const activePageIds = new Set(productRefs.map((product) => product.page_id));
+    publicPages = publicPages.filter((page) => activePageIds.has(page.id));
+    if (includeResult.includeEntity) publicPages = projectPublicProductRelations(publicPages, productRefs);
   }
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, undefined, { publicRead: true });
@@ -875,11 +1009,13 @@ schemas.get('/:slug/pages', async (c) => {
       schema_slug: schema.slug,
       api_slug: schema.api_slug,
       name: schema.name,
+      entity_kind: entityKind,
+      supported_includes: entityKind === 'service-product' ? ['entity'] : [],
       slug_structure: schema.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
       targets,
     },
-    pages: (data ?? []) as PublishedSchemaPageRow[],
+    pages: publicPages,
   });
 });
 
@@ -892,26 +1028,47 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
 
   const { data: schema, error: schemaError } = await supabase
     .from('page_schemas')
-    .select('id, slug, api_slug, name, registration_status')
+    .select('id, slug, api_slug, tenant_id, name, registration_status, entity_kind')
     .eq('api_slug', slug)
     .single();
 
   if (schemaError || !schema || schema.registration_status !== 'registered') {
     return c.json({ error: `Schema "${slug}" not found` }, 404);
   }
+  const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
+  if (entityKind === 'event') return c.json({ error: 'Event public delivery is not enabled for this schema yet.' }, 404);
+  const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
+  if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
 
-  const { data: page, error } = await supabase
+  let pageQuery = supabase
     .from('pages')
     .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
     .eq('slug', pageSlug)
-    .eq('status', 'published')
-    .maybeSingle();
+    .eq('status', 'published');
+  if (schema.tenant_id) pageQuery = pageQuery.eq('tenant_id', schema.tenant_id);
+  const { data: page, error } = await pageQuery.maybeSingle();
 
   if (error) return c.json({ error: error.message }, 500);
   if (!page) return c.json({ error: 'Published page not found' }, 404);
 
-  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name }, page });
+  let deliveredPage: Record<string, unknown> = page as Record<string, unknown>;
+  if (entityKind === 'service-product') {
+    const { data: product, error: productError } = await supabase
+      .from('service_products')
+      .select('id, page_id')
+      .eq('tenant_id', schema.tenant_id)
+      .eq('page_id', page.id)
+      .is('retired_at', null)
+      .maybeSingle();
+    if (productError) return c.json({ error: productError.message }, 500);
+    if (!product) return c.json({ error: 'Published product not found' }, 404);
+    if (includeResult.includeEntity) {
+      deliveredPage = { ...page, relations: { entity: { kind: 'service-product', id: product.id } } };
+    }
+  }
+
+  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind }, page: deliveredPage });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback

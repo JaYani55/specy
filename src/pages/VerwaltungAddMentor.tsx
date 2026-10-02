@@ -20,8 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { fetchAccounts, type AccountUser } from '@/services/accountService';
 import { createStaffRecord, fetchStaffRecord, updateStaffRecord } from '@/services/staffRegistryService';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 
 interface StaffFormState {
@@ -32,7 +32,6 @@ interface StaffFormState {
   jobTitle: string;
   notes: string;
   status: 'active' | 'inactive' | 'archived';
-  accountUserId: string;
 }
 
 const VerwaltungAddMentor = () => {
@@ -42,12 +41,11 @@ const VerwaltungAddMentor = () => {
   const [searchParams] = useSearchParams();
   const editingStaffId = searchParams.get('edit');
   const isEditing = Boolean(editingStaffId);
-  const [accounts, setAccounts] = React.useState<AccountUser[]>([]);
+  const { activeTenantId } = useActiveWorkspace();
   const [tenantOptions, setTenantOptions] = React.useState<TenantOption[]>([]);
   const [tenantId, setTenantId] = React.useState('');
   const [tenantOptionsLoading, setTenantOptionsLoading] = React.useState(true);
   const [hasTenantAdminAccess, setHasTenantAdminAccess] = React.useState(false);
-  const [loadingAccounts, setLoadingAccounts] = React.useState(true);
   const [loadingStaff, setLoadingStaff] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [formState, setFormState] = React.useState<StaffFormState>({
@@ -58,7 +56,6 @@ const VerwaltungAddMentor = () => {
     jobTitle: '',
     notes: '',
     status: 'active',
-    accountUserId: 'none',
   });
 
   const canManageStaff = permissions.canManageMentors || hasTenantAdminAccess;
@@ -99,31 +96,14 @@ const VerwaltungAddMentor = () => {
   }, [tenantOptionsLoading, canManageStaff, navigate]);
 
   React.useEffect(() => {
-    const loadAccounts = async () => {
-      try {
-        setLoadingAccounts(true);
-        const data = await fetchAccounts();
-        setAccounts(data);
-      } catch (error) {
-        console.error('Error loading accounts:', error);
-        toast.error(language === 'en' ? 'Failed to load accounts' : 'Fehler beim Laden der Konten');
-      } finally {
-        setLoadingAccounts(false);
-      }
-    };
-
-    void loadAccounts();
-  }, [language]);
-
-  React.useEffect(() => {
-    if (!editingStaffId) {
+    if (!editingStaffId || tenantOptionsLoading || !activeTenantId) {
       return;
     }
 
     const loadStaff = async () => {
       try {
         setLoadingStaff(true);
-        const staff = await fetchStaffRecord(editingStaffId);
+        const staff = await fetchStaffRecord(editingStaffId, activeTenantId);
 
         if (!staff) {
           toast.error(language === 'en' ? 'Staff member not found' : 'Mitarbeiter nicht gefunden');
@@ -139,7 +119,6 @@ const VerwaltungAddMentor = () => {
           jobTitle: staff.jobTitle || '',
           notes: staff.notes || '',
           status: staff.status,
-          accountUserId: staff.accountUserId || 'none',
         });
         setTenantId((current) => staff.tenantId || pickInitialTenantId(manageableTenantOptions, current));
       } catch (error) {
@@ -152,7 +131,7 @@ const VerwaltungAddMentor = () => {
     };
 
     void loadStaff();
-  }, [editingStaffId, language, manageableTenantOptions, navigate]);
+  }, [editingStaffId, language, manageableTenantOptions, navigate, tenantOptionsLoading, activeTenantId]);
 
   React.useEffect(() => {
     if (editingStaffId) {
@@ -181,7 +160,6 @@ const VerwaltungAddMentor = () => {
       const payload = {
         displayName: formState.displayName.trim(),
         tenantId: tenantId || null,
-        accountUserId: formState.accountUserId === 'none' ? null : formState.accountUserId,
         email: formState.email.trim() || null,
         phone: formState.phone.trim() || null,
         avatarUrl: formState.avatarUrl.trim() || null,
@@ -264,32 +242,6 @@ const VerwaltungAddMentor = () => {
                 onChange={(e) => setFormState((prev) => ({ ...prev, displayName: e.target.value }))}
                 placeholder={language === 'en' ? 'e.g. Alex Example' : 'z. B. Alex Beispiel'}
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>{language === 'en' ? 'Link ServiceCRM account' : 'ServiceCRM-Konto verknüpfen'}</Label>
-              <Select
-                value={formState.accountUserId}
-                onValueChange={(value) => setFormState((prev) => ({ ...prev, accountUserId: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={language === 'en' ? 'Optional account' : 'Optionales Konto'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{language === 'en' ? 'No linked account' : 'Kein verknüpftes Konto'}</SelectItem>
-                  {accounts.map((account) => (
-                    <SelectItem key={account.user_id} value={account.user_id}>
-                      {account.Username || account.user_id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {loadingAccounts && (
-                <div className="text-xs text-muted-foreground flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {language === 'en' ? 'Loading available accounts...' : 'Verfügbare Konten werden geladen...'}
-                </div>
-              )}
             </div>
 
             <div className="space-y-2">

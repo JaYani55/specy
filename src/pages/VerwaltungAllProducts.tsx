@@ -17,11 +17,14 @@ import { Product } from "../services/events/productService";
 import { getIconByName } from "@/constants/pillaricons";
 import { DeleteProductDialog } from "@/components/events/DeleteProductDialog";
 import { Badge } from "@/components/ui/badge";
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { toast } from 'sonner';
 
 const VerwaltungManageProducts = () => {
   const { language, theme } = useTheme();
   const permissions = usePermissions();
   const navigate = useNavigate();
+  const { activeTenantId } = useActiveWorkspace();
   
   const [products, setProducts] = useState<Product[]>([]);
   const [mentors, setMentors] = useState<Mentor[]>([]);
@@ -569,10 +572,12 @@ const VerwaltungManageProducts = () => {
           onDelete={async () => {
             setIsDeleting(true);
             try {
-              await deleteProduct(productToDelete.id);
+              await deleteProduct(productToDelete.id, activeTenantId);
               setProducts(products.filter((p) => p.id !== productToDelete.id));
               setDeleteDialogOpen(false);
               setProductToDelete(null);
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : 'Produkt konnte nicht gelöscht werden.');
             } finally {
               setIsDeleting(false);
             }

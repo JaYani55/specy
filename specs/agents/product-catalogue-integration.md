@@ -1,0 +1,57 @@
+# Product catalogue integration
+
+## Status
+
+Service-product schema upload/classification and the first product aggregate workflow are implemented in core. This is not the full Products × Pages plan: event catalogue, staff presentation/identity migration, CRM, external invoice handoff, outbox delivery, and legacy product backfill are separate pending work.
+
+## Frontend-first setup
+
+1. Use OAuth 2.1 MCP and explicitly select a tenant. Never infer MCP workspace from browser state.
+2. Upload/create a tenant-owned page-collection schema with `entity_kind: "service-product"` and the developer's field map. The schema contract is arbitrary entry JSON plus separately stored `editor_config` hints.
+3. Read back the schema UUID, tenant-local slug, stable `api_slug`, `definition_revision`, editor config, and frontend targets. Definition changes use `specy_pages_schemas_update_definition` with the expected revision.
+4. Register the frontend using the existing target registration contract. A product schema's collection is a collection of individual product entries.
+5. Create a draft aggregate with `specy_products_create`, passing the schema's current `definition_revision`; do not use generic `create_page` for classified schemas.
+6. Edit the canonical page route through the schema-driven editor or `specy_products_update`, then explicitly publish with `specy_products_publish`.
+7. Fetch public published entries without credentials from `/api/schemas/:apiSlug/pages`. Request `?include=entity` only when the frontend needs the allow-listed product UUID reference.
+
+## MCP product tools
+
+All operations require the authenticated caller's permissions and an explicit workspace UUID:
+
+| Tool | Required inputs / effect |
+|---|---|
+| `specy_products_list` | `tenant_id`; lists active workspace products |
+| `specy_products_create` | `tenant_id`, `schema_id`, `expected_definition_revision`, `name`, optional `slug`/`content`/UUID `idempotency_key`; creates draft aggregate and canonical page atomically |
+| `specy_products_get` | product UUID `id`, `tenant_id` |
+| `specy_products_update` | UUID `id`, `tenant_id`, `expected_version`, `expected_definition_revision`, and replacement fields |
+| `specy_products_publish` | UUID `id`, `tenant_id`, `expected_version`, `expected_definition_revision`, `status: draft | published` |
+| `specy_products_archive` | UUID `id`, `tenant_id`, `expected_version`; retirement/archive is atomic |
+
+Schema definition `definition_revision` and product aggregate `version` are distinct concurrency tokens. Create, update, and publication check the schema revision; update/publication also check aggregate version. Idempotency protects aggregate creation; a repeated key with changed payload conflicts.
+
+Generic `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` reject product schemas. They remain available for ordinary `page` schemas. Event-classified schemas do not yet have aggregate tools.
+
+## Public page relation
+
+Default content is the exact stored JSONB payload. Only the optional named include adds an envelope:
+
+```json
+{
+  "content": { "any developer-defined keys": "unchanged" },
+  "relations": {
+    "entity": { "kind": "service-product", "id": "<opaque-product-uuid>" }
+  }
+}
+```
+
+No arbitrary table joins/includes are supported. Product delivery excludes retired products and non-published pages. No staff, CRM, internal compensation, approval arrays, account IDs, or customer fields are public.
+
+## Contract and safety limits
+
+- Product creation requires a tenant-owned service-product page-collection schema.
+- Product/page/tenant creation, update, publication, and retirement use transaction-backed database RPCs under caller RLS.
+- Update/publish requests validate content against the current schema and return field-path errors; clients must read the new aggregate version after a successful write.
+- Generic page deletion cannot cascade-delete a linked product. Hard deletion also fails while active/archive event references remain; archive is the normal retirement path.
+- Public manifest `supports_new_routes` is `null` until the connected deployment proves route generation/purge capability.
+
+See [`../features/service-products.md`](../features/service-products.md) for the full current core contract and its migration limits.

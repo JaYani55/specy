@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { validateSchemaSystemDataPatch } from '../api/lib/schemaSystemData.ts';
+import { parseSchemaDefinitionPatch } from '../api/lib/schemaDefinition.ts';
 import { normalizeSchemaPageSlug } from '../api/lib/schemaPages.ts';
 
 test('schema system data accepts a corrected frontend origin and canonicalizes its path', () => {
@@ -58,7 +59,14 @@ test('MCP page tools expose the specy-pages > schemas hierarchy and management a
     'specy_pages_schemas_create_page',
     'specy_pages_schemas_update_page',
     'specy_pages_schemas_update_system_data',
+    'specy_pages_schemas_update_definition',
     'specy_pages_schemas_replace_frontend_targets',
+    'specy_products_list',
+    'specy_products_create',
+    'specy_products_get',
+    'specy_products_update',
+    'specy_products_publish',
+    'specy_products_archive',
   ]) {
     assert.match(mcpSource, new RegExp(`'${toolName}'`));
   }
@@ -71,4 +79,22 @@ test('REST schema system data repair is authenticated and restricted to non-secr
   assert.match(routeSource, /schemas\.patch\('\/:slug\/system-data'/);
   assert.match(routeSource, /const auth = await requireAuthSession\(c\)/);
   assert.match(validationSource, /ALLOWED_KEYS = new Set\(\['frontend_url', 'slug_structure', 'revalidation_endpoint'\]\)/);
+});
+
+test('schema definition patch parser enforces revisioned classification metadata', () => {
+  const schema = { 'Hero Title': { type: 'string', custom_extension: { keep: true } } };
+  const result = parseSchemaDefinitionPatch({
+    expected_revision: 8,
+    schema,
+    entity_kind: 'service-product',
+    editor_config: { widgets: { 'Hero Title': 'textarea' } },
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.patch.expected_revision, 8);
+    assert.deepEqual(result.patch.schema, schema);
+    assert.equal(result.patch.entity_kind, 'service-product');
+  }
+  assert.equal(parseSchemaDefinitionPatch({ expected_revision: 0, schema: {} }).ok, false);
+  assert.equal(parseSchemaDefinitionPatch({ expected_revision: 1, entity_kind: 'product' }).ok, false);
 });

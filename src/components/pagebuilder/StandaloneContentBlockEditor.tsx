@@ -47,12 +47,14 @@ const BLOCK_ICONS: Record<string, string> = {
 
 interface StandaloneContentBlockEditorProps {
   block: ContentBlock;
+  sortableId?: string;
   onChange: (block: ContentBlock) => void;
   onRemove: () => void;
 }
 
 export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditorProps> = ({
   block,
+  sortableId,
   onChange,
   onRemove,
 }) => {
@@ -64,7 +66,7 @@ export const StandaloneContentBlockEditor: React.FC<StandaloneContentBlockEditor
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: block.id });
+  } = useSortable({ id: sortableId ?? block.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),

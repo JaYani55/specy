@@ -99,6 +99,8 @@ The browser URL `https://site.example/#posts` is not a server route. The fragmen
 | `created_at` | `timestamptz` | `DEFAULT now()` |
 | `updated_at` | `timestamptz` | `DEFAULT now()` (auto-updated via trigger) |
 
+Current additive schema metadata (see [`../features/schema-contracts.md`](../features/schema-contracts.md)): `entity_kind` (`page` by default, `service-product`, or `event`), positive `definition_revision`, and non-executable `editor_config`. These fields are separate from developer schema/content JSON.
+
 Tenant-owned schema slugs are scoped by `(tenant_id, slug)`, so different workspaces may each use names such as `blog`. CMS routes use `/pages/schema/:tenantSlug/:schemaSlug`; existing one-segment CMS links continue to resolve through `api_slug`.
 
 All existing `/api/schemas/:slug/...` endpoints remain compatible: the path `slug` is the stable `api_slug` (for every pre-existing schema, it is exactly the old slug). Discovery responses expose `slug` (legacy/API identifier), `schema_slug` (tenant-local name), and `api_slug`. Use `api_slug` in API URLs and the tenant-qualified route for CMS navigation.
@@ -182,11 +184,12 @@ Each field in a schema's `schema` JSONB column serialises a `SchemaFieldDefiniti
 ```json
 {
   "field_name": {
-    "type": "string | number | boolean | array | object | ContentBlock[] | CodeBlock[]",
+    "type": "string | number | boolean | array | object | ContentBlock[] | CodeBlock[] | media",
     "description": "Help text shown below the field in the Page Builder",
     "placeholder": "Input placeholder shown inside the input in the Page Builder",
     "meta_description": "Developer / LLM context — NOT rendered in Page Builder, only exposed via API and spec.txt",
     "required": true,
+    "nullable": false,
     "enum": ["option1", "option2"],
     "properties": { /* nested fields for type=object */ },
     "items": { /* item field definition for type=array */ }
@@ -199,11 +202,12 @@ Each field in a schema's `schema` JSONB column serialises a `SchemaFieldDefiniti
 ```ts
 interface SchemaFieldDefinition {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'CodeBlock[]';
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'CodeBlock[]' | 'media';
   description?: string;       // shown in PageBuilder below the field
   placeholder?: string;       // shown inside the input in PageBuilder
   meta_description?: string;  // developer/LLM context, API-only
   required?: boolean;
+  nullable?: boolean;
   properties?: SchemaFieldDefinition[];
   items?: SchemaFieldDefinition;
   enum?: string[];
@@ -281,7 +285,7 @@ Authenticated schema editors can atomically replace target metadata. The endpoin
 Authenticated schema editors can correct non-secret integration fields: `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. The endpoint validates outbound/canonical frontend URLs and route/path shapes, and does not change schema JSON, page content, registration codes, or revalidation secrets. This supports repairing a wrong frontend URL without issuing another registration code.
 
 ### `GET /api/schemas/:slug/pages`
-Returns published pages through the schema-scoped Worker API after registration. The response includes enabled target metadata and returns `content` as stored JSONB without field filtering or key normalization.
+Returns published pages through the schema-scoped Worker API after registration. Ordinary page content is returned unchanged. Product schemas return only active product-owned published pages; `?include=entity` optionally adds the allow-listed product UUID under `relations.entity`, never inside `content`.
 
 ### `GET /api/schemas/:slug/pages/:pageSlug`
 Returns one published page belonging to the resolved schema for optional detail-page rendering.
@@ -293,7 +297,7 @@ Server-side domain health check. Returns `{ status: 'online' | 'offline', latenc
 Triggers target-aware ISR revalidation on the registered frontend. Collection targets invalidate their `host_path`, while detail targets replace `:slug` with the page slug. Fragments such as `#posts` are never sent to the frontend server.
 
 ### `/mcp`
-MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT. Authenticated page-management tools are organized under the `specy-pages > schemas` hierarchy (`specy_pages_schemas_*`): list/get schemas, list/get pages, create/update page content and system fields, repair schema integration metadata, and replace frontend targets. Page reads and writes remain constrained by Supabase RLS.
+MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT. Authenticated page-management tools are organized under the `specy-pages > schemas` hierarchy (`specy_pages_schemas_*`): list/get schemas, list/get pages, create/update ordinary page content and system fields, revision-checked schema definition updates, repair schema integration metadata, and replace frontend targets. Page reads and writes remain constrained by Supabase RLS. Generic page create/update rejects `service-product` and `event` schemas until entity-aware aggregate services are available.
 
 ### `GET /api/forms`
 Returns the published forms index for CMS and agent use.
@@ -403,8 +407,8 @@ Located at `src/components/pagebuilder/SchemaPageBuilderForm.tsx`.
 **Key behaviours:**
 - Parses `schema.schema` JSONB into `SchemaFieldDefinition[]` via `parseSchemaFields()`
 - Splits fields into `requiredFields` (always shown) and `optionalFields` (added one-by-one via pill buttons)
-- On edit, automatically activates optional fields that have non-empty `initialData`
-- Builds initial form state via `buildInitialData()` with type-appropriate empty defaults
+- On edit, activates optional fields by stored key presence, so false/zero/null/empty values remain active
+- Initializes known field defaults while overlaying original content JSON without type coercion or key filtering
 - Saves via `savePage()`, then triggers `triggerRevalidation()` if schema is registered
 - Shows ISR result (success/failure, revalidated slug) after save
 - Preview URL built from `schema.frontend_url` + `slug_structure`
@@ -415,7 +419,7 @@ Located at `src/components/pagebuilder/SchemaPageBuilderForm.tsx`.
 
 | Field type | Rendered as |
 |---|---|
-| `ContentBlock[]` | `ContentBlocksEditor` (inline block list with add dropdown) |
+| `ContentBlock[]` | `ContentBlocksEditor` (inline block list; unsupported/malformed blocks remain unchanged JSON) |
 | `CodeBlock[]` | Structured code variants editor with language, pattern, frameworks, and code textarea |
 | `string` + `enum` | `Select` |
 | `string` (long-text heuristic) | `Textarea` |
@@ -477,7 +481,7 @@ Long-text heuristic: field name or description contains `description`, `content`
 
 Located at `src/components/pagebuilder/StandaloneContentBlockEditor.tsx`.
 
-Standalone version of the content block editor with no react-hook-form dependency. Used by `SchemaPageBuilderForm` for `ContentBlock[]` fields. Handles all 6 block types with a `patch()` helper pattern.
+Standalone version of the content block editor with no react-hook-form dependency. Used by `SchemaPageBuilderForm` for `ContentBlock[]` fields. Handles built-in text, heading, image, quote, list, video, form, and audio blocks with a `patch()` helper pattern; custom/invalid blocks are retained without coercion.
 
 ### Legacy Mode: `PageBuilderForm`
 
@@ -500,7 +504,7 @@ Provides UI to define schema fields. Each field supports:
 | `meta_description` | `Textarea` | Developer/LLM context, API-only |
 | `required` | `Checkbox` | Shown as required in PageBuilder |
 
-Serialisation: `fieldsToJsonSchema()` converts the field array to the JSONB format stored in Supabase. Deserialisation: `jsonSchemaToFields()` parses the stored JSONB back into the editor. Both functions include `placeholder`, `required`, and `meta_description`.
+Serialisation: `fieldsToJsonSchema()` converts the field array to the JSONB format stored in Supabase while carrying original per-field attributes through unrelated visual edits. Deserialisation: `jsonSchemaToFields()` parses the stored JSONB back into the editor. Unknown field attributes are retained; supported visual edits update known attributes in place.
 
 ---
 

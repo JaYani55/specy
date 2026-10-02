@@ -1,4 +1,4 @@
-import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail } from "lucide-react"
+import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail, Package } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -73,6 +73,11 @@ export function AppSidebar() {
 
   if (canAccessVerwaltung) {
     items.push(
+      {
+        title: language === "en" ? "Products" : "Produkte",
+        url: "/products",
+        icon: Package,
+      },
       {
         title: language === "en" ? "Pages" : "Seiten",
         url: "/pages",

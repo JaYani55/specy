@@ -133,6 +133,7 @@ export type SchemaPageDiscoveryMode = 'schema-scoped-api' | 'supabase-by-schema'
 
 export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
 export type SchemaContentScope = 'page-collection' | 'single-page';
+export type SchemaEntityKind = 'page' | 'service-product' | 'event';
 
 /**
  * Describes where a registered frontend consumes a schema's published pages.
@@ -233,6 +234,9 @@ export interface PageSchema {
   frontend_targets?: SchemaFrontendTarget[];
   content_scope?: SchemaContentScope;
   page_target?: SchemaPageTarget | null;
+  entity_kind?: SchemaEntityKind;
+  definition_revision?: number;
+  editor_config?: Record<string, unknown>;
 }
 
 export interface PageSchemaTemplate {
@@ -291,6 +295,7 @@ export interface SchemaFieldDefinition {
    */
   meta_description?: string;
   required?: boolean;
+  nullable?: boolean;
   properties?: SchemaFieldDefinition[];
   items?: SchemaFieldDefinition;
   enum?: string[];

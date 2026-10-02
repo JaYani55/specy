@@ -385,8 +385,12 @@ Use these authenticated tools for inspecting and maintaining existing page schem
 | `specy_pages_schemas_get_page` | Read the full content and system fields for a page UUID. |
 | `specy_pages_schemas_create_page` | Add page content; defaults to draft and refuses extra records for `single-page` schemas. |
 | `specy_pages_schemas_update_page` | Replace `content` and/or update page-owned fields `name`, `slug`, `status`, and `domain_url`. |
+| `specy_pages_schemas_update_definition` | Update schema definitions/editor hints/classification using the expected `definition_revision`; existing page entries are never rewritten. |
+| `specy_products_create/get/update/publish/archive` | Create and manage service-product aggregates using explicit tenant UUIDs and expected aggregate versions. |
 | `specy_pages_schemas_update_system_data` | Repair schema integration fields, including `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. |
 | `specy_pages_schemas_replace_frontend_targets` | Replace validated collection/detail targets using server paths. |
+
+For schema definition changes, read `definition_revision` with `specy_pages_schemas_get`, then call `specy_pages_schemas_update_definition` with that expected revision. A stale revision returns a conflict and requires reloading; it is not safe to retry with a blind overwrite. Product/event-classified schemas cannot use generic page create/update tools in this release and must not be reclassified while pages exist.
 
 For a wrong frontend URL, first call `specy_pages_schemas_list` and `specy_pages_schemas_get`, confirm the intended canonical frontend with the user, then call `specy_pages_schemas_update_system_data` with the stable schema `api_slug` (preferred) or a tenant-local schema slug if it resolves to exactly one schema visible to the caller, plus the corrected `frontend_url`. This authenticated update does not require a new registration code and does not alter page content, schema JSON, or the revalidation secret. If URL policy rejects the correction, inspect `integration_requirements`; do not bypass its canonical URL rule. For REST clients, the matching endpoint is `PATCH /api/schemas/:slug/system-data` with a bearer access token. `PUT /api/schemas/:slug/frontend-targets` replaces the target registry. REST `GET /api/schemas/:slug/pages` and its detail route are published-content delivery endpoints; use the authenticated MCP tools for management of drafts and page content.
 

@@ -42,12 +42,20 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { savePage, triggerRevalidation } from '@/services/pageService';
+import { setServiceProductPublication, updateServiceProduct, type ServiceProduct } from '@/services/productService';
 import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
 import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
 import { ImageUploader } from './ImageUploader';
 import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import {
+  buildSchemaContent,
+  fieldValueTypeConflict,
+  hasOwnKey,
+  initializeSchemaContent,
+  mergeSchemaContent,
+} from '@/lib/schemaContent';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -73,6 +81,27 @@ const createDefaultBlock = (type: ContentBlock['type'], prefix: string): Content
     case 'list':    return { id, type: 'list', style: 'unordered', items: [] };
     case 'video':   return { id, type: 'video', src: '', provider: 'youtube' };
     case 'form':    return { id, type: 'form', form_id: '', form_slug: '', form_name: '' };
+    case 'audio':   return { id, type: 'audio', src: '', caption: '' };
+  }
+};
+
+const stableBlockId = (block: ContentBlock, index: number): string =>
+  typeof block?.id === 'string' && block.id ? block.id : `unidentified-${index}`;
+
+const isEditableContentBlock = (value: unknown): value is ContentBlock => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const block = value as Record<string, unknown>;
+  if (typeof block.id !== 'string' || typeof block.type !== 'string') return false;
+  switch (block.type) {
+    case 'text': return typeof block.content === 'string';
+    case 'heading': return typeof block.content === 'string' && typeof block.level === 'string';
+    case 'image': return typeof block.src === 'string' && typeof block.alt === 'string';
+    case 'quote': return typeof block.text === 'string';
+    case 'list': return (block.style === 'ordered' || block.style === 'unordered') && Array.isArray(block.items) && block.items.every((item) => typeof item === 'string');
+    case 'video': return typeof block.src === 'string' && typeof block.provider === 'string';
+    case 'form': return typeof block.form_id === 'string' && typeof block.form_slug === 'string' && typeof block.form_name === 'string';
+    case 'audio': return typeof block.src === 'string';
+    default: return false;
   }
 };
 
@@ -96,6 +125,7 @@ const createSchemaFieldDefinition = (
     placeholder: (value.placeholder as string) || undefined,
     meta_description: (value.meta_description as string) || undefined,
     required: (value.required as boolean) || false,
+    nullable: value.nullable === true,
   };
 
   if (value.enum) {
@@ -135,65 +165,6 @@ const buildInitialData = (fields: SchemaFieldDefinition[]): Record<string, unkno
   return defaults;
 };
 
-/** Normalize untrusted JSON loaded from pages.content before rendering editors. */
-const normalizeFieldValue = (field: SchemaFieldDefinition, value: unknown): unknown => {
-  if (field.type === 'media') {
-    if (typeof value === 'string') return value;
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      const media = value as Record<string, unknown>;
-      for (const key of ['src', 'url', 'href']) {
-        if (typeof media[key] === 'string') return media[key];
-      }
-    }
-    return '';
-  }
-  if (field.type === 'string') {
-    return typeof value === 'string' ? value : '';
-  }
-  if (field.type === 'boolean') return typeof value === 'boolean' ? value : false;
-  if (field.type === 'number') return typeof value === 'number' ? value : 0;
-  if (field.type === 'ContentBlock[]') {
-    if (!Array.isArray(value)) return [];
-    return value.filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === 'object')
-      .map((block) => {
-        const type = typeof block.type === 'string' ? block.type : 'text';
-        const normalized: Record<string, unknown> = { ...block, type };
-        for (const key of ['content', 'text', 'src', 'alt', 'caption', 'author', 'source', 'form_id', 'form_slug', 'form_name', 'share_slug', 'objectKey']) {
-          if (typeof normalized[key] === 'string') continue;
-          if (key === 'src' && normalized[key] && typeof normalized[key] === 'object' && !Array.isArray(normalized[key])) {
-            const source = normalized[key] as Record<string, unknown>;
-            normalized[key] = typeof source.src === 'string'
-              ? source.src
-              : typeof source.url === 'string' ? source.url : '';
-          } else if (key in normalized) {
-            normalized[key] = '';
-          }
-        }
-        if (type === 'list') {
-          normalized.items = Array.isArray(normalized.items)
-            ? normalized.items.filter((item): item is string => typeof item === 'string')
-            : [];
-        }
-        return normalized;
-      });
-  }
-  if (field.type === 'CodeBlock[]' || field.type === 'array') {
-    if (!Array.isArray(value)) return [];
-    return field.items ? value.map((item) => normalizeFieldValue(field.items!, item)) : value;
-  }
-  if (field.type === 'object') {
-    const source = value && typeof value === 'object' && !Array.isArray(value)
-      ? value as Record<string, unknown> : {};
-    return Object.fromEntries((field.properties || []).map((property) => [
-      property.name,
-      normalizeFieldValue(property, source[property.name]),
-    ]));
-  }
-  return value;
-};
-
-const normalizeFormData = (fields: SchemaFieldDefinition[], data: Record<string, unknown>): Record<string, unknown> =>
-  Object.fromEntries(fields.map((field) => [field.name, normalizeFieldValue(field, data[field.name])]));
 
 // ─── ContentBlocks Editor ─────────────────────────────────────────────────────
 
@@ -218,8 +189,8 @@ const ContentBlocksEditor: React.FC<ContentBlocksEditorProps> = ({ fieldName, bl
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = blocks.findIndex((b) => b.id === active.id);
-      const newIndex = blocks.findIndex((b) => b.id === over.id);
+      const oldIndex = blocks.findIndex((block, index) => stableBlockId(block, index) === active.id);
+      const newIndex = blocks.findIndex((block, index) => stableBlockId(block, index) === over.id);
       if (oldIndex !== -1 && newIndex !== -1) {
         onChange(arrayMove(blocks, oldIndex, newIndex));
       }
@@ -244,16 +215,27 @@ const ContentBlocksEditor: React.FC<ContentBlocksEditorProps> = ({ fieldName, bl
         modifiers={[restrictToVerticalAxis, restrictToParentElement]}
       >
         <SortableContext
-          items={blocks.map((b) => b.id)}
+          items={blocks.map((block, index) => stableBlockId(block, index))}
           strategy={verticalListSortingStrategy}
         >
-          {blocks.map((block, idx) => (
+          {blocks.map((block, idx) => isEditableContentBlock(block) ? (
             <StandaloneContentBlockEditor
-              key={block.id}
+              key={stableBlockId(block, idx)}
+              sortableId={stableBlockId(block, idx)}
               block={block}
-              onChange={(b) => updateBlock(idx, b)}
+              onChange={(updated) => updateBlock(idx, updated)}
               onRemove={() => onChange(blocks.filter((_, i) => i !== idx))}
             />
+          ) : (
+            <Card key={stableBlockId(block, idx)} className="border-amber-500/60 bg-amber-50/40 dark:bg-amber-950/10">
+              <CardContent className="space-y-3 p-4">
+                <div className="text-sm font-medium">Unbekannter oder fehlerhafter Block bleibt unverändert erhalten.</div>
+                <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(block, null, 2)}</pre>
+                <Button type="button" variant="ghost" size="sm" onClick={() => onChange(blocks.filter((_, i) => i !== idx))}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Entfernen
+                </Button>
+              </CardContent>
+            </Card>
           ))}
         </SortableContext>
       </DndContext>
@@ -267,7 +249,7 @@ const ContentBlocksEditor: React.FC<ContentBlocksEditorProps> = ({ fieldName, bl
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56">
-          {(['text', 'heading', 'image', 'quote', 'list', 'video', 'form'] as ContentBlock['type'][]).map((t) => (
+          {(['text', 'heading', 'image', 'quote', 'list', 'video', 'form', 'audio'] as ContentBlock['type'][]).map((t) => (
             <DropdownMenuItem key={t} onClick={() => addBlock(t)}>
               {t === 'text'    && '📝 '}
               {t === 'heading' && '📋 '}
@@ -276,6 +258,7 @@ const ContentBlocksEditor: React.FC<ContentBlocksEditorProps> = ({ fieldName, bl
               {t === 'list'    && '📄 '}
               {t === 'video'   && '🎥 '}
               {t === 'form'    && '🧾 '}
+              {t === 'audio'   && '🎵 '}
               {t.charAt(0).toUpperCase() + t.slice(1)} Block
             </DropdownMenuItem>
           ))}
@@ -495,6 +478,26 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
   onChange,
   depth = 0,
 }) => {
+  // media → ImageUploader
+  if (fieldValueTypeConflict(field, value)) {
+    let rawValue: string;
+    try {
+      rawValue = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      rawValue = String(value);
+    }
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription className="space-y-2">
+          <p>Der gespeicherte Wert für „{field.name}“ passt nicht zum Feldtyp „{field.type}“ und wurde unverändert beibehalten.</p>
+          <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{rawValue}</pre>
+          <p>Zum Reparieren kann ein korrigierter JSON-Wert importiert werden.</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   // media → ImageUploader
   if (field.type === 'media') {
     const nameLower = field.name.toLowerCase();
@@ -750,6 +753,8 @@ interface SchemaPageBuilderFormProps {
   initialName?: string;
   initialSlug?: string;
   initialStatus?: PageRecord['status'];
+  productAggregateId?: string;
+  productVersion?: number;
 }
 
 export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
@@ -760,6 +765,8 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   initialName,
   initialSlug,
   initialStatus,
+  productAggregateId,
+  productVersion: initialProductVersion,
 }) => {
   const fields = parseSchemaFields(schema.schema as Record<string, unknown>);
   const requiredFields = fields.filter((f) => f.required);
@@ -770,30 +777,26 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   const [pageSlug, setPageSlug]           = useState(() => (initialSlug || (initialName ? generateSlug(initialName) : '')));
   const [slugEdited, setSlugEdited]       = useState(false);
   const [formData, setFormData]           = useState<Record<string, unknown>>(() =>
-    initialData ? { ...buildInitialData(fields), ...normalizeFormData(fields, initialData) } : buildInitialData(fields)
+    initializeSchemaContent(buildInitialData(fields), initialData)
   );
 
   // Track which optional fields are active.
   // On edit, activate any optional field that has non-empty initial data.
   const [activeOptional, setActiveOptional] = useState<Set<string>>(() => {
     if (!initialData) return new Set();
-    const active = new Set<string>();
-    for (const f of optionalFields) {
-      const v = (initialData as Record<string, unknown>)[f.name];
-      const isEmpty =
-        v === undefined || v === null || v === '' || v === false || v === 0 ||
-        (Array.isArray(v) && v.length === 0) ||
-        (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0);
-      if (!isEmpty) active.add(f.name);
-    }
-    return active;
+    return new Set(optionalFields
+      .filter((field) => hasOwnKey(initialData, field.name))
+      .map((field) => field.name));
   });
+  const [removedOptional, setRemovedOptional] = useState<Set<string>>(() => new Set());
 
   // ── Save state
   const navigate = useNavigate();
   const { user } = useAuth();
   const [isSaving, setIsSaving]                 = useState(false);
   const [savedSlug, setSavedSlug]               = useState<string | null>(null);
+  const [aggregateVersion, setAggregateVersion] = useState(initialProductVersion);
+  const [publicationStatus, setPublicationStatus] = useState(initialStatus ?? 'draft');
   const [revalResult, setRevalResult]           = useState<{ success: boolean; message: string } | null>(null);
 
   // ── Helpers
@@ -811,8 +814,14 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
     setSlugEdited(true);
   };
 
-  const addOptionalField = (fieldName: string) =>
+  const addOptionalField = (fieldName: string) => {
+    setRemovedOptional((prev) => {
+      const next = new Set(prev);
+      next.delete(fieldName);
+      return next;
+    });
     setActiveOptional((prev) => new Set([...prev, fieldName]));
+  };
 
   const removeOptionalField = (fieldName: string) => {
     setActiveOptional((prev) => {
@@ -820,40 +829,33 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
       next.delete(fieldName);
       return next;
     });
-    // Reset the field value to its empty default
-    const f = optionalFields.find((x) => x.name === fieldName);
-    if (f) {
-      let empty: unknown = '';
-      if (f.type === 'ContentBlock[]' || f.type === 'CodeBlock[]' || f.type === 'array') empty = [];
-      else if (f.type === 'object') empty = {};
-      else if (f.type === 'boolean') empty = false;
-      else if (f.type === 'number') empty = 0;
-      updateField(fieldName, empty);
-    }
+    setRemovedOptional((prev) => new Set([...prev, fieldName]));
+    setFormData((prev) => {
+      const next = { ...prev };
+      delete next[fieldName];
+      return next;
+    });
   };
 
   const inactiveOptional = optionalFields.filter((f) => !activeOptional.has(f.name));
 
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
-    const normalizedData = normalizeFormData(fields, data);
-    setFormData((prev) => ({ ...prev, ...normalizedData }));
-    // Activate any optional field that received non-empty data
+    setFormData((prev) => mergeSchemaContent(prev, data));
     const newActive = new Set(activeOptional);
-    for (const f of optionalFields) {
-      if (!(f.name in normalizedData)) continue;
-      const v = normalizedData[f.name];
-      const isEmpty =
-        v === undefined || v === null || v === '' || v === false || v === 0 ||
-        (Array.isArray(v) && v.length === 0) ||
-        (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0);
-      if (!isEmpty) newActive.add(f.name);
+    for (const field of optionalFields) {
+      if (hasOwnKey(data, field.name)) newActive.add(field.name);
     }
     setActiveOptional(newActive);
+    setRemovedOptional((prev) => {
+      const next = new Set(prev);
+      for (const fieldName of Object.keys(data)) next.delete(fieldName);
+      return next;
+    });
   }, [activeOptional, fields, optionalFields]);
 
   // ── Save handler
-  const handleSave = async () => {
+  const handleSave = async (statusAfterSave?: 'draft' | 'published') => {
     if (!pageName.trim()) {
       toast.error('Seitenname ist erforderlich.');
       return;
@@ -861,17 +863,41 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
     setIsSaving(true);
     setRevalResult(null);
     try {
-      // Build content — only include active fields
-      const content: Record<string, unknown> = {};
-      for (const f of requiredFields) {
-        content[f.name] = formData[f.name];
-      }
-      for (const f of optionalFields) {
-        if (activeOptional.has(f.name)) content[f.name] = formData[f.name];
-      }
+      const content = buildSchemaContent(initialData, formData, fields, activeOptional, removedOptional);
 
-      const result = await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
+      let updatedProduct: ServiceProduct | null = null;
+      const result = schema.entity_kind === 'service-product'
+        ? await (async () => {
+            if (!productAggregateId || !aggregateVersion || !schema.tenant_id) {
+              throw new Error('Produktaggregate konnten nicht geladen werden. Bitte Seite neu laden.');
+            }
+            const product = await updateServiceProduct({
+              id: productAggregateId,
+              tenant_id: schema.tenant_id,
+              expected_version: aggregateVersion,
+              expected_definition_revision: schema.definition_revision ?? 1,
+              name: pageName,
+              slug: pageSlug,
+              content,
+            });
+            updatedProduct = product;
+            setAggregateVersion(product.version);
+            return { id: product.page_id, slug: product.slug || pageSlug };
+          })()
+        : await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
       setSavedSlug(result.slug);
+
+      if (schema.entity_kind === 'service-product' && statusAfterSave && updatedProduct && schema.tenant_id) {
+        updatedProduct = await setServiceProductPublication({
+          id: updatedProduct.id,
+          tenant_id: schema.tenant_id,
+          expected_version: updatedProduct.version,
+          expected_definition_revision: schema.definition_revision ?? 1,
+          status: statusAfterSave,
+        });
+        setAggregateVersion(updatedProduct.version);
+        setPublicationStatus(statusAfterSave);
+      }
       // Trigger afterCreate hook for KB auto sync
       if (!pageId && result.id) {
         try {
@@ -898,7 +924,9 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
 
       toast.success(`Seite "${pageName}" gespeichert als /${result.slug}`);
 
-      if (schema.registration_status === 'registered' && initialStatus === 'published' && result.slug) {
+      if (schema.registration_status === 'registered'
+        && (publicationStatus === 'published' || statusAfterSave === 'published')
+        && result.slug) {
         try {
           const rev = await triggerRevalidation(schemaSlug, result.slug);
           setRevalResult(rev);
@@ -1166,12 +1194,19 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
           </p>
             <JsonImporter fields={fields} onImport={handleJsonImport} />
           </div>
+          <div className="flex items-center gap-2">
+          {schema.entity_kind === 'service-product' && publicationStatus === 'published' && (
+            <Button type="button" variant="outline" onClick={() => handleSave('draft')} size="lg" disabled={isSaving}>
+              Veröffentlichung zurückziehen
+            </Button>
+          )}
           <Button
             type="button"
-            onClick={handleSave}
+            onClick={() => handleSave()}
             size="lg"
+            variant={schema.entity_kind === 'service-product' ? 'outline' : 'default'}
             disabled={isSaving}
-            className="min-w-[200px]"
+            className="min-w-[180px]"
           >
             {isSaving ? (
               <>
@@ -1181,10 +1216,17 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
             ) : (
               <>
                 <Save className="h-4 w-4 mr-2" />
-                Speichern
+                {schema.entity_kind === 'service-product' && publicationStatus === 'published' ? 'Änderungen speichern' : 'Speichern'}
               </>
             )}
           </Button>
+          {schema.entity_kind === 'service-product' && publicationStatus !== 'published' && (
+            <Button type="button" onClick={() => handleSave('published')} size="lg" disabled={isSaving} className="min-w-[180px]">
+              {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eye className="h-4 w-4 mr-2" />}
+              Veröffentlichen
+            </Button>
+          )}
+          </div>
         </div>
       </div>
     </div>

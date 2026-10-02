@@ -126,96 +126,47 @@ const mapStaffRow = (row: StaffRow): StaffRecord => ({
   profile: row.profile || {},
 });
 
-const fetchLegacyStaffDirectory = async (): Promise<StaffRecord[]> => {
-  const { data: roleData, error: roleError } = await supabase
-    .from('roles')
-    .select('id')
-    .eq('name', 'staff')
-    .single();
-
-  if (roleError || !roleData) {
-    return [];
-  }
-
-  const { data: userRoles, error: userRolesError } = await supabase
-    .from('user_roles')
-    .select('user_id')
-    .eq('role_id', roleData.id);
-
-  if (userRolesError || !userRoles?.length) {
-    return [];
-  }
-
-  const userIds = userRoles.map((row) => row.user_id);
-  const { data: profiles, error: profilesError } = await supabase
-    .from('user_profile')
-    .select('user_id, Username, pfp_url')
-    .in('user_id', userIds)
-    .order('Username', { ascending: true });
-
-  if (profilesError) {
-    return [];
-  }
-
-  return (profiles || []).map((profile) => ({
-    id: profile.user_id,
-    tenantId: null,
-    accountUserId: profile.user_id,
-    displayName: profile.Username || 'Unnamed staff',
-    avatarUrl: normalizeProfileImageUrl(profile.pfp_url, 160),
-    status: 'active',
-    profile: {},
-  }));
-};
-
 export const fetchStaffDirectory = async (tenantId?: string | null): Promise<StaffRecord[]> => {
-  let query = supabase
+  if (!tenantId) return [];
+  const query = supabase
     .from('staff')
     .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
+    .eq('tenant_id', tenantId)
     .order('display_name', { ascending: true });
-  if (tenantId) query = query.eq('tenant_id', tenantId);
   const { data, error } = await query;
 
   if (error) {
-    if (isMissingRelationError(error)) {
-      return fetchLegacyStaffDirectory();
+    // The registry is authoritative. A missing table is a deployment/migration
+    // error, not permission to expose a global role-based account directory.
+    if (!isMissingRelationError(error)) {
+      console.error('Error fetching staff registry:', error);
     }
-    console.error('Error fetching staff registry:', error);
     return [];
   }
 
-  const mapped = ((data || []) as StaffRow[]).map(mapStaffRow);
-  if (mapped.length > 0) {
-    return mapped;
-  }
-
-  return fetchLegacyStaffDirectory();
+  // An empty tenant registry stays empty; never substitute login roles/accounts.
+  return ((data || []) as StaffRow[]).map(mapStaffRow);
 };
 
-export const fetchStaffRecord = async (staffId: string): Promise<StaffRecord | null> => {
+export const fetchStaffRecord = async (staffId: string, tenantId?: string | null): Promise<StaffRecord | null> => {
+  if (!tenantId) return null;
   const { data, error } = await supabase
     .from('staff')
     .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .eq('id', staffId)
+    .eq('tenant_id', tenantId)
     .maybeSingle();
 
   if (error) {
-    if (isMissingRelationError(error)) {
-      const legacyRecords = await fetchLegacyStaffDirectory();
-      return legacyRecords.find((staff) => staff.id === staffId) || null;
-    }
+    if (isMissingRelationError(error)) return null;
     throw error;
   }
 
-  if (!data) {
-    const legacyRecords = await fetchLegacyStaffDirectory();
-    return legacyRecords.find((staff) => staff.id === staffId) || null;
-  }
-
-  return mapStaffRow(data as StaffRow);
+  return data ? mapStaffRow(data as StaffRow) : null;
 };
 
 export const createStaffRecord = async (input: CreateStaffInput): Promise<StaffRecord> => {
+  if (!input.tenantId) throw new Error('A workspace is required to create a staff profile.');
   const { data, error } = await supabase
     .from('staff')
     .insert({
@@ -241,6 +192,7 @@ export const createStaffRecord = async (input: CreateStaffInput): Promise<StaffR
 };
 
 export const updateStaffRecord = async (staffId: string, input: UpdateStaffInput): Promise<StaffRecord> => {
+  if (!input.tenantId) throw new Error('A workspace is required to update a staff profile.');
   const payload = {
     display_name: input.displayName?.trim(),
     tenant_id: input.tenantId === undefined ? undefined : input.tenantId || null,
@@ -263,6 +215,7 @@ export const updateStaffRecord = async (staffId: string, input: UpdateStaffInput
     .from('staff')
     .update(sanitizedPayload)
     .eq('id', staffId)
+    .eq('tenant_id', input.tenantId)
     .select('id, tenant_id, account_user_id, display_name, email, phone, avatar_url, job_title, status, notes, profile')
     .single();
 

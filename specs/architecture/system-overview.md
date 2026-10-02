@@ -2,6 +2,10 @@
 
 This document provides a comprehensive analysis of the frontend architecture, backend communication, and API structure of the Mentor Booking Application.
 
+## Current Products × Pages implementation (2026-10)
+
+The current code keeps developer-owned `page_schemas.schema`/`pages.content` separate from operational service-product rows. Tenant-owned product schemas use `entity_kind = service-product`; product create/update/publish/archive uses one transactional aggregate service and pages are edited through the canonical schema-driven editor. The existing `mentorbooking_products` physical table remains as a compatibility backing store with stable integer IDs; new REST/MCP business identities are UUIDs. Ordinary page CRUD refuses product/event classifications. The initial product integration does **not** convert legacy data and does not yet implement team profiles, customer CRM, event catalogues, or invoice handoff. See [`../features/service-products.md`](../features/service-products.md), [`../features/schema-contracts.md`](../features/schema-contracts.md), and [`../plans/PRODUCT-INTEGRATION.md`](../plans/PRODUCT-INTEGRATION.md).
+
 ## 1. Frontend Architecture Analysis
 
 The application is built using **React 18** with **Vite** as the build tool, following a modern component-based architecture with **TypeScript**.
@@ -167,6 +171,10 @@ All database tables are defined as plain SQL files under `migrations/`. They are
 | `agent_logs.sql` | Page-builder AI agent request/response log. FK to `page_schemas`. |
 | `agent_logs_hardening.sql` | Tightens `agent_logs` access so only `super-admin` can read/delete operational logs. |
 | `202610010001_agent_logs_mcp_context.sql` | Adds verified user attribution, logical MCP operation names, and separate tool/transport status columns to `agent_logs`. |
+| `202610020001_schema_entity_contract.sql` | Adds schema entity classification, definition revisions, and non-executable editor hints. |
+| `202610020002_product_page_delete_safety.sql` | Restricts product/page and event/archive references and adds atomic tenant-scoped product/page deletion. |
+| `202610020003_service_product_aggregates.sql` | Adds UUID service-product IDs, versioning, an allow-listed compatibility view, transactional aggregate RPCs, and page/product completeness. |
+| `202610020004_product_content_validation.sql` | Validates product content inside database update/publication RPCs. |
 | `objects.sql` | Arbitrarily-definable data objects (`public.objects`). Each row stores a schema JSONB (field definitions) and a data JSONB payload. Access controlled via `requires_auth` and `api_enabled`. Admin/super-admin can write; super-admin can delete. Uses `set_current_timestamp_updated_at` trigger. |
 | `system_config.sql` | Generic key/value store for non-sensitive runtime settings such as storage configuration and communication-log verbosity. |
 | `Auth/Access_hook.sql` | Supabase Auth hook function (`custom_access_token_hook`) that injects `user_roles` into JWT claims. Requires `roles` and `user_roles` tables to exist. Also includes `GRANT EXECUTE … TO supabase_auth_admin`, `GRANT USAGE ON SCHEMA public`, and the corresponding `REVOKE` from `authenticated`, `anon`, `public` — required for the hook to be callable by Supabase Auth internals. |

@@ -29,6 +29,7 @@ import TestLoader from "./pages/TestLoader";
 import Info from "./pages/Info";
 import PageBuilder from "./pages/PageBuilder";
 import Pages from "./pages/Pages";
+import Products from "./pages/Products";
 import PagesSchemaDetail from "./pages/PagesSchemaDetail";
 import SchemaEditor from "./pages/SchemaEditor";
 import Forms from "./pages/Forms";
@@ -248,6 +249,7 @@ const AppContent = () => {
 
           {/* Pages Routes */}
           <Route path="/pages" element={<ProtectedRoute requiredRole="user"><Pages /></ProtectedRoute>} />
+          <Route path="/products" element={<ProtectedRoute requiredRole="user"><Products /></ProtectedRoute>} />
           <Route path="/pages/schema/new" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
           <Route path="/pages/schema/:tenantSlug/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
           <Route path="/pages/schema/:tenantSlug/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />

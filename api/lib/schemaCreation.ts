@@ -15,6 +15,8 @@ export interface CreatePendingSchemaInput {
   integration_requirements?: SchemaIntegrationRequirementsRecord | null;
   content_scope?: 'page-collection' | 'single-page';
   page_target?: { target_key: string; host_path: string; page_slug?: string | null } | null;
+  entity_kind?: 'page' | 'service-product' | 'event';
+  editor_config?: Record<string, unknown>;
   tenant_id?: string | null;
 }
 
@@ -31,6 +33,9 @@ interface CreatedSchemaRow {
   registration_status: string | null;
   frontend_url: string | null;
   registration_code: string | null;
+  entity_kind: 'page' | 'service-product' | 'event';
+  definition_revision: number;
+  editor_config: Record<string, unknown>;
 }
 
 function generateSlug(value: string): string {
@@ -92,6 +97,14 @@ export async function createPendingSchema(
     tenantId = typeof currentTenantId === 'string' ? currentTenantId : null;
   }
   const schemaSlug = await ensureUniqueSchemaSlug(client, input.slug || input.name, tenantId);
+  const entityKind = input.entity_kind ?? 'page';
+  const contentScope = input.content_scope ?? 'page-collection';
+  if (entityKind !== 'page' && !tenantId) {
+    throw new Error('Service-product and event schemas require an explicit tenant/workspace.');
+  }
+  if (entityKind !== 'page' && contentScope !== 'page-collection') {
+    throw new Error('Service-product and event schemas must use page-collection content scope.');
+  }
 
   const { data: createdSchema, error: createError } = await client
     .from('page_schemas')
@@ -103,12 +116,14 @@ export async function createPendingSchema(
       llm_instructions: input.llm_instructions ?? null,
       integration_requirements: normalizeSchemaIntegrationRequirements(input.integration_requirements),
       tenant_id: tenantId,
-      content_scope: input.content_scope ?? 'page-collection',
+      content_scope: contentScope,
       page_target: input.page_target ?? null,
+      entity_kind: entityKind,
+      editor_config: input.editor_config ?? {},
       registration_status: 'pending',
       registration_code: null,
     })
-    .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, frontend_url, registration_code')
+    .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, frontend_url, registration_code, entity_kind, definition_revision, editor_config')
     .single();
 
   if (createError || !createdSchema) {

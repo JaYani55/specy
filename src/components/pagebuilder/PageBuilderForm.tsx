@@ -119,6 +119,9 @@ const PageBuilderSchema = z.object({
 
 interface PageBuilderFormProps {
   initialData?: PageBuilderData | null;
+  schemaInitialData?: Record<string, unknown> | null;
+  productAggregateId?: string;
+  productVersion?: number;
   productId?: string;
   productName?: string;
   productSlug?: string;
@@ -127,7 +130,7 @@ interface PageBuilderFormProps {
   schemaSlug?: string;
 }
 
-export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, productId, productName, productSlug, productStatus, schema, schemaSlug }) => {
+export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, schemaInitialData, productAggregateId, productVersion, productId, productName, productSlug, productStatus, schema, schemaSlug }) => {
   // All hooks must be declared unconditionally (Rules of Hooks).
   // Schema-driven rendering delegates to SchemaPageBuilderForm below.
   const [isSaving, setIsSaving] = useState(false);
@@ -154,7 +157,9 @@ export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, p
         schema={schema}
         schemaSlug={schemaSlug}
         pageId={productId}
-        initialData={initialData as unknown as Record<string, unknown> | null}
+        initialData={schemaInitialData}
+        productAggregateId={productAggregateId}
+        productVersion={productVersion}
         initialName={productName}
         initialSlug={productSlug}
         initialStatus={productStatus}

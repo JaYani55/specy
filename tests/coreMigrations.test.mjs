@@ -36,9 +36,11 @@ function stripSqlComments(sql) {
 function findCreatedTables(sql) {
   const tables = new Set();
   const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-zA-Z0-9_]+)/gi;
+  const createViewRe = /create\s+(?:or\s+replace\s+)?view\s+public\.([a-zA-Z0-9_]+)/gi;
   const renameRe = /alter\s+table\s+(?:if\s+exists\s+)?public\.[a-zA-Z0-9_]+\s+rename\s+to\s+(?:public\.)?([a-zA-Z0-9_]+)/gi;
   let m;
   while ((m = createRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+  while ((m = createViewRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
   while ((m = renameRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
   return tables;
 }

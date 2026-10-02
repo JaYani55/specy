@@ -7,6 +7,7 @@ import {
   type PageBuilderData,
   type TLDGroup,
   type SchemaIntegrationRequirements,
+  type SchemaEntityKind,
   type SchemaFrontendTarget,
   type SchemaFrontendTargetInput,
 } from '@/types/pagebuilder';
@@ -328,6 +329,8 @@ export const createSchema = async (input: {
   llm_instructions?: string;
   integration_requirements?: Partial<SchemaIntegrationRequirements> | null;
   tenant_id?: string | null;
+  entity_kind?: SchemaEntityKind;
+  editor_config?: Record<string, unknown>;
 }): Promise<PageSchema> => {
   const slug = await ensureUniqueSchemaSlug(input.name, input.tenant_id ?? null);
   const registrationCode = generateRegistrationCode();
@@ -341,7 +344,11 @@ export const createSchema = async (input: {
       schema: input.schema,
       llm_instructions: input.llm_instructions || null,
       integration_requirements: normalizeIntegrationRequirements(input.integration_requirements),
+      content_scope: input.integration_requirements?.content_scope ?? 'page-collection',
+      page_target: input.integration_requirements?.page_target ?? null,
       tenant_id: input.tenant_id || null,
+      entity_kind: input.entity_kind ?? 'page',
+      editor_config: input.editor_config ?? {},
       registration_code: registrationCode,
       registration_status: 'waiting',
     })
@@ -375,37 +382,48 @@ export const updateSchema = async (
   id: string,
   input: Partial<{
     name: string;
-    description: string;
+    description: string | null;
     schema: Record<string, unknown>;
-    llm_instructions: string;
+    llm_instructions: string | null;
     integration_requirements: Partial<SchemaIntegrationRequirements> | null;
     tenant_id: string | null;
-  }>
+    entity_kind: SchemaEntityKind;
+    editor_config: Record<string, unknown>;
+  }>,
+  expectedRevision?: number,
 ): Promise<PageSchema> => {
-  const updateData: Record<string, unknown> = { ...input };
-  if (input.name) {
-    const { data: currentSchema, error: currentSchemaError } = await supabase
+  if (!API_URL) throw new Error('API URL not configured');
+  const { data: current, error: currentError } = await supabase
+    .from('page_schemas')
+    .select('api_slug, definition_revision')
+    .eq('id', id)
+    .single();
+  if (currentError || !current) throw new Error(currentError?.message || 'Schema not found');
+
+  const revision = expectedRevision ?? Number(current.definition_revision ?? 1);
+  const patch: Record<string, unknown> = { ...input, expected_revision: revision };
+  if (Object.prototype.hasOwnProperty.call(input, 'name') && input.name) {
+    const { data: schemaData, error: schemaError } = await supabase
       .from('page_schemas')
       .select('tenant_id')
       .eq('id', id)
       .single();
-    if (currentSchemaError || !currentSchema) throw new Error(currentSchemaError?.message || 'Schema not found');
-    const tenantId = Object.prototype.hasOwnProperty.call(input, 'tenant_id') ? input.tenant_id ?? null : currentSchema.tenant_id;
-    updateData.slug = await ensureUniqueSchemaSlug(input.name, tenantId, id);
+    if (schemaError || !schemaData) throw new Error(schemaError?.message || 'Schema not found');
+    const tenantId = Object.prototype.hasOwnProperty.call(input, 'tenant_id') ? input.tenant_id ?? null : schemaData.tenant_id;
+    patch.slug = await ensureUniqueSchemaSlug(input.name, tenantId, id);
   }
   if (Object.prototype.hasOwnProperty.call(input, 'integration_requirements')) {
-    updateData.integration_requirements = normalizeIntegrationRequirements(input.integration_requirements);
+    patch.integration_requirements = normalizeIntegrationRequirements(input.integration_requirements);
   }
 
-  const { data, error } = await supabase
-    .from('page_schemas')
-    .update(updateData)
-    .eq('id', id)
-    .select()
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data as PageSchema;
+  const response = await fetch(`${API_URL}/api/schemas/${encodeURIComponent(current.api_slug)}/definition`, {
+    method: 'PATCH',
+    headers: await createAuthenticatedHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify(patch),
+  });
+  const body = await response.json().catch(() => ({})) as { error?: string; schema?: PageSchema };
+  if (!response.ok || !body.schema) throw new Error(body.error ?? 'Failed to update schema definition');
+  return body.schema;
 };
 
 export const deleteSchema = async (id: string): Promise<void> => {
@@ -516,38 +534,62 @@ export const savePage = async (
   requestedSlug?: string,
   tenantId?: string | null,
 ): Promise<{ id: string; slug: string }> => {
+  const { data: schema, error: schemaError } = await supabase
+    .from('page_schemas')
+    .select('tenant_id, entity_kind')
+    .eq('id', schemaId)
+    .single();
+  if (schemaError || !schema) throw new Error(schemaError?.message || 'Schema not found.');
+  if (schema.entity_kind && schema.entity_kind !== 'page') {
+    throw new Error(`This ${schema.entity_kind} schema requires an entity-aware save operation.`);
+  }
+  if (tenantId !== undefined && (tenantId || null) !== (schema.tenant_id || null)) {
+    throw new Error('Page tenant must match the owning schema workspace.');
+  }
+
   const slug = await ensureUniquePageSlug(requestedSlug || pageName, pageId);
-  const normalizedTenantId = tenantId || null;
+  const normalizedTenantId = schema.tenant_id || null;
 
   if (pageId) {
-    // Update existing page
-    const { data, error } = await supabase
+    const { data: current, error: currentError } = await supabase
       .from('pages')
-      .update({ content, slug, name: pageName, tenant_id: normalizedTenantId })
+      .select('id, schema_id, tenant_id')
       .eq('id', pageId)
-      .select('id, slug')
       .single();
+    if (currentError || !current) throw new Error(currentError?.message || 'Page not found.');
+    if (current.schema_id !== schemaId || (current.tenant_id || null) !== normalizedTenantId) {
+      throw new Error('The page does not belong to the selected schema and workspace.');
+    }
 
-    if (error) throw new Error(error.message);
-    return data as { id: string; slug: string };
-  } else {
-    // Create new page
-    const { data, error } = await supabase
+    let updateQuery = supabase
       .from('pages')
-      .insert({
-        name: pageName,
-        slug,
-        content,
-        status: 'draft',
-        schema_id: schemaId,
-        tenant_id: normalizedTenantId,
-      })
-      .select('id, slug')
-      .single();
+      .update({ content, slug, name: pageName })
+      .eq('id', pageId)
+      .eq('schema_id', schemaId);
+    updateQuery = normalizedTenantId
+      ? updateQuery.eq('tenant_id', normalizedTenantId)
+      : updateQuery.is('tenant_id', null);
+    const { data, error } = await updateQuery.select('id, slug').single();
 
     if (error) throw new Error(error.message);
     return data as { id: string; slug: string };
   }
+
+  const { data, error } = await supabase
+    .from('pages')
+    .insert({
+      name: pageName,
+      slug,
+      content,
+      status: 'draft',
+      schema_id: schemaId,
+      tenant_id: normalizedTenantId,
+    })
+    .select('id, slug')
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as { id: string; slug: string };
 };
 
 export const deletePage = async (pageId: string): Promise<void> => {

@@ -77,6 +77,8 @@ const mergeTemplates = (
 
 interface EditorSchemaFieldDefinition extends Omit<SchemaFieldDefinition, 'properties' | 'items'> {
   editorId: string;
+  /** Original field definition retained so unsupported developer metadata survives visual edits. */
+  rawAttributes?: Record<string, unknown>;
   properties?: EditorSchemaFieldDefinition[];
   items?: EditorSchemaFieldDefinition;
 }
@@ -240,11 +242,13 @@ const parseSchemaFieldEntry = (
   const field: EditorSchemaFieldDefinition = {
     editorId: createEditorFieldId(),
     name: fieldName,
+    rawAttributes: { ...value },
     type: normalizedType as SchemaFieldDefinition['type'],
     description: validateOptionalString(value.description, path, 'description', errors),
     placeholder: validateOptionalString(value.placeholder, path, 'placeholder', errors),
     meta_description: validateOptionalString(value.meta_description, path, 'meta_description', errors),
     required: validateOptionalBoolean(value.required, path, 'required', errors) ?? false,
+    nullable: validateOptionalBoolean(value.nullable, path, 'nullable', errors) ?? false,
   };
 
   if (value.enum !== undefined) {
@@ -382,24 +386,30 @@ const fieldsToJsonSchema = (fields: EditorSchemaFieldDefinition[]): Record<strin
     if (!field.name.trim()) continue;
 
     const entry: Record<string, unknown> = {
+      ...(field.rawAttributes ?? {}),
       type: field.type,
       description: field.description || undefined,
       placeholder: field.placeholder || undefined,
       meta_description: field.meta_description || undefined,
       required: field.required || undefined,
+      nullable: field.nullable || undefined,
     };
 
     if (field.enum && field.enum.length > 0) {
       entry.enum = field.enum;
     }
 
-    if (field.type === 'object' && field.properties && field.properties.length > 0) {
-      entry.properties = fieldsToJsonSchema(field.properties);
+    if (field.type === 'object') {
+      entry.properties = fieldsToJsonSchema(field.properties ?? []);
+    } else {
+      delete entry.properties;
     }
 
     if ((field.type === 'array' || field.type === 'CodeBlock[]') && field.items) {
       const [items] = Object.entries(fieldsToJsonSchema([field.items]));
       entry.items = items?.[1] ?? { type: field.items.type };
+    } else {
+      delete entry.items;
     }
 
     result[field.name] = entry;
@@ -414,11 +424,13 @@ const jsonSchemaToFields = (schema: Record<string, unknown>): EditorSchemaFieldD
     const field: EditorSchemaFieldDefinition = {
       editorId: createEditorFieldId(),
       name,
+      rawAttributes: { ...entry },
       type: (entry.type as SchemaFieldDefinition['type']) || 'string',
       description: (entry.description as string) || '',
       placeholder: (entry.placeholder as string) || '',
       meta_description: (entry.meta_description as string) || '',
       required: (entry.required as boolean) || false,
+      nullable: (entry.nullable as boolean) || false,
     };
 
     if (entry.enum) {
@@ -434,11 +446,13 @@ const jsonSchemaToFields = (schema: Record<string, unknown>): EditorSchemaFieldD
       field.items = {
         editorId: createEditorFieldId(),
         name: 'item',
+        rawAttributes: { ...items },
         type: (items.type as SchemaFieldDefinition['type']) || 'string',
         description: (items.description as string) || '',
         placeholder: (items.placeholder as string) || '',
         meta_description: (items.meta_description as string) || '',
         required: (items.required as boolean) || false,
+        nullable: (items.nullable as boolean) || false,
         ...(items.enum ? { enum: items.enum as string[] } : {}),
         ...(items.properties
           ? { properties: jsonSchemaToFields(items.properties as Record<string, unknown>) }
@@ -544,6 +558,14 @@ const FieldEditor: React.FC<FieldEditorProps> = ({ field, onChange, onRemove, de
             />
             <Label htmlFor={`req-${field.editorId}`} className="text-xs cursor-pointer">Req</Label>
           </div>
+          <div className="flex items-center gap-1">
+            <Checkbox
+              id={`nullable-${field.editorId}`}
+              checked={field.nullable || false}
+              onCheckedChange={(checked) => onChange({ ...field, nullable: Boolean(checked) })}
+            />
+            <Label htmlFor={`nullable-${field.editorId}`} className="text-xs cursor-pointer">Null</Label>
+          </div>
           {hasChildren && (
             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExpanded(!expanded)}>
               {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -628,13 +650,14 @@ const SchemaEditor: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [existingSchema, setExistingSchema] = useState<PageSchema | null>(null);
+  const [existingSchema, setExistingSchema] = useState<(PageSchema & { page_count?: number }) | null>(null);
   const [integrationRequirements, setIntegrationRequirements] = useState<SchemaIntegrationRequirements>(DEFAULT_SCHEMA_INTEGRATION_REQUIREMENTS);
   const [schemaJsonInput, setSchemaJsonInput] = useState('');
   const [schemaJsonResult, setSchemaJsonResult] = useState<SchemaJsonParseResult | null>(null);
   const [availableTemplates, setAvailableTemplates] = useState<SchemaTemplateDefinition[]>(SCHEMA_TEMPLATES);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [tenantId, setTenantId] = useState('');
+  const [entityKind, setEntityKind] = useState<'page' | 'service-product' | 'event'>('page');
   const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
   const [availableSpecs, setAvailableSpecs] = useState<SpecRecord[]>([]);
@@ -673,6 +696,7 @@ const SchemaEditor: React.FC = () => {
           setDescription(data.description || '');
           setLlmInstructions(data.llm_instructions || '');
           setTenantId(data.tenant_id ?? '');
+          setEntityKind(data.entity_kind ?? 'page');
           setIntegrationRequirements(normalizeSchemaIntegrationRequirements(data.integration_requirements));
           setFrontendTargets((data.frontend_targets ?? []).map((target) => ({
             target_key: target.target_key,
@@ -747,6 +771,14 @@ const SchemaEditor: React.FC = () => {
     }
 
     const normalizedIntegrationRequirements = normalizeSchemaIntegrationRequirements(integrationRequirements);
+    if (entityKind !== 'page' && !tenantId) {
+      toast.error(language === 'en' ? 'Product and event schemas need a workspace.' : 'Produkt- und Veranstaltungsschemata benötigen einen Workspace.');
+      return;
+    }
+    if (entityKind !== 'page' && normalizedIntegrationRequirements.content_scope === 'single-page') {
+      toast.error(language === 'en' ? 'Product and event schemas must use page-collection scope.' : 'Produkt- und Veranstaltungsschemata müssen den Sammlungsscope verwenden.');
+      return;
+    }
     if (normalizedIntegrationRequirements.required_slug_structure
       && normalizedIntegrationRequirements.required_slug_structure !== '/'
       && !normalizedIntegrationRequirements.required_slug_structure.includes(':slug')) {
@@ -779,7 +811,8 @@ const SchemaEditor: React.FC = () => {
           llm_instructions: llmInstructions,
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
-        });
+          entity_kind: entityKind,
+        }, existingSchema.definition_revision ?? 1);
         await saveSchemaFrontendTargets(existingSchema.api_slug, frontendTargets);
         const updatedTenantSlug = tenantOptions.find((option) => option.id === updatedSchema.tenant_id)?.slug ?? existingSchema.tenant_slug;
         toast.success(language === 'en' ? 'Schema updated' : 'Schema aktualisiert');
@@ -792,6 +825,7 @@ const SchemaEditor: React.FC = () => {
           llm_instructions: llmInstructions,
           integration_requirements: normalizedIntegrationRequirements,
           tenant_id: tenantId || null,
+          entity_kind: entityKind,
         });
         await saveSchemaFrontendTargets(newSchema.api_slug, frontendTargets);
         const newTenantSlug = tenantOptions.find((option) => option.id === newSchema.tenant_id)?.slug ?? null;
@@ -1038,6 +1072,33 @@ const SchemaEditor: React.FC = () => {
                   : 'Registrierte Schemata und die daraus erstellten Seiten erben diesen Tenant, damit andere Mitglieder die Verknüpfungen sehen können.'}
               </p>
             </div>
+          </div>
+          <div className="space-y-2">
+            <label className="flex items-start gap-3 rounded-lg border px-4 py-3 cursor-pointer">
+              <Checkbox
+                checked={entityKind === 'service-product'}
+                disabled={Boolean(existingSchema?.page_count && entityKind !== 'service-product') || entityKind === 'event'}
+                onCheckedChange={(checked) => setEntityKind(checked ? 'service-product' : 'page')}
+              />
+              <span>
+                <span className="block font-medium text-sm">{language === 'en' ? 'Use as a service-product schema' : 'Als Produktschema verwenden'}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {language === 'en'
+                    ? 'Classifies this collection without changing its content JSON.'
+                    : 'Ordnet diese Seitensammlung dem Produktbereich zu, ohne das Content-JSON zu verändern.'}
+                </span>
+              </span>
+            </label>
+            {entityKind === 'event' && (
+              <Badge variant="outline">{language === 'en' ? 'Event schema (set through integration)' : 'Veranstaltungsschema (über Integration festgelegt)'}</Badge>
+            )}
+            {existingSchema?.page_count && entityKind !== (existingSchema.entity_kind ?? 'page') && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {language === 'en'
+                  ? 'Classification cannot change while pages exist. An explicit conversion is required.'
+                  : 'Die Klassifizierung kann bei vorhandenen Seiten nicht geändert werden. Eine explizite Umwandlung ist erforderlich.'}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

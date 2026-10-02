@@ -16,13 +16,15 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
     "slug": "d41c...",
     "schema_slug": "field-notes-journal",
     "api_slug": "d41c...",
-    "content_scope": "page-collection"
+    "content_scope": "page-collection",
+    "entity_kind": "page"
   },
   "frontend": {
     "url": "https://frontend.example.com",
     "registration_status": "registered"
   },
   "data": {
+    "available": true,
     "collection_url": "https://cms.example.com/api/schemas/d41c.../pages",
     "detail_url_template": "https://cms.example.com/api/schemas/d41c.../pages/:slug",
     "authentication": "public-registered-schema",
@@ -41,7 +43,7 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
     "endpoint": "/api/revalidate",
     "authorization": "bearer",
     "requests_per_target": true,
-    "supports_new_routes": true
+    "supports_new_routes": null
   },
   "legacy": {
     "slug_structure": "/:slug"
@@ -55,10 +57,12 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
 - `schema_slug` is tenant-local and suitable for CMS display. `api_slug` is the stable API identifier used in schema endpoint URLs; existing schemas retain their former slug as their `api_slug`.
 - `frontend.url` is the normalized registered origin; canonical requirements and historical preview URLs are separate metadata.
 - `targets` are authoritative for route construction. `legacy.slug_structure` is compatibility metadata only.
+- `schema.entity_kind` identifies `page`, `service-product`, or `event`; the current public page delivery endpoints are available only for ordinary `page` schemas. Product/event aggregate delivery is not yet enabled.
+- `data.available` is false and collection/detail URLs are null when an entity-specific public delivery contract is not implemented.
 - Public collection and detail endpoints expose only registered schemas and pages with `status = 'published'`.
 - `published_at` represents the latest transition into `published` and is returned by public page delivery.
 - Revalidation is a CMS/operator-triggered request. The CMS sends one request per enabled target with `path` and the bare page `slug` query parameters plus `Authorization: Bearer <secret>`.
-- A frontend that cannot create or discover new routes at runtime must declare that limitation; an acknowledgement-only endpoint is not equivalent to ISR.
+- `revalidation.supports_new_routes` is currently `null` (unknown), not a promise. Registration/health checks do not prove that a static frontend can generate new routes. An acknowledgement-only endpoint is not equivalent to ISR.
 
 ## Endpoint contract
 

@@ -25,6 +25,16 @@ import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../l
 import { validateSchemaContentContract, type SchemaContentContractInput } from '../lib/schemaRegistration';
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 import { serializeMcpError } from '../lib/apiError';
+import {
+  archiveProductAggregate,
+  createProductAggregate,
+  getProductAggregate,
+  listProductAggregates,
+  ProductAggregateError,
+  publishProductAggregate,
+  updateProductAggregate,
+} from '../lib/productAggregateService';
+import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '../lib/productAggregates';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 
@@ -51,14 +61,22 @@ const BUILT_IN_MCP_TOOLS = [
   'specy_pages_schemas_create_page',
   'specy_pages_schemas_update_page',
   'specy_pages_schemas_update_system_data',
+  'specy_pages_schemas_update_definition',
   'specy_pages_schemas_replace_frontend_targets',
+  'specy_products_list',
+  'specy_products_create',
+  'specy_products_get',
+  'specy_products_update',
+  'specy_products_publish',
+  'specy_products_archive',
 ] as const;
 
 const AUTHENTICATED_MCP_TOOLS = new Set([
   'create_schema', 'new_schema', 'start_schema_registration', 'create_page', 'register_frontend',
   'specy_pages_schemas_list', 'specy_pages_schemas_get', 'specy_pages_schemas_list_pages',
   'specy_pages_schemas_get_page', 'specy_pages_schemas_create_page', 'specy_pages_schemas_update_page',
-  'specy_pages_schemas_update_system_data', 'specy_pages_schemas_replace_frontend_targets',
+  'specy_pages_schemas_update_system_data', 'specy_pages_schemas_update_definition', 'specy_pages_schemas_replace_frontend_targets',
+  'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive',
 ]);
 
 function generateRegistrationCode(): string {
@@ -84,6 +102,9 @@ interface SchemaListRow {
   integration_requirements?: Record<string, unknown> | null;
   content_scope?: 'page-collection' | 'single-page' | null;
   page_target?: Record<string, unknown> | null;
+  entity_kind?: 'page' | 'service-product' | 'event' | null;
+  definition_revision?: number;
+  editor_config?: Record<string, unknown> | null;
 }
 
 function mcpToolFailure(message: string, httpStatus: number, extra: Record<string, unknown> = {}) {
@@ -127,6 +148,8 @@ const newSchemaToolSchema = {
   slug: z.string().optional().describe('Optional custom slug. Will be normalized and uniquified.'),
   description: z.string().optional().describe('Optional schema description'),
   schema: z.record(z.string(), z.unknown()).describe('Schema JSON definition to save in page_schemas.schema'),
+  entity_kind: z.enum(['page', 'service-product', 'event']).optional().describe('Integration classification. Product/event schemas must be tenant-owned page collections.'),
+  editor_config: z.record(z.string(), z.unknown()).optional().describe('Non-executable editor labels and widget/grouping hints; separate from content JSON.'),
   llm_instructions: z.string().optional().describe('Optional LLM instructions for builders and agents'),
   tenant_id: z.string().uuid().optional().describe('Workspace that owns this schema; defaults to the current workspace.'),
   integration_requirements: z.object({
@@ -163,6 +186,20 @@ async function createMcpServerWithTools(
   const isAuthenticated = Boolean(authSession?.token);
 
   const supabase = await createSupabaseClient(env, authToken ?? undefined);
+  const callProductOperation = async (operation: () => Promise<unknown>) => {
+    try {
+      const result = await operation();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      if (error instanceof ProductAggregateError) {
+        return mcpToolFailure(error.message, error.status, {
+          ...(error.code ? { code: error.code } : {}),
+          ...(error.details ? { details: error.details } : {}),
+        });
+      }
+      return mcpToolFailure(error instanceof Error ? error.message : 'Product operation failed.', 500);
+    }
+  };
 
   server.tool(
     'start_here',
@@ -177,14 +214,14 @@ async function createMcpServerWithTools(
           purpose: 'Specy is a CMS and MCP server for schema-driven website generation and frontend registration workflows.',
           workflow: [
             '1. Call start_here to understand the system and available workflow tools.',
-            '2. For existing content, authenticate and use specy_pages_schemas_list/get, then specy_pages_schemas_list_pages/get_page. Use specy_pages_schemas_update_page to edit content or page system fields.',
+            '2. For existing content, authenticate and use specy_pages_schemas_list/get, then specy_pages_schemas_list_pages/get_page. Use specy_pages_schemas_update_page to edit ordinary page content or system fields. Use specy_pages_schemas_update_definition with the expected definition revision to change a schema contract. Product/event schema content requires entity-aware aggregate operations; generic page writes are rejected for those classifications.',
             '3. Correct a mistaken frontend URL with specy_pages_schemas_update_system_data after checking the schema and the intended canonical frontend; this does not require a new registration code.',
             '4. BEFORE any schema, page, registration, or closed-content operation, authenticate this MCP connection. If authenticated tools such as specy_pages_schemas_update_page or specy_pages_schemas_update_system_data are absent from tools/list, ask the MCP client to complete OAuth 2.1 in the browser.',
             '5. After OAuth completes, reconnect or refresh the MCP session and call tools/list again. Do not continue until the authenticated tools are visible.',
-            '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, create_page, and the specy_pages_schemas_* page-management tools.',
+            '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, ordinary page tools, schema-management tools, and specy_products_* aggregate tools.',
             '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
-            '9. Create content with create_page or specy_pages_schemas_create_page, then optionally call check_health.',
+            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For products, use specy_products_create/get/update/publish/archive and always pass an explicit tenant_id.'
           ],
           how_to_authenticate: {
             mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
@@ -196,7 +233,7 @@ async function createMcpServerWithTools(
               '3. Open the authorization URL in the browser and let the user approve.',
               '4. Capture the callback in the MCP client, exchange the code, store/refresh the token, and reconnect.',
               '5. Re-run tools/list after authentication.',
-              '6. Confirm that the required authenticated tools, including specy_pages_schemas_update_system_data and specy_pages_schemas_list_pages, are now present before proceeding.',
+              '6. Confirm that the required authenticated tools, including specy_pages_schemas_update_definition and specy_products_create, are present before proceeding.'
             ],
             anonymous_tools: ['start_here', 'list_schemas', 'get_schema_spec', 'list_objects', 'get_object', 'check_health', 'list_available_tools', 'get_spec_definition'],
             authenticated_tools: [...AUTHENTICATED_MCP_TOOLS, 'closed MCP registry tools'],
@@ -217,6 +254,87 @@ async function createMcpServerWithTools(
   );
 
   if (isAuthenticated) {
+    server.tool(
+      'specy_products_list',
+      '[specy-products] List active service-product aggregates in one explicitly selected workspace.',
+      { tenant_id: z.string().uuid() },
+      async ({ tenant_id }) => callProductOperation(async () => ({ products: await listProductAggregates(supabase, tenant_id) })),
+    );
+    server.tool(
+      'specy_products_create',
+      '[specy-products] Atomically create a draft product aggregate and its canonical schema page. Use a tenant-owned service-product page-collection schema.',
+      {
+        tenant_id: z.string().uuid(),
+        schema_id: z.string().uuid(),
+        expected_definition_revision: z.number().int().min(1),
+        name: z.string().min(1),
+        slug: z.string().optional(),
+        content: z.record(z.string(), z.unknown()).optional(),
+        idempotency_key: z.string().uuid().optional(),
+      },
+      async ({ tenant_id, schema_id, expected_definition_revision, name, slug, content, idempotency_key }) => {
+        const parsed = parseCreateServiceProductInput({
+          tenant_id, schema_id, expected_definition_revision, name,
+          ...(slug ? { slug } : {}), content: content ?? {}, idempotency_key: idempotency_key ?? crypto.randomUUID(),
+        });
+        if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
+        return callProductOperation(async () => {
+          const product = await createProductAggregate(supabase, parsed.value) as { page_id?: string };
+          const { data: schema } = await supabase.from('page_schemas').select('slug, api_slug, tenant_id').eq('id', schema_id).maybeSingle();
+          const { data: tenant } = schema?.tenant_id
+            ? await supabase.from('tenants').select('slug').eq('id', schema.tenant_id).maybeSingle()
+            : { data: null };
+          const editorPath = schema && tenant?.slug
+            ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}/edit/${product.page_id}`
+            : `/pages/schema/${encodeURIComponent(schema?.api_slug ?? schema_id)}/edit/${product.page_id}`;
+          return { product, editor_url: product.page_id ? `${baseUrl}${editorPath}` : null };
+        });
+      },
+    );
+    server.tool(
+      'specy_products_get',
+      '[specy-products] Read one product aggregate and its schema page from an explicitly selected workspace.',
+      { id: z.string().uuid(), tenant_id: z.string().uuid() },
+      async ({ id, tenant_id }) => callProductOperation(() => getProductAggregate(supabase, id, tenant_id)),
+    );
+    server.tool(
+      'specy_products_update',
+      '[specy-products] Atomically update product name, page slug, and arbitrary page JSON using optimistic version checks.',
+      {
+        id: z.string().uuid(),
+        tenant_id: z.string().uuid(),
+        expected_version: z.number().int().min(1),
+        expected_definition_revision: z.number().int().min(1),
+        name: z.string().min(1).optional(),
+        slug: z.string().min(1).optional(),
+        content: z.record(z.string(), z.unknown()).optional(),
+      },
+      async ({ id, tenant_id, expected_version, expected_definition_revision, name, slug, content }) => {
+        const parsed = parseUpdateServiceProductInput({
+          tenant_id, expected_version, expected_definition_revision,
+          ...(name !== undefined ? { name } : {}), ...(slug !== undefined ? { slug } : {}), ...(content !== undefined ? { content } : {}),
+        });
+        if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
+        return callProductOperation(() => updateProductAggregate(supabase, id, parsed.value));
+      },
+    );
+    server.tool(
+      'specy_products_publish',
+      '[specy-products] Publish or return a product page to draft status through the aggregate service.',
+      { id: z.string().uuid(), tenant_id: z.string().uuid(), expected_version: z.number().int().min(1), expected_definition_revision: z.number().int().min(1), status: z.enum(['draft', 'published']) },
+      async ({ id, tenant_id, expected_version, expected_definition_revision, status }) => callProductOperation(
+        () => publishProductAggregate(supabase, id, tenant_id, expected_version, expected_definition_revision, status),
+      ),
+    );
+    server.tool(
+      'specy_products_archive',
+      '[specy-products] Retire a product and archive its canonical page atomically.',
+      { id: z.string().uuid(), tenant_id: z.string().uuid(), expected_version: z.number().int().min(1) },
+      async ({ id, tenant_id, expected_version }) => callProductOperation(
+        () => archiveProductAggregate(supabase, id, tenant_id, expected_version),
+      ),
+    );
+
     const createSchemaHandler = await buildNewSchemaHandler(env, baseUrl, authToken);
     server.tool(
       'create_schema',
@@ -297,7 +415,7 @@ async function createMcpServerWithTools(
 
       const { data: schema, error: schemaError } = await supabase
         .from('page_schemas')
-        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope')
+        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope, entity_kind')
         .eq('api_slug', schema_slug)
         .single();
       if (schemaError || !schema) {
@@ -309,6 +427,12 @@ async function createMcpServerWithTools(
           error: `Schema "${schema_slug}" is a single-page schema. Use the schema's existing page surface instead of create_page.`,
           content_scope: schema.content_scope,
         }, null, 2) }] };
+      }
+      if (schema.entity_kind && schema.entity_kind !== 'page') {
+        return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page creation is not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
+      }
+      if (tenant_id && tenant_id !== schema.tenant_id) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Page tenant must match the owning schema tenant.' }, null, 2) }] };
       }
 
       const requestedSlug = normalizeSchemaPageSlug(slug || name);
@@ -323,9 +447,7 @@ async function createMcpServerWithTools(
           status: status || 'draft',
           schema_id: schema.id,
         };
-      if (tenant_id) {
-        pageInsert.tenant_id = tenant_id;
-      }
+      if (schema.tenant_id) pageInsert.tenant_id = schema.tenant_id;
 
       const { data: page, error: pageError } = await supabase
         .from('pages')
@@ -366,7 +488,7 @@ async function createMcpServerWithTools(
       async () => {
         const { data, error } = await supabase
           .from('page_schemas')
-          .select('slug, api_slug, tenant_id, name, description, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, updated_at')
+          .select('slug, api_slug, tenant_id, name, description, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, updated_at')
           .neq('registration_status', 'archived')
           .order('name', { ascending: true });
         if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }] };
@@ -386,6 +508,9 @@ async function createMcpServerWithTools(
           integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
           content_scope: schema.content_scope || 'page-collection',
           page_target: schema.page_target,
+          entity_kind: schema.entity_kind || 'page',
+          definition_revision: schema.definition_revision || 1,
+          editor_config: schema.editor_config || {},
           spec_url: `${baseUrl}/api/schemas/${schema.api_slug}/spec.txt`,
           pages_url: `${baseUrl}/api/schemas/${schema.api_slug}/pages`,
         }));
@@ -400,7 +525,7 @@ async function createMcpServerWithTools(
       async ({ schema_slug }) => {
         const { data: schema, error } = await supabase
           .from('page_schemas')
-          .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+          .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, created_at, updated_at')
           .eq('api_slug', schema_slug)
           .single();
         if (error || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
@@ -415,6 +540,9 @@ async function createMcpServerWithTools(
                 slug: schema.api_slug,
                 schema_slug: schema.slug,
                 integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
+                entity_kind: schema.entity_kind || 'page',
+                definition_revision: schema.definition_revision || 1,
+                editor_config: schema.editor_config || {},
               },
               targets,
               system_data_edit_endpoint: `${baseUrl}/api/schemas/${schema.api_slug}/system-data`,
@@ -487,12 +615,15 @@ async function createMcpServerWithTools(
       async ({ schema_slug, name, slug, content, status, domain_url }) => {
         const { data: schema, error: schemaError } = await supabase
           .from('page_schemas')
-          .select('id, api_slug, tenant_id, content_scope')
+          .select('id, api_slug, tenant_id, content_scope, entity_kind')
           .eq('api_slug', schema_slug)
           .single();
         if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
         if (schema.content_scope === 'single-page') {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is a single-page schema; edit its existing page record instead of adding another page.' }, null, 2) }] };
+        }
+        if (schema.entity_kind && schema.entity_kind !== 'page') {
+          return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page creation is not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
         }
 
         const requestedSlug = normalizeSchemaPageSlug(slug || name);
@@ -536,8 +667,11 @@ async function createMcpServerWithTools(
         domain_url: z.string().max(2048).nullable().optional(),
       },
       async ({ schema_slug, page_id, content, name, slug, status, domain_url }) => {
-        const { data: schema } = await supabase.from('page_schemas').select('id').eq('api_slug', schema_slug).single();
+        const { data: schema } = await supabase.from('page_schemas').select('id, entity_kind').eq('api_slug', schema_slug).single();
         if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        if (schema.entity_kind && schema.entity_kind !== 'page') {
+          return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page updates are not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
+        }
         const { data: currentPage, error: pageError } = await supabase
           .from('pages')
           .select('id, slug')
@@ -569,6 +703,50 @@ async function createMcpServerWithTools(
           .single();
         if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Failed to update page.' }, null, 2) }] };
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_update_definition',
+      '[specy-pages > schemas] Update the schema definition and non-secret schema metadata using optimistic revision checks. This never rewrites page content.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API identifier (api_slug).'),
+        expected_revision: z.number().int().min(1).describe('definition_revision returned by specy_pages_schemas_get.'),
+        schema: z.record(z.string(), z.unknown()).optional(),
+        editor_config: z.record(z.string(), z.unknown()).optional().describe('Non-executable editor hints.'),
+        entity_kind: z.enum(['page', 'service-product', 'event']).optional(),
+        name: z.string().min(1).optional(),
+        description: z.string().nullable().optional(),
+        llm_instructions: z.string().nullable().optional(),
+        integration_requirements: z.record(z.string(), z.unknown()).optional(),
+        tenant_id: z.string().uuid().nullable().optional(),
+        slug: z.string().min(1).optional(),
+      },
+      async ({ schema_slug, expected_revision, schema, editor_config, entity_kind, name, description, llm_instructions, integration_requirements, tenant_id, slug }) => {
+        const patch = {
+          expected_revision,
+          ...(schema !== undefined ? { schema } : {}),
+          ...(editor_config !== undefined ? { editor_config } : {}),
+          ...(entity_kind !== undefined ? { entity_kind } : {}),
+          ...(name !== undefined ? { name } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(llm_instructions !== undefined ? { llm_instructions } : {}),
+          ...(integration_requirements !== undefined ? { integration_requirements } : {}),
+          ...(tenant_id !== undefined ? { tenant_id } : {}),
+          ...(slug !== undefined ? { slug } : {}),
+        };
+        try {
+          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(schema_slug)}/definition`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(patch),
+          });
+          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+          if (!response.ok) return mcpToolFailure(String(result.error || `Schema definition update failed (${response.status}).`), response.status, result.code ? { code: result.code } : {});
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+        } catch (error) {
+          return mcpToolFailure(error instanceof Error ? error.message : 'Schema definition update failed.', 502);
+        }
       },
     );
 
@@ -739,7 +917,7 @@ async function createMcpServerWithTools(
     async () => {
       const { data, error } = await supabase
         .from('page_schemas')
-        .select('slug, api_slug, tenant_id, tenants:tenant_id(slug), name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, created_at, updated_at')
+        .select('slug, api_slug, tenant_id, tenants:tenant_id(slug), name, description, registration_status, is_default, frontend_url, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, created_at, updated_at')
         .order('is_default', { ascending: false })
         .order('name', { ascending: true });
 
@@ -764,6 +942,9 @@ async function createMcpServerWithTools(
           integration_requirements: normalizeSchemaIntegrationRequirements(s.integration_requirements),
           content_scope: s.content_scope || 'page-collection',
           page_target: s.page_target || null,
+          entity_kind: s.entity_kind || 'page',
+          definition_revision: s.definition_revision || 1,
+          editor_config: s.editor_config || {},
           spec_url: `${baseUrl}/api/schemas/${s.api_slug}/spec.txt`,
           spec_json_url: `${baseUrl}/api/schemas/${s.api_slug}/spec`,
           pages_url: `${baseUrl}/api/schemas/${s.api_slug}/pages`,
@@ -812,6 +993,9 @@ async function createMcpServerWithTools(
         `Slug: ${schema.slug}`,
         `API slug: ${schema.api_slug}`,
         `Status: ${schema.registration_status}`,
+        `Entity kind: ${schema.entity_kind || 'page'}`,
+        `Definition revision: ${schema.definition_revision || 1}`,
+        `Editor hints: ${JSON.stringify(schema.editor_config || {})}`,
         `Default: ${schema.is_default ? 'Yes' : 'No'}`,
         `Pages using this schema: ${count ?? 0}`,
         '',
@@ -1122,6 +1306,8 @@ async function buildNewSchemaHandler(
     slug,
     description,
     schema,
+    entity_kind,
+    editor_config,
     llm_instructions,
     integration_requirements,
     tenant_id,
@@ -1130,6 +1316,8 @@ async function buildNewSchemaHandler(
     slug?: string;
     description?: string;
     schema: Record<string, unknown>;
+    entity_kind?: 'page' | 'service-product' | 'event';
+    editor_config?: Record<string, unknown>;
     llm_instructions?: string;
     integration_requirements?: Record<string, unknown>;
     tenant_id?: string;
@@ -1168,6 +1356,8 @@ async function buildNewSchemaHandler(
         integration_requirements: (integration_requirements ?? null) as Record<string, unknown> | null,
         content_scope: contentContract.contract.content_scope,
         page_target: contentContract.contract.page_target,
+        entity_kind,
+        editor_config,
         tenant_id,
       });
 
@@ -1190,6 +1380,9 @@ async function buildNewSchemaHandler(
               registration_code: result.schema.registration_code,
               content_scope: contentContract.contract.content_scope,
               page_target: contentContract.contract.page_target,
+              entity_kind: result.schema.entity_kind,
+              definition_revision: result.schema.definition_revision,
+              editor_config: result.schema.editor_config,
               cms_url: result.schema.tenant_slug
                 ? `${baseUrl}/pages/schema/${result.schema.tenant_slug}/${result.schema.slug}`
                 : `${baseUrl}/pages/schema/${result.schema.api_slug}`,
