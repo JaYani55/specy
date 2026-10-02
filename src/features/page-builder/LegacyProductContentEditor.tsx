@@ -1,25 +1,25 @@
 import React, { useState } from 'react';
-import { useForm, type UseFormReturn, type FieldValues } from 'react-hook-form';
+import { useForm, type FieldErrors, type UseFormReturn, type FieldValues } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Form } from '@/components/ui/form';
-import { PageBuilderData, PageSchema } from '@/types/pagebuilder';
-import { CtaForm } from './CtaForm';
-import { FaqForm } from './FaqForm';
-import { HeroForm } from './HeroForm';
-import { CardsForm } from './CardsForm';
-import { FeaturesForm } from './FeaturesForm';
+import { PageBuilderData } from '@/types/pagebuilder';
+import { useTheme } from '@/contexts/ThemeContext';
+import { CtaForm } from './legacy/CtaForm';
+import { FaqForm } from './legacy/FaqForm';
+import { HeroForm } from './legacy/HeroForm';
+import { CardsForm } from './legacy/CardsForm';
+import { FeaturesForm } from './legacy/FeaturesForm';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { saveProductPage } from '@/services/productPageService';
+import { saveLegacyProductPage } from './legacy/productPageService';
 import { toast } from 'sonner';
 import { Save, Eye, Loader2, ExternalLink } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { SchemaPageBuilderForm } from './SchemaPageBuilderForm';
 
 const ContentBlockSchema = z.union([
   z.object({
@@ -117,22 +117,14 @@ const PageBuilderSchema = z.object({
   'trainer-module': z.boolean().optional(),
 });
 
-interface PageBuilderFormProps {
+interface LegacyProductContentEditorProps {
   initialData?: PageBuilderData | null;
-  schemaInitialData?: Record<string, unknown> | null;
-  productAggregateId?: string;
-  productVersion?: number;
   productId?: string;
   productName?: string;
-  productSlug?: string;
-  productStatus?: 'draft' | 'published' | 'archived';
-  schema?: PageSchema;
-  schemaSlug?: string;
 }
 
-export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, schemaInitialData, productAggregateId, productVersion, productId, productName, productSlug, productStatus, schema, schemaSlug }) => {
-  // All hooks must be declared unconditionally (Rules of Hooks).
-  // Schema-driven rendering delegates to SchemaPageBuilderForm below.
+export const LegacyProductContentEditor: React.FC<LegacyProductContentEditorProps> = ({ initialData, productId, productName }) => {
+  const { language } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
   const [savedSlug, setSavedSlug] = useState<string | null>(null);
   const [pageName, setPageName] = useState(productName || '');
@@ -150,24 +142,6 @@ export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, s
     },
   });
 
-  // ── Schema-driven mode: delegate entirely to SchemaPageBuilderForm ──────────
-  if (schema && schemaSlug) {
-    return (
-      <SchemaPageBuilderForm
-        schema={schema}
-        schemaSlug={schemaSlug}
-        pageId={productId}
-        initialData={schemaInitialData}
-        productAggregateId={productAggregateId}
-        productVersion={productVersion}
-        initialName={productName}
-        initialSlug={productSlug}
-        initialStatus={productStatus}
-      />
-    );
-  }
-
-  // ── Legacy mode only below this line ──────────────────────────────────────
   const onSubmit = async (data: PageBuilderData) => {
     setIsSaving(true);
     try {
@@ -175,7 +149,7 @@ export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, s
         toast.error('Product ID or name is missing.');
         return;
       }
-      const result = await saveProductPage(productId, data, productName);
+      const result = await saveLegacyProductPage(productId, data, productName);
       setSavedSlug(result.slug);
       toast.success('Product page saved successfully!');
     } catch (error: unknown) {
@@ -186,9 +160,18 @@ export const PageBuilderForm: React.FC<PageBuilderFormProps> = ({ initialData, s
     }
   };
 
+  const onInvalid = (errors: FieldErrors<PageBuilderData>) => {
+    const firstError = Object.values(errors)
+      .map((error) => error?.message)
+      .find((message): message is string => typeof message === 'string' && message.trim().length > 0);
+    toast.error(firstError
+      ? (language === 'en' ? `Please check the highlighted fields: ${firstError}` : `Bitte prüfe die markierten Felder: ${firstError}`)
+      : (language === 'en' ? 'Please check the highlighted fields.' : 'Bitte prüfe die markierten Felder.'));
+  };
+
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 max-w-5xl mx-auto pb-20">
+      <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-6 max-w-5xl mx-auto pb-20">
 
         {/* Hero Section */}
         <HeroForm form={form} />

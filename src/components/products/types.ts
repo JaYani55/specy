@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { Product } from '@/services/events/productService';
 export type { Product } from '@/services/events/productService';
-import { MentorGroup } from '@/services/mentorGroupService';
-import { Mentor } from '@/services/events/productService';
+import type { MentorGroup } from '@/services/mentorGroupService';
+import type { Mentor } from '@/services/events/productService';
 
 // Extended interface with traits
 export interface ExtendedMentor extends Mentor {

@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase';
 // Ensure this is explicitly exported as an interface
 export interface Product {
   id: number;
+  product_page_id?: string | null;
+  tenant_id?: string | null;
   name: string;
   description_effort: string;
   description_de: string;

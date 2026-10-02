@@ -10,7 +10,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Trash2, LayoutGrid, CheckCircle } from 'lucide-react';
-import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
 import { IconPicker } from './IconPicker';
 
 interface CardsFormProps {

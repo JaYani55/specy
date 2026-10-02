@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Loader2, Package, Plus, Search } from 'lucide-react';
+import { Archive, ArrowLeft, Loader2, Package, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -124,9 +124,14 @@ const Products: React.FC = () => {
   return (
     <div className="container mx-auto max-w-6xl space-y-6 py-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">{language === 'en' ? 'Products' : 'Produkte'}</h1>
-          <p className="mt-1 text-muted-foreground">{language === 'en' ? 'Service offerings and their schema-driven pages.' : 'Serviceangebote und ihre schema-gesteuerten Seiten.'}</p>
+        <div className="space-y-3">
+          <Button variant="ghost" className="-ml-3" onClick={() => navigate('/products/manage')}>
+            <ArrowLeft className="mr-2 h-4 w-4" />{language === 'en' ? 'Product management' : 'Produktverwaltung'}
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold">{language === 'en' ? 'Product schemas' : 'Produktschemata'}</h1>
+            <p className="mt-1 text-muted-foreground">{language === 'en' ? 'Schema-based product catalogues and their content entries.' : 'Schema-basierte Produktkataloge und deren Inhaltseinträge.'}</p>
+          </div>
         </div>
         <Button onClick={openCreate} disabled={!activeTenantId || productSchemas.length === 0}>
           <Plus className="mr-2 h-4 w-4" />{language === 'en' ? 'New product' : 'Neues Produkt'}

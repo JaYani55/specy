@@ -1092,7 +1092,7 @@ This prevents accidental creation of a globally visible template library.
 - `src/services/tenantService.ts`
 - `src/pages/FormEditor.tsx`
 - `src/pages/ObjectEditor.tsx`
-- `src/pages/SchemaEditor.tsx`
+- `src/features/schema-editor/SchemaEditorPage.tsx`
 - `src/pages/SpecEditor.tsx`
 - `src/pages/Forms.tsx`
 - `src/pages/Objects.tsx`
@@ -1100,7 +1100,8 @@ This prevents accidental creation of a globally visible template library.
 - `src/pages/PagesSchemaDetail.tsx`
 - `src/pages/Specs.tsx`
 - `src/pages/VerwaltungAccounts.tsx`
-- `src/components/pagebuilder/SchemaPageBuilderForm.tsx`
+- `src/features/page-builder/SchemaContentEditor.tsx`
+- `src/features/page-builder/PageBuilderPage.tsx`
 - `src/App.tsx`
 - `src/types/forms.ts`
 - `src/types/objects.ts`

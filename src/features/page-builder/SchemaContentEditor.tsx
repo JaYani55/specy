@@ -39,13 +39,15 @@ import {
 import { Save, Eye, Loader2, ExternalLink, Plus, Trash2, ChevronDown, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '@/contexts/ThemeContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { savePage, triggerRevalidation } from '@/services/pageService';
 import { setServiceProductPublication, updateServiceProduct, type ServiceProduct } from '@/services/productService';
 import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
-import { StandaloneContentBlockEditor } from './StandaloneContentBlockEditor';
-import { ImageUploader } from './ImageUploader';
+import { StandaloneContentBlockEditor } from '@/components/pagebuilder/StandaloneContentBlockEditor';
+import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
@@ -56,6 +58,7 @@ import {
   initializeSchemaContent,
   mergeSchemaContent,
 } from '@/lib/schemaContent';
+import { groupPresentedSchemaFields, humanizeSchemaFieldName, resolveSchemaEditorPresentation, type PageBuilderLanguage } from './editorPresentation';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -272,9 +275,10 @@ interface CodeBlocksEditorProps {
   field: SchemaFieldDefinition;
   blocks: CodeBlockItem[];
   onChange: (blocks: CodeBlockItem[]) => void;
+  language: PageBuilderLanguage;
 }
 
-const CodeBlocksEditor: React.FC<CodeBlocksEditorProps> = ({ field, blocks, onChange }) => {
+const CodeBlocksEditor: React.FC<CodeBlocksEditorProps> = ({ field, blocks, onChange, language }) => {
   const properties = field.items?.properties || [];
   const getProperty = (propertyName: string): SchemaFieldDefinition | undefined =>
     properties.find((property) => property.name === propertyName);
@@ -427,10 +431,7 @@ const CodeBlocksEditor: React.FC<CodeBlocksEditorProps> = ({ field, blocks, onCh
             <div className="grid gap-3 md:grid-cols-2">
               {extraFields.map((property) => (
                 <div key={property.name} className="space-y-1.5">
-                  <Label className="flex items-center gap-1">
-                    <span>{property.name}</span>
-                    <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono">{property.type}</Badge>
-                  </Label>
+                  <Label>{humanizeSchemaFieldName(property.name, language)}</Label>
                   <SchemaFieldRenderer
                     field={property}
                     value={(block as unknown as Record<string, unknown>)[property.name]}
@@ -478,6 +479,10 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
   onChange,
   depth = 0,
 }) => {
+  const { language } = useTheme();
+  const { canManageAccounts } = usePermissions();
+  const fieldLabel = humanizeSchemaFieldName(field.name, language);
+
   // media → ImageUploader
   if (fieldValueTypeConflict(field, value)) {
     let rawValue: string;
@@ -490,9 +495,17 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertDescription className="space-y-2">
-          <p>Der gespeicherte Wert für „{field.name}“ passt nicht zum Feldtyp „{field.type}“ und wurde unverändert beibehalten.</p>
-          <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{rawValue}</pre>
-          <p>Zum Reparieren kann ein korrigierter JSON-Wert importiert werden.</p>
+          <p>{language === 'en'
+            ? `The saved value for “${fieldLabel}” could not be edited with this field and was kept unchanged.`
+            : `Der gespeicherte Wert für „${fieldLabel}“ passt nicht zu diesem Feld und wurde unverändert beibehalten.`}</p>
+          {canManageAccounts ? (
+            <details>
+              <summary className="cursor-pointer text-sm">{language === 'en' ? 'Technical value details' : 'Technische Wertdetails'}</summary>
+              <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{rawValue}</pre>
+            </details>
+          ) : (
+            <p>{language === 'en' ? 'Ask a technical administrator to review this field.' : 'Bitte eine technische Administration um Prüfung dieses Feldes.'}</p>
+          )}
         </AlertDescription>
       </Alert>
     );
@@ -530,7 +543,7 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
   if (field.type === 'CodeBlock[]') {
     const blocks = Array.isArray(value) ? (value as CodeBlockItem[]) : [];
     return (
-      <CodeBlocksEditor field={field} blocks={blocks} onChange={onChange} />
+      <CodeBlocksEditor field={field} blocks={blocks} onChange={onChange} language={language} />
     );
   }
 
@@ -539,7 +552,7 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
     return (
       <Select value={(value as string) || ''} onValueChange={onChange}>
         <SelectTrigger>
-          <SelectValue placeholder={field.placeholder || `${field.name} wählen...`} />
+          <SelectValue placeholder={field.placeholder || `${fieldLabel} wählen...`} />
         </SelectTrigger>
         <SelectContent>
           {field.enum.map((opt) => (
@@ -568,7 +581,7 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
         <Textarea
           value={(value as string) || ''}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder || field.description || `${field.name} eingeben...`}
+          placeholder={field.placeholder || field.description || `${fieldLabel} eingeben...`}
           rows={4}
         />
       );
@@ -577,7 +590,7 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
       <Input
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={field.placeholder || field.description || `${field.name} eingeben...`}
+        placeholder={field.placeholder || field.description || `${fieldLabel} eingeben...`}
       />
     );
   }
@@ -604,7 +617,7 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
           onCheckedChange={(checked) => onChange(checked as boolean)}
         />
         <Label htmlFor={`field-bool-${field.name}-${depth}`} className="cursor-pointer">
-          {field.placeholder || field.description || field.name}
+          {field.placeholder || field.description || fieldLabel}
         </Label>
       </div>
     );
@@ -620,9 +633,8 @@ const SchemaFieldRenderer: React.FC<SchemaFieldRendererProps> = ({
         {field.properties.map((prop) => (
           <div key={prop.name} className="space-y-1.5">
             <Label className="text-sm font-medium flex items-center gap-1">
-              {prop.name}
+              {humanizeSchemaFieldName(prop.name, language)}
               {prop.required && <span className="text-destructive text-xs">*</span>}
-              <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono ml-1">{prop.type}</Badge>
             </Label>
             {prop.description && (
               <p className="text-xs text-muted-foreground">{prop.description}</p>
@@ -745,7 +757,7 @@ const fieldIcon = (name: string): string => {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-interface SchemaPageBuilderFormProps {
+interface SchemaContentEditorProps {
   schema: PageSchema;
   schemaSlug: string;
   pageId?: string;
@@ -757,7 +769,7 @@ interface SchemaPageBuilderFormProps {
   productVersion?: number;
 }
 
-export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
+export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   schema,
   schemaSlug,
   pageId,
@@ -768,14 +780,17 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   productAggregateId,
   productVersion: initialProductVersion,
 }) => {
+  const { language } = useTheme();
+  const permissions = usePermissions();
   const fields = parseSchemaFields(schema.schema as Record<string, unknown>);
+  const fieldPresentation = resolveSchemaEditorPresentation(fields, schema.editor_config, language);
   const requiredFields = fields.filter((f) => f.required);
   const optionalFields = fields.filter((f) => !f.required);
 
   // ── Form state
   const [pageName, setPageName]           = useState(initialName || '');
   const [pageSlug, setPageSlug]           = useState(() => (initialSlug || (initialName ? generateSlug(initialName) : '')));
-  const [slugEdited, setSlugEdited]       = useState(false);
+  const [slugEdited, setSlugEdited]       = useState(Boolean(initialSlug));
   const [formData, setFormData]           = useState<Record<string, unknown>>(() =>
     initializeSchemaContent(buildInitialData(fields), initialData)
   );
@@ -837,7 +852,11 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
     });
   };
 
-  const inactiveOptional = optionalFields.filter((f) => !activeOptional.has(f.name));
+  const requiredGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => field.required));
+  const activeOptionalGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => !field.required && activeOptional.has(field.name)));
+  const inactiveOptionalGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => !field.required && !activeOptional.has(field.name)));
+  const inactiveOptionalCount = inactiveOptionalGroups.reduce((total, group) => total + group.fields.length, 0);
+  const isServiceProduct = schema.entity_kind === 'service-product';
 
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
@@ -961,172 +980,212 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
 
-      {/* ── Page Identity ─────────────────────────────────── */}
+      {/* PageBuilder is the content layer; schema design remains in SchemaEditor. */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <span>📝</span>
-            <span>Seiteninformationen</span>
+            <span>{isServiceProduct ? '📦' : '📝'}</span>
+            <span>{isServiceProduct
+              ? (language === 'en' ? 'Product details' : 'Produktdetails')
+              : (language === 'en' ? 'Page details' : 'Seitendetails')}</span>
           </CardTitle>
-          <CardDescription>
-            Schema: <strong>{schema.name}</strong>
-            {schema.registration_status === 'registered' && schema.frontend_url && (
-              <> · Domain: <a href={schema.frontend_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{schema.frontend_url.replace(/^https?:\/\//, '')}</a></>
-            )}
-          </CardDescription>
+          {schema.description && <CardDescription>{schema.description}</CardDescription>}
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="page-name" className="text-sm font-medium">
-                Seitenname <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="page-name"
-                value={pageName}
-                onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="z.B. Über uns"
-              />
-            </div>
-            <div className="space-y-1.5">
-          {pageId && (
-            <EntityActionsRow
-              entityType="page"
-              entityId={pageId}
-              tenantId={schema.tenant_id}
+          <div className="max-w-2xl space-y-1.5">
+            <Label htmlFor="page-name" className="text-sm font-medium">
+              {isServiceProduct
+                ? (language === 'en' ? 'Product name' : 'Produktname')
+                : (language === 'en' ? 'Page name' : 'Seitenname')}
+              <span className="text-destructive"> *</span>
+            </Label>
+            <Input
+              id="page-name"
+              value={pageName}
+              onChange={(e) => handleNameChange(e.target.value)}
+              placeholder={language === 'en' ? 'Enter a name' : 'Namen eingeben'}
             />
-          )}
-              <Label htmlFor="page-slug" className="text-sm font-medium">
-                URL-Slug
-              </Label>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground shrink-0">/</span>
-                <Input
-                  id="page-slug"
-                  value={pageSlug}
-                  onChange={(e) => handleSlugChange(e.target.value)}
-                  placeholder="url-slug"
-                  className="font-mono text-sm"
-                />
-              </div>
-              {schema.frontend_url && detailTarget ? (
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, detailTarget.host_path, pageSlug || 'example-slug')}</span>
-                </p>
-              ) : schema.frontend_url && schema.frontend_targets?.some((target) => target.kind === 'collection-slot' && target.enabled) ? (
-                <p className="text-xs text-muted-foreground">
-                  Wird über einen registrierten Sammlungsslot im Frontend angezeigt; für diesen Eintrag gibt es keine Detailvorschau.
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Wird automatisch aus dem Namen generiert
-                </p>
-              )}
-            </div>
           </div>
+          {permissions.canManageAccounts && (
+            <details className="rounded-lg border px-4 py-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                {language === 'en' ? 'Advanced page settings' : 'Erweiterte Seiteneinstellungen'}
+              </summary>
+              <div className="mt-4 space-y-4">
+                {pageId && (
+                  <EntityActionsRow
+                    entityType="page"
+                    entityId={pageId}
+                    tenantId={schema.tenant_id}
+                  />
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="page-slug" className="text-sm font-medium">
+                    {language === 'en' ? 'URL slug' : 'URL-Slug'}
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">/</span>
+                    <Input
+                      id="page-slug"
+                      value={pageSlug}
+                      onChange={(e) => handleSlugChange(e.target.value)}
+                      placeholder="url-slug"
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                  {schema.frontend_url && detailTarget ? (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, detailTarget.host_path, pageSlug || 'example-slug')}</span>
+                    </p>
+                  ) : schema.frontend_url && schema.frontend_targets?.some((target) => target.kind === 'collection-slot' && target.enabled) ? (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en'
+                        ? 'This entry is displayed in a registered collection slot and has no individual preview URL.'
+                        : 'Dieser Eintrag wird in einem registrierten Sammlungsslot angezeigt und hat keine eigene Vorschau-URL.'}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en' ? 'Generated from the name unless changed.' : 'Wird automatisch aus dem Namen gebildet.'}
+                    </p>
+                  )}
+                  {schema.registration_status === 'registered' && schema.frontend_url && (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'en' ? 'Connected frontend:' : 'Verbundenes Frontend:'}{' '}
+                      <a href={schema.frontend_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                        {schema.frontend_url.replace(/^https?:\/\//, '')}
+                      </a>
+                    </p>
+                  )}
+                </div>
+              </div>
+            </details>
+          )}
         </CardContent>
       </Card>
 
-      {/* ── Required Fields ───────────────────────────────── */}
-      {requiredFields.length === 0 && optionalFields.length === 0 && (
+      {/* Required content fields, grouped and labelled for the content editor. */}
+      {fields.length === 0 && (
         <Card className="border-dashed border-amber-300 bg-amber-50/50 dark:bg-amber-950/20">
           <CardContent className="py-8 text-center text-sm text-amber-700 dark:text-amber-400">
-            Dieses Schema hat noch keine Felder definiert. Öffne den Schema-Editor um Felder hinzuzufügen.
+            {language === 'en'
+              ? 'This content type has no editable fields yet. Ask a technical administrator to update its schema.'
+              : 'Für diesen Inhaltstyp sind noch keine bearbeitbaren Felder definiert. Bitte eine technische Administration um Aktualisierung des Schemas.'}
           </CardContent>
         </Card>
       )}
 
-      {requiredFields.map((field) => (
-        <Card key={field.name}>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <span>{fieldIcon(field.name)}</span>
-              <span className="capitalize">{field.name.replace(/_/g, ' ')}</span>
-              <Badge variant="destructive" className="text-[10px] h-4 px-1.5">Pflichtfeld</Badge>
-              <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono">{field.type}</Badge>
-            </CardTitle>
-            {field.description && (
-              <CardDescription>{field.description}</CardDescription>
-            )}
-          </CardHeader>
-          <CardContent>
-            <SchemaFieldRenderer
-              field={field}
-              value={formData[field.name]}
-              onChange={(v) => updateField(field.name, v)}
-            />
-          </CardContent>
-        </Card>
-      ))}
-
-      {/* ── Active Optional Fields ────────────────────────── */}
-      {optionalFields
-        .filter((f) => activeOptional.has(f.name))
-        .map((field) => (
-          <Card key={field.name}>
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="space-y-1 flex-1">
+      {requiredGroups.map((group) => (
+        <section key={`required-${group.key}`} className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">{group.label}</h2>
+            {group.description && <p className="text-sm text-muted-foreground">{group.description}</p>}
+          </div>
+          <div className="space-y-3">
+            {group.fields.map(({ field, label, helpText }) => (
+              <Card key={field.name}>
+                <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <span>{fieldIcon(field.name)}</span>
-                    <span className="capitalize">{field.name.replace(/_/g, ' ')}</span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5">Optional</Badge>
-                    <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono">{field.type}</Badge>
-                  </CardTitle>
-                  {field.description && (
-                    <CardDescription>{field.description}</CardDescription>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground hover:text-destructive shrink-0 ml-2"
-                  onClick={() => removeOptionalField(field.name)}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Entfernen
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <SchemaFieldRenderer
-                field={field}
-                value={formData[field.name]}
-                onChange={(v) => updateField(field.name, v)}
-              />
-            </CardContent>
-          </Card>
-        ))}
-
-      {/* ── Add Optional Fields ───────────────────────────── */}
-      {inactiveOptional.length > 0 && (
-        <Card className="border-dashed">
-          <CardContent className="py-6">
-            <div className="space-y-3 text-center">
-              <p className="text-sm text-muted-foreground">
-                {inactiveOptional.length} optionale{inactiveOptional.length !== 1 ? ' Felder' : 's Feld'} verfügbar — klicke um hinzuzufügen
-              </p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {inactiveOptional.map((field) => (
-                  <Button
-                    key={field.name}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() => addOptionalField(field.name)}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>{fieldIcon(field.name)}</span>
-                    <span className="capitalize">{field.name.replace(/_/g, ' ')}</span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1 font-mono ml-1">
-                      {field.type}
+                    <span>{label}</span>
+                    <Badge variant="destructive" className="text-[10px] h-4 px-1.5">
+                      {language === 'en' ? 'Required' : 'Pflichtfeld'}
                     </Badge>
-                  </Button>
-                ))}
+                  </CardTitle>
+                  {helpText && <CardDescription>{helpText}</CardDescription>}
+                </CardHeader>
+                <CardContent>
+                  <SchemaFieldRenderer
+                    field={field}
+                    value={formData[field.name]}
+                    onChange={(value) => updateField(field.name, value)}
+                  />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {/* Active optional fields stay visible until explicitly removed. */}
+      {activeOptionalGroups.map((group) => (
+        <section key={`optional-${group.key}`} className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">{group.label}</h2>
+            {group.description && <p className="text-sm text-muted-foreground">{group.description}</p>}
+          </div>
+          <div className="space-y-3">
+            {group.fields.map(({ field, label, helpText }) => (
+              <Card key={field.name}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1 flex-1">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <span>{fieldIcon(field.name)}</span>
+                        <span>{label}</span>
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                          {language === 'en' ? 'Optional' : 'Optional'}
+                        </Badge>
+                      </CardTitle>
+                      {helpText && <CardDescription>{helpText}</CardDescription>}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-destructive shrink-0 ml-2"
+                      onClick={() => removeOptionalField(field.name)}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      {language === 'en' ? 'Remove' : 'Entfernen'}
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <SchemaFieldRenderer
+                    field={field}
+                    value={formData[field.name]}
+                    onChange={(value) => updateField(field.name, value)}
+                  />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {/* Optional fields are available when the developer schema defines them. */}
+      {inactiveOptionalCount > 0 && (
+        <Card className="border-dashed">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{language === 'en' ? 'More fields' : 'Weitere Felder'}</CardTitle>
+            <CardDescription>
+              {language === 'en'
+                ? isServiceProduct ? 'Add optional details when they apply to this product.' : 'Add optional details when they apply to this page.'
+                : isServiceProduct ? 'Füge optionale Angaben hinzu, wenn sie für dieses Produkt relevant sind.' : 'Füge optionale Angaben hinzu, wenn sie für diese Seite relevant sind.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {inactiveOptionalGroups.map((group) => (
+              <div key={`available-${group.key}`} className="space-y-2">
+                {inactiveOptionalGroups.length > 1 && <p className="text-xs font-medium text-muted-foreground">{group.label}</p>}
+                <div className="flex flex-wrap gap-2">
+                  {group.fields.map(({ field, label }) => (
+                    <Button
+                      key={field.name}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => addOptionalField(field.name)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>{fieldIcon(field.name)}</span>
+                      <span>{label}</span>
+                    </Button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ))}
           </CardContent>
         </Card>
       )}
@@ -1147,7 +1206,7 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
           <AlertDescription className="space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-green-800 dark:text-green-200 font-medium">
-                Seite gespeichert:{' '}
+                {isServiceProduct ? (language === 'en' ? 'Product saved:' : 'Produkt gespeichert:') : (language === 'en' ? 'Page saved:' : 'Seite gespeichert:')}{' '}
                 <code className="font-mono text-sm bg-green-100 dark:bg-green-900 px-1.5 py-0.5 rounded">
                   /{savedSlug}
                 </code>
@@ -1184,15 +1243,25 @@ export const SchemaPageBuilderForm: React.FC<SchemaPageBuilderFormProps> = ({
       <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-t z-50">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-          <p className="text-sm text-muted-foreground">
-            Schema: <span className="font-semibold">{schema.name}</span>
-            {' '}—{' '}
-            Seite: <span className="font-semibold">{pageName || 'Unbenannt'}</span>
-            {schema.registration_status === 'registered' && (
-              <Badge variant="default" className="ml-2 text-[10px]">ISR aktiv</Badge>
+            <p className="text-sm text-muted-foreground">
+              {isServiceProduct
+                ? (language === 'en' ? 'Product' : 'Produkt')
+                : (language === 'en' ? 'Page' : 'Seite')}:{' '}
+              <span className="font-semibold">{pageName || (language === 'en' ? 'Untitled' : 'Unbenannt')}</span>
+              {permissions.canManageAccounts && schema.registration_status === 'registered' && (
+                <Badge variant="default" className="ml-2 text-[10px]">ISR aktiv</Badge>
+              )}
+            </p>
+            {permissions.canManageAccounts && (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted-foreground">
+                  {language === 'en' ? 'Developer tools' : 'Entwicklerwerkzeuge'}
+                </summary>
+                <div className="mt-2 rounded-lg border bg-background p-2">
+                  <JsonImporter fields={fields} onImport={handleJsonImport} />
+                </div>
+              </details>
             )}
-          </p>
-            <JsonImporter fields={fields} onImport={handleJsonImport} />
           </div>
           <div className="flex items-center gap-2">
           {schema.entity_kind === 'service-product' && publicationStatus === 'published' && (

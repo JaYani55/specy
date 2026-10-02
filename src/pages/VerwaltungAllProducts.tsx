@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTheme } from "@/contexts/ThemeContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNavigate } from "react-router-dom";
-import { Package, Grid, List, ChevronDown, ChevronRight, Pencil, Trash2, ArrowUpRight, Grid3X3 } from 'lucide-react';
+import { Package, Boxes, Grid, List, ChevronDown, ChevronRight, Pencil, Trash2, ArrowUpRight, Grid3X3 } from 'lucide-react';
 
 // Import consistent admin components
 import { AdminPageLayout, AdminCard, AdminLoading } from '@/components/admin/ui';
@@ -41,7 +41,7 @@ const VerwaltungManageProducts = () => {
   // Add permission check
   useEffect(() => {
     if (!permissions.canManageProducts) {
-      navigate('/admin');
+      navigate('/products/schemas');
     }
   }, [permissions.canManageProducts, navigate]);
 
@@ -96,7 +96,7 @@ const VerwaltungManageProducts = () => {
 
   const handleNewProduct = () => {
     // Navigate to create product with state indicating we came from all-products
-    navigate('/admin/create-product', { state: { from: '/admin/all-products' } });
+    navigate('/products/manage/new', { state: { from: '/products/manage' } });
   };
 
   const handleProductsChange = () => {
@@ -150,7 +150,7 @@ const VerwaltungManageProducts = () => {
           key={product.id}
           className="relative overflow-hidden cursor-pointer group"
           clickable
-          onClick={() => navigate(`/admin/product/${product.id}`)}
+          onClick={() => navigate(`/products/manage/${product.id}`)}
         >
           <div 
             className="h-28 rounded-t-lg flex items-center justify-center relative overflow-hidden"
@@ -326,7 +326,7 @@ const VerwaltungManageProducts = () => {
               <React.Fragment key={product.id}>
                 <TableRow 
                   className="cursor-pointer hover:bg-muted/50 group"
-                  onClick={() => navigate(`/admin/product/${product.id}`)}
+                  onClick={() => navigate(`/products/manage/${product.id}`)}
                 >
                   <TableCell>
                     <div className="flex items-center justify-center gap-2">
@@ -505,6 +505,10 @@ const VerwaltungManageProducts = () => {
         // Only show the view toggle and new product button when NOT in form mode
         !showProductForm ? (
           <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={() => navigate('/products/schemas')}>
+              <Boxes className="mr-2 h-4 w-4" />
+              {language === 'en' ? 'Edit schemas' : 'Schemata bearbeiten'}
+            </Button>
             {/* View toggle buttons */}
             <ToggleGroup 
               type="single" 

@@ -292,7 +292,7 @@ const PagesSchemaDetail: React.FC = () => {
             {language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen'}
           </Button>
           {schema.entity_kind === 'service-product' ? (
-            <Button onClick={() => navigate('/products')}>
+            <Button onClick={() => navigate('/products/schemas')}>
               {language === 'en' ? 'Open products' : 'Produkte öffnen'}
             </Button>
           ) : schema.entity_kind === 'event' ? null : (

@@ -10,7 +10,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Trash2, Star } from 'lucide-react';
-import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
 import { ContentBlockEditor } from './ContentBlockEditor';
 import { AddContentBlock } from './AddContentBlock';
 

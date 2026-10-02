@@ -1,774 +1,95 @@
-# Architecture — Dynamic Schema-Driven PageBuilder
+# PageBuilder and Schema Editor architecture
 
-## Overview
+## Editor hierarchy
 
-The Specy pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
+Specy has two distinct editing features with a one-way dependency:
 
-This architecture enables:
-- **Multi-frontend support**: One CMS powering multiple frontends (Next.js, SvelteKit, etc.)
-- **Schema-driven content**: Content editors work within the constraints of a registered schema
-- **LLM-assisted frontend generation**: Schemas include machine-readable specs, per-field help text, placeholders, and meta-descriptions
-- **ISR-ready communication**: On-demand revalidation webhooks notify frontends of content changes
-- **Reversible registration**: Domains can be disconnected at any time via the Unhook flow
-- **Reusable form references inside content**: Pages can embed published forms through a dedicated `form` content block
-
-### Frontend target model
-
-Schema content and frontend placement are separate contracts. The schema JSON and each `pages.content` value remain arbitrary, case-sensitive JSONB. A registered schema may publish its entries through one or more frontend targets:
-
-- **`collection-slot`** — renders the schema's published collection inside an existing route, for example `host_path: "/"` and `placement_key: "home.posts"`.
-- **`detail-page`** — optionally renders an individual entry at a route template such as `/posts/:slug`.
-
-The browser URL `https://site.example/#posts` is not a server route. The fragment is client-side navigation only. Specy stores and invalidates `/`, while the frontend maps the semantic placement key to its own component or anchor. Specy never accepts CSS selectors, DOM queries, HTML, or fragments as placement metadata.
-
----
-
-## System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Specy (React SPA)                        │
-│                                                                 │
-│  /pages                         Schema Hub (list all schemas)   │
-│  /pages/schema/new              Schema Editor (create new)      │
-│  /pages/schema/:tenant/:slug    Tenant-local schema page list   │
-│  /pages/schema/:tenant/:slug/edit/:id   PageBuilder (edit page)│
-│  /pages/schema/:tenant/:slug/new        PageBuilder (new page) │
-│  /pages/schema/:legacyApiSlug   Legacy one-segment schema route│
-│  /forms                         Forms list/editor/answers       │
-└────────────────┬────────────────────────────────────────────────┘
-                 │ Direct Supabase client calls
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Supabase (PostgreSQL)                        │
-│                                                                 │
-│  page_schemas    Schema definitions, registration, LLM config   │
-│  pages           Page content (JSONB), linked to schema         │
-│  forms           Form definitions (JSONB) + share/API config    │
-│  forms_answers   Submitted answers + source tracking            │
-│  mentorbooking_products   Legacy FK to pages via product_page_id│
-└────────────────┬────────────────────────────────────────────────┘
-                 │ Service role key (server-side only)
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Hono API (Cloudflare Workers)                       │
-│                                                                 │
-│  GET  /api/schemas                    List all schemas          │
-│  GET  /api/schemas/:slug/spec.txt     LLM-ready schema spec     │
-│  POST /api/schemas/:slug/register     Frontend registration      │
-│  GET  /api/schemas/:slug/health       Domain ONLINE/OFFLINE      │
-│  POST /api/schemas/:slug/revalidate   Trigger ISR on frontend   │
-│  GET  /api/forms                      Published forms index      │
-│  GET  /api/forms/:id-or-slug          Machine-readable form def  │
-│  POST /api/forms/:id-or-slug/answers  Store form submission      │
-│  /mcp                                 MCP agent endpoint        │
-└────────────────┬────────────────────────────────────────────────┘
-                 │ HTTP (public)
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Frontend (Next.js / SvelteKit / etc.)              │
-│                                                                 │
-│  Consumes page content from Supabase                            │
-│  Implements ISR revalidation endpoint                           │
-│  Registers with CMS via registration callback                   │
-└─────────────────────────────────────────────────────────────────┘
+```text
+Frontend developer / technical administrator
+  └─ Schema Editor: defines the versioned entry contract and site integration
+       └─ PageBuilder: reads that contract and edits one entry's content
+            └─ Save adapter: ordinary page save OR service-product aggregate save
 ```
 
----
+The **Schema Editor** owns `page_schemas.schema` and technical schema/integration metadata. The **PageBuilder** is a content editor projected from that contract. It does not edit the schema definition. Content managers can edit an entry without changing field structure, required rules, frontend targets, or schema revisions.
 
-## Database Schema
+The source features are separated accordingly:
 
-### `page_schemas`
+- `src/features/schema-editor/SchemaEditorPage.tsx` — technical schema creation/settings.
+- `src/features/page-builder/` — PageBuilder route resolution, schema content editor, presentation projection, and isolated legacy compatibility editor.
+- `src/components/pagebuilder/` — shared UI primitives used by PageBuilder and other features such as Objects; this is not the Schema Editor.
 
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `name` | `varchar(255)` | NOT NULL — e.g., "Service-Product", "Blog" |
-| `slug` | `varchar(255)` | NOT NULL — tenant-local human-facing identifier; unique within a tenant |
-| `api_slug` | `text` | UNIQUE NOT NULL — stable API identifier. Existing schemas retain their former global slug as this value; new schemas receive an opaque identifier. |
-| `description` | `text` | Human-readable description |
-| `schema` | `jsonb` | NOT NULL — JSON schema definition (see Schema Field Format below) |
-| `llm_instructions` | `text` | Custom instructions for the LLM agent |
-| `registration_code` | `varchar(64)` | UNIQUE — one-time code for frontend callback |
-| `registration_status` | `varchar(50)` | `'pending'` \| `'waiting'` \| `'registered'` \| `'archived'` |
-| `frontend_url` | `text` | Base URL of the frontend consuming this schema |
-| `revalidation_endpoint` | `text` | ISR webhook path (e.g., `/api/revalidate`) |
-| `revalidation_secret` | `text` | Shared secret for webhook auth |
-| `slug_structure` | `text` | URL pattern for pages, default `'/:slug'` |
-| `is_default` | `boolean` | `DEFAULT false` — marks built-in schemas |
-| `created_at` | `timestamptz` | `DEFAULT now()` |
-| `updated_at` | `timestamptz` | `DEFAULT now()` (auto-updated via trigger) |
+## Routes
 
-Current additive schema metadata (see [`../features/schema-contracts.md`](../features/schema-contracts.md)): `entity_kind` (`page` by default, `service-product`, or `event`), positive `definition_revision`, and non-executable `editor_config`. These fields are separate from developer schema/content JSON.
-
-Tenant-owned schema slugs are scoped by `(tenant_id, slug)`, so different workspaces may each use names such as `blog`. CMS routes use `/pages/schema/:tenantSlug/:schemaSlug`; existing one-segment CMS links continue to resolve through `api_slug`.
-
-All existing `/api/schemas/:slug/...` endpoints remain compatible: the path `slug` is the stable `api_slug` (for every pre-existing schema, it is exactly the old slug). Discovery responses expose `slug` (legacy/API identifier), `schema_slug` (tenant-local name), and `api_slug`. Use `api_slug` in API URLs and the tenant-qualified route for CMS navigation.
-
-### `pages`
-
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `slug` | `varchar(255)` | UNIQUE NOT NULL |
-| `name` | `varchar(255)` | NOT NULL |
-| `status` | `varchar(50)` | `'draft'` \| `'published'` \| `'archived'` |
-| `is_draft` | `boolean` | `DEFAULT true`, auto-synced with status |
-| `content` | `jsonb` | NOT NULL — the full page content matching schema |
-| `schema_id` | `uuid` FK | REFERENCES `page_schemas(id)` — nullable for legacy |
-| `domain_url` | `text` | The frontend domain this page belongs to |
-| `updated_at` | `timestamptz` | Auto-updated via trigger |
-| `published_at` | `timestamptz` | Nullable |
-
-### `schema_frontend_targets`
-
-Target metadata is stored separately from `page_schemas.schema` and `pages.content`:
-
-| Column | Type | Details |
+| Route | Feature | Responsibility |
 |---|---|---|
-| `schema_id` | `uuid` | Parent schema |
-| `target_key` | `varchar` | Stable semantic key, unique per schema |
-| `kind` | `varchar` | `collection-slot` or `detail-page` |
-| `host_path` | `text` | Server path such as `/` or `/posts/:slug`; never a fragment |
-| `placement_key` | `varchar` | Required for collection slots; semantic frontend contract |
-| `supports_preview` | `boolean` | Whether an individual entry preview is meaningful |
-| `is_primary`, `sort_order`, `enabled` | — | Operational target state |
+| `/pages/schema/new` | Schema Editor | Create a technical schema definition. |
+| `/pages/schema/:tenantSlug/:schemaSlug/settings` (and the legacy one-segment equivalent) | Schema Editor | Edit the schema definition and integration configuration. |
+| `/pages/schema/:tenantSlug/:schemaSlug` | Schema detail | List entries and navigate to content editing or technical settings. |
+| `/pages/schema/:tenantSlug/:schemaSlug/new` | PageBuilder | Create an ordinary page using the selected schema. |
+| `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` | PageBuilder | Edit the canonical page entry. Service products use aggregate update/publish operations. |
+| `/pagebuilder/:legacyProductId` | Compatibility alias | Resolve an old numeric product reference. If it has a schema-linked page, redirect to that page's canonical schema route. Only linked schema-less historical pages use the fixed-layout legacy editor. |
 
-Target updates are validated and replaced atomically by `PUT /api/schemas/:slug/frontend-targets`. They do not rewrite the schema definition or existing page JSON.
+The schema route verifies the page/schema/workspace tuple. Event-classified schemas do not yet have an event aggregate editor and are refused by this route.
 
-**PageSchema.slug_structure** is the schema-level route template. It remains the legacy compatibility field; target-aware registration stores the complete frontend placement contract separately in `schema_frontend_targets`.
+## PageBuilder source behavior
 
-### `forms`
+### Route controller
 
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `name` | `varchar(255)` | NOT NULL |
-| `slug` | `varchar(255)` | UNIQUE NOT NULL |
-| `description` | `text` | Optional description |
-| `schema` | `jsonb` | NOT NULL — form field definition |
-| `llm_instructions` | `text` | Optional custom instructions for agents |
-| `status` | `varchar(50)` | `'draft'` \| `'published'` \| `'archived'` |
-| `share_enabled` | `boolean` | Enables direct share rendering |
-| `share_slug` | `varchar(255)` | Unique root-level share path |
-| `requires_auth` | `boolean` | Shared auth toggle for share + REST access |
-| `api_enabled` | `boolean` | Enables machine-facing REST access |
-| `created_at` | `timestamptz` | `DEFAULT now()` |
-| `updated_at` | `timestamptz` | `DEFAULT now()` (auto-updated via trigger) |
+`src/features/page-builder/PageBuilderPage.tsx` loads either a canonical schema route or a legacy numeric product alias. For canonical routes it loads the schema and page, verifies ownership, and loads a service-product aggregate when needed. For a legacy alias it resolves `mentorbooking_products.product_page_id`; schema-bound pages redirect with history replacement before any legacy form renders.
 
-### `forms_answers`
+### Schema content editor
 
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `form_id` | `uuid` FK | References `forms(id)` |
-| `submitted_by` | `uuid` | Optional `auth.users.id` |
-| `answers` | `jsonb` | Submitted answer payload |
-| `source_slug` | `text` | Where the form was filled |
-| `submitted_via` | `varchar(50)` | `'share'` \| `'api'` \| `'page'` |
-| `created_at` | `timestamptz` | `DEFAULT now()` |
+`src/features/page-builder/SchemaContentEditor.tsx` renders schema fields as content-oriented widgets for strings, numbers, booleans, enums, media, arrays, objects, content blocks, and code blocks. It initializes defaults without overwriting saved values. Unknown keys and custom block data remain intact. Incompatible saved values are preserved and reported rather than coerced.
 
-### Relationship Diagram
+- Ordinary `page` entries save through `savePage()` after schema/workspace ownership checks.
+- `service-product` entries save through `updateServiceProduct()` using the aggregate UUID, expected aggregate version, and schema definition revision. Publication uses the aggregate publish operation.
+- Schema-bound content cannot be written through the old `saveLegacyProductPage()` adapter or generic page save.
 
-```
-mentorbooking_products.product_page_id ──FK──► pages.id
-pages.schema_id ──FK──► page_schemas.id
-```
+### Presentation derived from schema
 
----
+`src/features/page-builder/editorPresentation.ts` creates a safe presentation model from schema fields and optional `editor_config.page_builder` hints. Hints may supply localized labels/help, field grouping, and ordering. Without hints, the editor humanizes JSON keys, uses schema `description` as help and `placeholder` as an input placeholder, and preserves schema order.
 
-## Schema Field Format
-
-Each field in a schema's `schema` JSONB column serialises a `SchemaFieldDefinition`:
+Example (presentation-only metadata, not part of an entry's `content`):
 
 ```json
 {
-  "field_name": {
-    "type": "string | number | boolean | array | object | ContentBlock[] | CodeBlock[] | media",
-    "description": "Help text shown below the field in the Page Builder",
-    "placeholder": "Input placeholder shown inside the input in the Page Builder",
-    "meta_description": "Developer / LLM context — NOT rendered in Page Builder, only exposed via API and spec.txt",
-    "required": true,
-    "nullable": false,
-    "enum": ["option1", "option2"],
-    "properties": { /* nested fields for type=object */ },
-    "items": { /* item field definition for type=array */ }
-  }
-}
-```
-
-### SchemaFieldDefinition TypeScript interface
-
-```ts
-interface SchemaFieldDefinition {
-  name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'ContentBlock[]' | 'CodeBlock[]' | 'media';
-  description?: string;       // shown in PageBuilder below the field
-  placeholder?: string;       // shown inside the input in PageBuilder
-  meta_description?: string;  // developer/LLM context, API-only
-  required?: boolean;
-  nullable?: boolean;
-  properties?: SchemaFieldDefinition[];
-  items?: SchemaFieldDefinition;
-  enum?: string[];
-}
-```
-
-**`meta_description`** is designed for LLM agents and developers to understand field intent, design decisions, and constraints. It is serialised into the schema JSONB and exposed via `GET /api/schemas/:slug/spec.txt` and the schema API — but is never rendered in the PageBuilder UI.
-
-### Form Schema Format
-
-Forms use a flat field-definition JSON structure rather than the recursive page schema format.
-
-```json
-{
-  "email": {
-    "type": "email",
-    "label": "Email",
-    "required": true,
-    "placeholder": "ada@example.com",
-    "meta_description": "Primary contact address for follow-up."
-  },
-  "topic": {
-    "type": "select",
-    "label": "Topic",
-    "required": true,
-    "options": ["Sales", "Support", "Partnership"]
-  }
-}
-```
-
-Supported form field types in the current implementation:
-
-- `text`
-- `textarea`
-- `email`
-- `number`
-- `checkbox`
-- `select`
-- `radio`
-- `date`
-
----
-
-## Hono API Endpoints
-
-All endpoints are served from `api/` directory, deployed as a Cloudflare Worker.
-
-### `GET /api/schemas`
-Returns the full schema index with registration status, spec URLs, and register URLs.
-
-### `GET /api/schemas/:slug/spec.txt`
-Returns the LLM-ready plaintext specification for a schema. Includes field definitions (including `meta_description`), content block types, LLM instructions, and a registration payload example. Content-Type: `text/plain`.
-
-### `POST /api/schemas/:slug/register`
-Completes frontend registration. Here `:slug` is the stable `api_slug` identifier, not the tenant-local schema slug. Validates the one-time `registration_code`, frontend origin, and target definitions. Stores the frontend connection and `targets`; legacy `slug_structure` requests remain supported and map to a primary `detail-page` target. A root requirement `/` maps to a collection slot rather than being forced into `/:slug`. Returns `403` on invalid code.
-
-Request body:
-```json
-{
-  "code": "<registration_code>",
-  "frontend_url": "https://your-site.com",
-  "revalidation_endpoint": "/api/revalidate",
-  "revalidation_secret": "<shared_secret>",
-  "targets": [
-    { "target_key": "home.posts", "kind": "collection-slot", "host_path": "/", "placement_key": "home.posts" },
-    { "target_key": "posts.detail", "kind": "detail-page", "host_path": "/posts/:slug" }
-  ]
-}
-```
-
-### `PUT /api/schemas/:slug/frontend-targets`
-Authenticated schema editors can atomically replace target metadata. The endpoint validates target keys, server paths, semantic placement keys, primary-target rules, and detail-route cardinality. It never changes `page_schemas.schema` or `pages.content`.
-
-### `PATCH /api/schemas/:slug/system-data`
-Authenticated schema editors can correct non-secret integration fields: `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. The endpoint validates outbound/canonical frontend URLs and route/path shapes, and does not change schema JSON, page content, registration codes, or revalidation secrets. This supports repairing a wrong frontend URL without issuing another registration code.
-
-### `GET /api/schemas/:slug/pages`
-Returns published pages through the schema-scoped Worker API after registration. Ordinary page content is returned unchanged. Product schemas return only active product-owned published pages; `?include=entity` optionally adds the allow-listed product UUID under `relations.entity`, never inside `content`.
-
-### `GET /api/schemas/:slug/pages/:pageSlug`
-Returns one published page belonging to the resolved schema for optional detail-page rendering.
-
-### `GET /api/schemas/:slug/health`
-Server-side domain health check. Returns `{ status: 'online' | 'offline', latency_ms }`.
-
-### `POST /api/schemas/:slug/revalidate`
-Triggers target-aware ISR revalidation on the registered frontend. Collection targets invalidate their `host_path`, while detail targets replace `:slug` with the page slug. Fragments such as `#posts` are never sent to the frontend server.
-
-### `/mcp`
-MCP-compatible endpoint exposing built-in schema tools plus dynamic MCP entries from the MCP registry. Published public entries are visible without auth. Published closed entries require a valid Supabase auth JWT. Authenticated page-management tools are organized under the `specy-pages > schemas` hierarchy (`specy_pages_schemas_*`): list/get schemas, list/get pages, create/update ordinary page content and system fields, revision-checked schema definition updates, repair schema integration metadata, and replace frontend targets. Page reads and writes remain constrained by Supabase RLS. Generic page create/update rejects `service-product` and `event` schemas until entity-aware aggregate services are available.
-
-### `GET /api/forms`
-Returns the published forms index for CMS and agent use.
-
-### `GET /api/forms/:identifier`
-Returns a normalized machine-readable form definition including fields and `llm_instructions`.
-
-### `POST /api/forms/:identifier/answers`
-Validates submitted answers against the stored form definition and writes a row into `forms_answers`.
-
-### Share Endpoints
-
-- `GET /api/forms/share/:shareSlug`
-- `POST /api/forms/share/:shareSlug/answers`
-
-These endpoints resolve forms by `share_slug` for the direct ServiceCMS share-page flow.
-
----
-
-## Schema Registration Flow
-
-Tenant-local schemas can share names/slugs across workspaces. Internal CMS links use `/pages/schema/{tenant_slug}/{schema_slug}`; legacy one-segment links remain supported for schemas created before tenant-local slugs were introduced. Public/API routes continue using the stable `api_slug`, so existing integrations are not invalidated when schema slugs become tenant-local.
-
-```
-1. Staff creates schema in CMS → status='pending'
-2. Staff clicks "Start Registration" → status='waiting', registration_code generated
-3. CMS shows "Waiting for Frontend" screen, polls every 10s
-4. LLM Agent / Developer fetches spec.txt, builds frontend template
-5. Frontend POSTs to /register with code + frontend_url + revalidation config + targets
-  → status='registered', frontend connection and target metadata stored
-6. CMS detects change → shows domain in TLD-grouped Pages view with health ping
-7. Abort: clicking abort resets code=null, status='pending' → old code invalidated
-```
-
-### Unhook Flow (reversible disconnection)
-
-```
-1. Staff clicks "Unhook" button on a TLD card in the Pages view
-2. Confirmation dialog shown (lists affected domain)
-3. All schemas under that domain set: status='pending', frontend_url=null,
-   revalidation_endpoint=null, revalidation_secret=null
-4. Domain disappears from TLD view → schema moves to "Pending / Unassigned" group
-5. Re-registration can begin from step 2 above
-```
-
-Implemented via `unhookSchema(id)` in `pageService.ts` (Supabase direct update).
-
----
-
-## Frontend Targets, Slug Structures & Preview URLs
-
-Legacy `slug_structure` remains a compatibility projection for a primary detail target. New registrations should use explicit targets. A `detail-page` target is a URL pattern where `:slug` is replaced with the page slug; a `collection-slot` target has a concrete host path and no per-entry preview.
-
-| slug_structure | page slug | result URL |
-|---|---|---|
-| `/:slug` | `my-page` | `https://site.com/my-page` |
-| `/blog/:slug` | `my-post` | `https://site.com/blog/my-post` |
-| `/products/:slug` | `widget` | `https://site.com/products/widget` |
-
-For a detail target, the CMS Page Builder constructs the preview URL as:
-```
-{frontend_url} + slug_structure.replace(':slug', pageSlug)
-```
-
-The preview link appears only when the schema is registered and has an enabled detail target. Collection-only schemas show their host path and placement key instead of a misleading entry URL.
-
-The CMS sends the full server path in `path` and retains the bare slug in `slug` for compatibility. Frontends must not prepend an additional slash. For a root collection, `path` is `/`; `#posts` is never an invalidation path.
-
----
-
-## PageBuilder Component Architecture
-
-### Forms as Content Blocks
-
-The `ContentBlock` union now includes a `form` block type. This block stores a form reference, not an embedded snapshot.
-
-Stored shape:
-
-```json
-{
-  "id": "content-1712420000000-abcd12345",
-  "type": "form",
-  "form_id": "<uuid>",
-  "form_slug": "lead-capture",
-  "form_name": "Lead Capture",
-  "share_slug": "lead-capture",
-  "requires_auth": false
-}
-```
-
-This allows one published form to be reused across multiple pages and submission contexts.
-
-### Mode Detection
-
-`PageBuilderForm` is the entry point. It always declares all hooks unconditionally, then delegates based on mode:
-
-```
-PageBuilderForm
-  ├── schema && schemaSlug → SchemaPageBuilderForm   (schema-driven)
-  └── (else)              → legacy hardcoded form    (Hero/CTA/Cards/Features/FAQ)
-```
-
-### Schema-Driven Mode: `SchemaPageBuilderForm`
-
-Located at `src/components/pagebuilder/SchemaPageBuilderForm.tsx`.
-
-**Key behaviours:**
-- Parses `schema.schema` JSONB into `SchemaFieldDefinition[]` via `parseSchemaFields()`
-- Splits fields into `requiredFields` (always shown) and `optionalFields` (added one-by-one via pill buttons)
-- On edit, activates optional fields by stored key presence, so false/zero/null/empty values remain active
-- Initializes known field defaults while overlaying original content JSON without type coercion or key filtering
-- Saves via `savePage()`, then triggers `triggerRevalidation()` if schema is registered
-- Shows ISR result (success/failure, revalidated slug) after save
-- Preview URL built from `schema.frontend_url` + `slug_structure`
-- Slug auto-generated from page name (manual override supported)
-- Sticky footer shows schema name + ISR active badge
-
-**`SchemaFieldRenderer`** is a recursive component that handles all field types:
-
-| Field type | Rendered as |
-|---|---|
-| `ContentBlock[]` | `ContentBlocksEditor` (inline block list; unsupported/malformed blocks remain unchanged JSON) |
-| `CodeBlock[]` | Structured code variants editor with language, pattern, frameworks, and code textarea |
-| `string` + `enum` | `Select` |
-| `string` (long-text heuristic) | `Textarea` |
-| `string` | `Input` |
-| `number` | `Input[type=number]` |
-| `boolean` | `Checkbox` |
-| `object` | Recursive nested renderer with dashed left border |
-| `array` | Repeatable item list with add/remove |
-
-Long-text heuristic: field name or description contains `description`, `content`, `text`, `body`, `summary`, `bio`, or `instructions`.
-
-### Example: `CodeBlock[]` schema field
-
-```json
-{
-  "examples": {
-    "type": "CodeBlock[]",
-    "description": "Alternative implementations of the same logic.",
-    "meta_description": "Use this for code examples that may vary by language, framework, or implementation pattern. Each item should contain the exact source code plus a language identifier for frontend syntax highlighting.",
-    "items": {
-      "type": "object",
-      "properties": {
-        "label": {
-          "type": "string",
-          "description": "Visible label for this variant"
-        },
-        "language": {
-          "type": "string",
-          "required": true,
-          "enum": ["typescript", "javascript", "python", "php"],
-          "meta_description": "Syntax highlighting token consumed by the frontend renderer."
-        },
-        "pattern": {
-          "type": "string",
-          "enum": ["functional", "class-based", "server-action", "api-route"],
-          "meta_description": "Optional implementation style or architectural pattern."
-        },
-        "frameworks": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["react", "nextjs", "express", "hono"]
-          },
-          "meta_description": "Optional framework tags. When enum values are provided, the Page Builder renders a multi-select control."
-        },
-        "code": {
-          "type": "string",
-          "required": true,
-          "description": "Source code",
-          "meta_description": "Exact source code snippet. Preserve indentation and syntax exactly as it should be rendered."
-        }
+  "page_builder": {
+    "groups": {
+      "introduction": {
+        "label": { "de": "Einführung", "en": "Introduction" },
+        "order": 10
+      }
+    },
+    "fields": {
+      "intro_text": {
+        "label": { "de": "Einleitung", "en": "Introduction text" },
+        "help_text": { "de": "Kurzer Einstieg für Leserinnen und Leser." },
+        "group": "introduction",
+        "order": 10
       }
     }
   }
 }
 ```
 
-### `StandaloneContentBlockEditor`
+Hints are non-executable and cannot override content keys, types, required/nullable rules, or enum values. Malformed/unknown hints are ignored. `meta_description` remains API/agent context and is never shown as editing help. The technical Schema Editor currently does not expose a form for `editor_config`; MCP/REST schema-definition updates can supply it, and the PageBuilder has useful defaults without it.
 
-Located at `src/components/pagebuilder/StandaloneContentBlockEditor.tsx`.
+The normal content-manager view hides type badges, raw keys where a readable label can be derived, URL-slug controls, schema/domain details, JSON import, and raw incompatible values. Administrator-only advanced controls retain URL management, plugin entity actions, JSON import, and technical diagnostics. Optional values are activated by key presence, so `false`, `0`, `null`, empty strings, arrays and objects remain distinct from absent values. Removing an optional field is explicit.
 
-Standalone version of the content block editor with no react-hook-form dependency. Used by `SchemaPageBuilderForm` for `ContentBlock[]` fields. Handles built-in text, heading, image, quote, list, video, form, and audio blocks with a `patch()` helper pattern; custom/invalid blocks are retained without coercion.
+### Legacy compatibility editor
 
-### Legacy Mode: `PageBuilderForm`
+`src/features/page-builder/LegacyProductContentEditor.tsx` and `legacy/` hold the old hard-coded Hero/CTA/Cards/Features/FAQ layout only for historical product pages with no schema association. It is not a second editor for schema-backed content. A product with no linked content page gets a recovery message rather than creating a page by looking up a global `service-product` slug. `legacy/productPageService.ts` refuses to write any schema-bound page.
 
-Remains for the `mentorbooking_products` → `pages` flow. Uses react-hook-form + Zod with hardcoded sections (Hero, CTA, Cards, Features, FAQ). Preview URL uses a relative path (`/${savedSlug}`).
+Legacy records and schema-less content are not backfilled by this source refactor. Conversion/contraction remains an explicit migration phase. Shared primitives such as `StandaloneContentBlockEditor` and `ImageUploader` remain under `src/components/pagebuilder/` because other features use them.
 
----
+## Technical Schema Editor
 
-## Schema Editor (`SchemaEditor`)
+`src/features/schema-editor/SchemaEditorPage.tsx` remains the technical contract editor. It edits schema identity, field definitions, workspace/classification, frontend integration requirements/targets, and related technical configuration. Definition changes use the expected `definition_revision`. It does not edit `pages.content` and is not embedded in PageBuilder.
 
-Located at `src/pages/SchemaEditor.tsx`.
+## Related feature contracts
 
-Provides UI to define schema fields. Each field supports:
-
-| Property | UI Control | Purpose |
-|---|---|---|
-| `name` | `Input` (monospace) | JSON key name |
-| `type` | `Select` | Field type |
-| `description` (Help Text) | `Input` | Shown below the field in PageBuilder |
-| `placeholder` | `Input` | Shown inside the input in PageBuilder |
-| `meta_description` | `Textarea` | Developer/LLM context, API-only |
-| `required` | `Checkbox` | Shown as required in PageBuilder |
-
-Serialisation: `fieldsToJsonSchema()` converts the field array to the JSONB format stored in Supabase while carrying original per-field attributes through unrelated visual edits. Deserialisation: `jsonSchemaToFields()` parses the stored JSONB back into the editor. Unknown field attributes are retained; supported visual edits update known attributes in place.
-
----
-
-## Pages View (`Pages.tsx`)
-
-### TLD-Grouped View
-
-Registered schemas are grouped by `frontend_url` domain. Each TLD group shows:
-- Domain + external link
-- Online/Offline health badge with latency
-- Schema count + active count
-- **Unhook button** (red, destructive outline): shown only when `domain` is set and at least one schema is registered. Triggers `unhookSchema()` for all schemas in the group.
-
-### Onboarding Screen
-
-Shown when no TLD has a registered frontend. Features:
-- 4-step connection guide
-- API endpoint display (REST + MCP) with copy buttons
-- **Framework toggle** (Next.js / SvelteKit) that switches the agent prompt
-- Agent prompt with 6 sections: Discovery, Data Model, ISR Setup, Registration, Slug Structure & Preview URLs, Health Check, MCP Integration
-- Active registration codes for `waiting` schemas (shown inline with copy button)
-- Available schemas list with "Start Registration" action
-
----
-
-## Content Block Types (shared primitives)
-
-| Type | Fields |
-|------|--------|
-| `text` | `content: string` |
-| `heading` | `content: string`, `level: 'heading1'...'heading6'` |
-| `image` | `src, alt, caption?, width?, height?` |
-| `quote` | `text, author?, source?` |
-| `list` | `style: 'ordered' \| 'unordered'`, `items: string[]` |
-| `video` | `src, provider: 'youtube' \| 'vimeo' \| 'other'`, `caption?` |
-
-All blocks extend `BaseBlock: { id: string, type: string }`.
-
-Block IDs generated as: `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-
----
-
-## Key Service Functions (`pageService.ts`)
-
-| Function | Description |
-|---|---|
-| `getSchemas()` | Fetch all schemas |
-| `getSchema(slug)` | Fetch single schema by slug |
-| `createSchema(input)` | Create new schema |
-| `updateSchema(id, input)` | Update name/description/schema/llm_instructions |
-| `deleteSchema(id)` | Set status → `'archived'` |
-| `startSchemaRegistration(id)` | Generate registration code, set status → `'waiting'` |
-| `unhookSchema(id)` | Reset status → `'pending'`, null out `frontend_url`, `revalidation_endpoint`, `revalidation_secret` |
-| `savePage(pageId, content, name, schemaId)` | Upsert page record |
-| `triggerRevalidation(schemaSlug, pageSlug)` | POST to Hono revalidation endpoint |
-| `groupSchemasByTLD(schemas)` | Group schemas by `frontend_url` domain |
-| `checkDomainHealthDirect(domain)` | Client-side HEAD ping for latency display |
-
----
-
-## Environment Variables
-
-### CMS (Vite)
-| Variable | Description |
-|----------|-------------|
-| `VITE_SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Publishable (public) key |
-| `VITE_API_URL` | Hono Worker URL (default: `http://localhost:8787`) |
-
-### Hono Worker (Cloudflare)
-| Variable | Description |
-|----------|-----------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_PUBLISHABLE_KEY` | Publishable key (safe for Worker) |
-| `SUPABASE_SECRET_KEY` | Secret key — server-side only, bypasses RLS |
-
----
-
-## Key Decisions
-
-1. **Rename `products` → `pages`**: Single source of truth, avoids ambiguity with `mentorbooking_products`
-2. **Hono on Cloudflare Workers**: Co-located in repo, server-side fetch for domain pings
-3. **DB polling over Realtime**: Simpler for one-time registration events
-4. **Schema-driven PageBuilder replaces hardcoded sections**: `SchemaPageBuilderForm` reads field structure from JSONB at runtime; legacy form retained for `mentorbooking_products` flow
-5. **Required/Optional field split**: Content editors see only required fields by default; optional fields added individually to reduce cognitive load
-6. **`meta_description` API-only**: Keeps PageBuilder UI clean while giving LLM agents and developers full field context via the spec endpoint
-7. **`StandaloneContentBlockEditor`**: Decoupled from react-hook-form so `SchemaPageBuilderForm` can manage its own state without the legacy form context
-8. **Unhook is non-destructive**: Only clears registration fields — the schema definition, pages, and content are preserved
-9. **`slug_structure` drives preview URLs**: Stored at registration time, used by both PageBuilder (preview link) and ISR (path construction)
-10. **Framework toggle in agent prompt**: Next.js and SvelteKit prompts share the same discovery/data model sections but have framework-specific ISR setup code
-
-
-## Overview
-
-The Specy pagebuilder is a **decoupled, backend-first pagebuilder**. The CMS (backend) defines page schemas which any frontend must comply with. Schemas are saved as LLM-ready `.txt` specifications served via a public Hono API on Cloudflare Workers. An LLM Agent building/editing the frontend can ingest the schema via HTTP to build compliant templates that consume page content via the JSONB structure defined in the CMS.
-
-This architecture enables:
-- **Multi-frontend support**: One CMS powering multiple frontends (Next.js, SvelteKit, etc.)
-- **Schema-driven content**: Content editors work within the constraints of a registered schema
-- **LLM-assisted frontend generation**: Schemas include machine-readable specs and custom instructions
-- **ISR-ready communication**: On-demand revalidation webhooks notify frontends of content changes
-
----
-
-## System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Specy (React SPA)                        │
-│                                                                 │
-│  /pages                    Schema Hub (list all schemas)        │
-│  /pages/schema/new         Schema Editor (create new)           │
-│  /pages/schema/:slug       Page list for schema                 │
-│  /pages/schema/:slug/edit/:id   PageBuilder (edit page)         │
-│  /pages/schema/:slug/new        PageBuilder (new page)          │
-└────────────────┬────────────────────────────────────────────────┘
-                 │ Direct Supabase client calls
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Supabase (PostgreSQL)                        │
-│                                                                 │
-│  page_schemas    Schema definitions, registration, LLM config   │
-│  pages           Page content (JSONB), linked to schema         │
-│  mentorbooking_products   Legacy FK to pages via product_page_id│
-└────────────────┬────────────────────────────────────────────────┘
-                 │ Service role key (server-side only)
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Hono API (Cloudflare Workers)                       │
-│                                                                 │
-│  GET  /api/schemas/:slug/spec.txt     LLM-ready schema spec     │
-│  POST /api/schemas/:slug/register     Frontend registration      │
-│  GET  /api/schemas/:slug/health       Domain ONLINE/OFFLINE      │
-│  POST /api/schemas/:slug/revalidate   Trigger ISR on frontend    │
-└────────────────┬────────────────────────────────────────────────┘
-                 │ HTTP (public)
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              Frontend (Next.js / SvelteKit / etc.)              │
-│                                                                 │
-│  Consumes page content from Supabase                            │
-│  Implements ISR revalidation endpoint                           │
-│  Registers with CMS via registration callback                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Database Schema
-
-### `page_schemas` (NEW)
-
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `name` | `varchar(255)` | NOT NULL — e.g., "Service-Product", "Blog" |
-| `slug` | `varchar(255)` | NOT NULL — tenant-local human-facing identifier; unique within a tenant |
-| `api_slug` | `text` | UNIQUE NOT NULL — stable API identifier; existing schemas keep their former slug as this value. |
-| `description` | `text` | Human-readable description |
-| `schema` | `jsonb` | NOT NULL — JSON schema definition (keys, types, nesting) |
-| `llm_instructions` | `text` | Custom instructions for the LLM agent |
-| `registration_code` | `varchar(64)` | UNIQUE — one-time code for frontend callback |
-| `registration_status` | `varchar(50)` | `'pending'` \| `'waiting'` \| `'registered'` \| `'archived'` |
-| `frontend_url` | `text` | Base URL of the frontend consuming this schema |
-| `revalidation_endpoint` | `text` | ISR webhook path (e.g., `/api/revalidate`) |
-| `revalidation_secret` | `text` | Shared secret for webhook auth |
-| `slug_structure` | `text` | URL pattern for pages, default `'/:slug'` |
-| `is_default` | `boolean` | `DEFAULT false` — marks built-in schemas |
-| `created_at` | `timestamptz` | `DEFAULT now()` |
-| `updated_at` | `timestamptz` | `DEFAULT now()` (auto-updated via trigger) |
-
-### `pages` (RENAMED from `products`)
-
-| Column | Type | Details |
-|--------|------|---------|
-| `id` | `uuid` PK | `DEFAULT gen_random_uuid()` |
-| `slug` | `varchar(255)` | UNIQUE NOT NULL |
-| `name` | `varchar(255)` | NOT NULL |
-| `status` | `varchar(50)` | `'draft'` \| `'published'` \| `'archived'` |
-| `is_draft` | `boolean` | `DEFAULT true`, auto-synced with status |
-| `content` | `jsonb` | NOT NULL — the full page content matching schema |
-| `schema_id` | `uuid` FK | REFERENCES `page_schemas(id)` — nullable for legacy |
-| `domain_url` | `text` | The frontend domain this page belongs to |
-| `updated_at` | `timestamptz` | Auto-updated via trigger |
-| `published_at` | `timestamptz` | Nullable |
-
-### Relationship Diagram
-
-```
-mentorbooking_products.product_page_id ──FK──► pages.id
-pages.schema_id ──FK──► page_schemas.id
-```
-
----
-
-## Hono API Endpoints
-
-All endpoints are served from `api/` directory, deployed as a Cloudflare Worker.
-
-### `GET /api/schemas/:slug/spec.txt`
-Returns the LLM-ready plaintext specification for a schema. Content-Type: `text/plain`.
-
-### `POST /api/schemas/:slug/register`
-Completes frontend registration. Validates the one-time `registration_code`. Returns `403` on invalid/expired code.
-
-### `GET /api/schemas/:slug/health`
-Server-side domain health check. Returns `{ status: 'online' | 'offline', latency_ms }`.
-
-### `POST /api/schemas/:slug/revalidate`
-Triggers ISR revalidation on the registered frontend via its webhook endpoint.
-
----
-
-## Schema Registration Flow
-
-```
-1. Staff creates schema in CMS → status='waiting', generates registration_code
-2. CMS shows "Waiting for Frontend" screen, polls every 10s
-3. LLM Agent / Developer fetches spec.txt, builds frontend template
-4. POSTs to /register with code + frontend URLs → status='registered'
-5. CMS detects change → shows success + domain info
-6. Abort: Sets code=null, status='pending' → old code invalidated
-```
-
----
-
-## Content Block Types (shared primitives)
-
-| Type | Fields |
-|------|--------|
-| `text` | `content: string` |
-| `heading` | `content: string`, `level: 'heading1'...'heading6'` |
-| `image` | `src, alt, caption?, width?, height?` |
-| `quote` | `text, author?, source?` |
-| `list` | `style: 'ordered' \| 'unordered'`, `items: string[]` |
-| `video` | `src, provider: 'youtube' \| 'vimeo' \| 'other'`, `caption?` |
-
-All blocks extend `BaseBlock: { id: string, type: string }`
-
----
-
-## Environment Variables
-
-### CMS (Vite)
-| Variable | Description |
-|----------|-------------|
-| `VITE_SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Publishable (public) key |
-| `VITE_API_URL` | Hono Worker URL |
-
-### Hono Worker (Cloudflare)
-| Variable | Description |
-|----------|-----------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_PUBLISHABLE_KEY` | Publishable key (safe for Worker) |
-| `SUPABASE_SECRET_KEY` | Secret key — server-side only, bypasses RLS |
-
----
-
-## Key Decisions
-
-1. **Rename `products` → `pages`**: Single source of truth, avoids ambiguity with `mentorbooking_products`
-2. **Hono on Cloudflare Workers**: Co-located in repo, server-side fetch for domain pings
-3. **DB polling over Realtime**: Simpler for one-time registration events
-4. **Keep existing form components**: Known sections use concrete components, custom sections use generic editor
-5. **Blog schema mirrors Service-Product**: Same blocks, differentiated by labels and defaults
-6. **Schema .txt via Hono API**: Dynamically generated from DB, always current
+- [PageBuilder content editing](../features/page-builder.md)
+- [Technical Schema Editor](../features/schema-editor.md)
+- [Schema/content contracts](../features/schema-contracts.md)
+- [Service products](../features/service-products.md)

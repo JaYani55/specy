@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useForm } from "react-hook-form";
+import { useForm, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Form } from "@/components/ui/form";
 import { useTheme } from '@/contexts/ThemeContext';
+import { toast } from 'sonner';
 
 // Fix the imports to point to the correct locations
 import { 
@@ -107,9 +108,25 @@ export function ProductForm({
       await onSubmit(values);
     } catch (error) {
       console.error('Error submitting product form:', error);
-      // The error will be handled by the parent component
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : language === 'en' ? 'Product could not be saved.' : 'Produkt konnte nicht gespeichert werden.'
+      );
     }
   };
+
+  const handleInvalid = (errors: FieldErrors<ProductFormValues>) => {
+    const firstError = Object.values(errors)
+      .map((error) => error?.message)
+      .find((message): message is string => typeof message === 'string' && message.trim().length > 0);
+
+    toast.error(firstError
+      ? (language === 'en' ? `Please check the form: ${firstError}` : `Bitte prüfe das Formular: ${firstError}`)
+      : (language === 'en' ? 'Please check the highlighted fields.' : 'Bitte prüfe die markierten Felder.'));
+  };
+
+  const submitForm = form.handleSubmit(handleSubmit, handleInvalid);
 
   // Show loading state
   if (formIsLoading) {
@@ -128,11 +145,10 @@ export function ProductForm({
   return (
     <Card className="p-6 shadow-md border-primary/10">
       <Form {...form} key={formKey}>
-        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-8">
+        <form onSubmit={submitForm} className="space-y-8">
           <ProductFormHeader 
             editingProduct={editingProduct} 
             onCancel={onCancel}
-            onSubmit={form.handleSubmit(handleSubmit)}
             isLoading={formIsLoading}
           />
           

@@ -36,13 +36,18 @@ const Breadcrumb: React.FC = () => {
       label: { en: 'All Staff', de: 'Alle Mitarbeiter' },
       parent: '/admin'
     },
-    '/admin/all-products': { 
-      label: { en: 'All Products', de: 'Alle Produkte' },
-      parent: '/admin'
+    '/products': { label: { en: 'Products', de: 'Produkte' } },
+    '/products/manage': {
+      label: { en: 'Product management', de: 'Produktverwaltung' },
+      parent: '/products'
     },
-    '/admin/create-product': { 
-      label: { en: 'Create Product', de: 'Produkt erstellen' },
-      parent: '/admin'
+    '/products/manage/new': {
+      label: { en: 'New product', de: 'Neues Produkt' },
+      parent: '/products/manage'
+    },
+    '/products/schemas': {
+      label: { en: 'Product schemas', de: 'Produktschemata' },
+      parent: '/products'
     },
     '/admin/trait': { 
       label: { en: 'Manage Traits', de: 'Eigenschaften verwalten' },
@@ -113,7 +118,7 @@ const Breadcrumb: React.FC = () => {
         
         if (config) {
           // For product details, show "Product Details" instead of the ID
-          if (parentPath === '/admin/product') {
+          if (parentPath === '/products/manage' || parentPath === '/admin/product') {
             breadcrumbs.push({
               label: language === 'en' ? 'Product Details' : 'Produktdetails',
               isActive: i === pathnames.length - 1

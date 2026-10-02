@@ -1,6 +1,8 @@
 /**
- * @deprecated This file is a legacy wrapper. Use pageService.ts for the new schema-driven system.
- * Kept for backward compatibility with existing PageBuilder route (/pagebuilder/:id).
+ * @deprecated Compatibility re-exports for pre-feature PageBuilder imports.
+ * New code should import the legacy adapter from the PageBuilder feature.
  */
-export { getProductPageData, saveProductPage } from './pageService';
-
+export {
+  getLegacyProductPageContext as getProductPageData,
+  saveLegacyProductPage as saveProductPage,
+} from '@/features/page-builder/legacy/productPageService';

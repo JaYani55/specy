@@ -9,21 +9,19 @@ import { useNavigate } from 'react-router-dom';
 interface ProductFormHeaderProps {
   editingProduct: Product | null;
   onCancel: () => void;
-  onSubmit: () => void;
   isLoading?: boolean;
 }
 
 export function ProductFormHeader({ 
   editingProduct, 
   onCancel, 
-  onSubmit, 
   isLoading
 }: ProductFormHeaderProps) {
   const { language } = useTheme();
   const navigate = useNavigate();
   
   const handleCreatePage = () => {
-    if (editingProduct) {
+    if (editingProduct?.product_page_id) {
       navigate(`/pagebuilder/${editingProduct.id}`);
     }
   };
@@ -56,7 +54,7 @@ export function ProductFormHeader({
       
       {/* Action buttons */}
       <div className="flex items-center justify-end gap-3 pt-1">
-        {editingProduct && (
+        {editingProduct?.product_page_id && (
           <Button
             type="button"
             variant="outline"
@@ -64,7 +62,7 @@ export function ProductFormHeader({
             className="px-5"
           >
             <FilePlus className="h-4 w-4 mr-2" />
-            Produktseite erstellen
+            {language === 'en' ? 'Edit schema' : 'Schema bearbeiten'}
           </Button>
         )}
         <Button
@@ -78,7 +76,6 @@ export function ProductFormHeader({
         
         <Button 
           type="submit"
-          onClick={onSubmit}
           disabled={isLoading}
           className={cn(
             "px-5 bg-gradient-to-r from-green-100 to-green-200 hover:from-green-200 hover:to-green-300",

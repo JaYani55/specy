@@ -11,7 +11,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Trash2, HelpCircle } from 'lucide-react';
-import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownEditor } from '@/components/pagebuilder/MarkdownEditor';
 
 interface FaqFormProps {
   form: UseFormReturn<FieldValues>;

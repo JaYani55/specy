@@ -35,7 +35,7 @@ export function ProductFormApprovedMentors({
         <FormItem className="bg-muted/30 p-6 rounded-lg border border-border/50">
           <div className="mb-4">
             <FormLabel className="text-xl font-medium text-black block border-b pb-2">
-              {language === 'en' ? 'Mentor Product Approval Mentors' : 'Produkt-Freigabe Mentoren'}
+              {language === 'en' ? 'Staff approved for this product' : 'Für das Produkt freigegebene Mitarbeitende'}
             </FormLabel>
             <FormDescription
               className="relative flex items-center gap-3 text-base mt-2 font-medium rounded-lg px-5 py-3 bg-yellow-50 text-black dark:bg-yellow-900 dark:text-black shadow-sm"
@@ -48,12 +48,12 @@ export function ProductFormApprovedMentors({
               <span className="pl-8">
                 {language === 'en'
                   ? <>
-                      Select mentors that are generally approved for this product.<br />
-                      The mentors for whom an event is <b>visible</b> can be determined <b>when creating an event</b>.
+                      Select staff members that are generally approved for this product.<br />
+                      Which staff members can see an event is determined <b>when creating an event</b>.
                     </>
                   : <>
-                      Wählen Sie Mentoren aus, die für dieses Produkt grundsätzlich freigegeben sind.<br />
-                      Für welche der hier freigebenen MentorInnen eine Veranstaltung <b>sichtbar</b> ist, kann <b>beim Erstellen einer Veranstaltung</b> bestimmt werden.
+                      Wählen Sie Mitarbeitende aus, die für dieses Produkt grundsätzlich freigegeben sind.<br />
+                      Welche der hier freigegebenen Mitarbeitenden eine Veranstaltung <b>sehen</b> können, legen Sie <b>beim Erstellen einer Veranstaltung</b> fest.
                     </>
                 }
               </span>
@@ -63,22 +63,22 @@ export function ProductFormApprovedMentors({
           {loadingMentors ? (
             <div className="flex items-center space-x-3 py-6 justify-center">
               <Loader2 className="h-7 w-7 animate-spin" />
-              <span className="text-lg">{language === 'en' ? 'Loading mentors...' : 'Lade Mentoren...'}</span>
+              <span className="text-lg">{language === 'en' ? 'Loading staff...' : 'Lade Mitarbeitende...'}</span>
             </div>
           ) : mentors.length === 0 ? (
             <div className="text-center text-muted-foreground py-6 border rounded-md p-6 bg-background/60">
-              <p className="mb-3 text-lg">{language === 'en' ? 'No mentors available.' : 'Keine Mentoren verfügbar.'}</p>
+              <p className="mb-3 text-lg">{language === 'en' ? 'No staff available.' : 'Keine Mitarbeitenden verfügbar.'}</p>
               <p className="text-base text-muted-foreground">
                 {language === 'en' 
-                  ? 'Make sure mentors are assigned the mentor role in the system.'
-                  : 'Stellen Sie sicher, dass Mentoren die Mentor-Rolle im System zugewiesen haben.'}
+                  ? 'Make sure staff members are available in this workspace.'
+                  : 'Stellen Sie sicher, dass Mitarbeitende in diesem Workspace verfügbar sind.'}
               </p>
             </div>
           ) : (
             <div className="border rounded-md overflow-hidden bg-background">
               <div className="bg-muted/70 px-5 py-4 border-b flex justify-between items-center">
                 <span className="text-lg font-medium">
-                  {language === 'en' ? 'Mentors' : 'Mentoren'}
+                  {language === 'en' ? 'Staff members' : 'Mitarbeitende'}
                 </span>
                 <span className="text-base">
                   {field.value?.length || 0} {language === 'en' ? 'selected' : 'ausgewählt'}

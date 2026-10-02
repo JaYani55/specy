@@ -6,6 +6,12 @@
 
 This document describes the implemented schema/content contract foundation. A first service-product aggregate workflow is available through Products, REST, and MCP. Event aggregates/public event pages, staff presentation, customer CRM, and the typed external-service handoff are not yet enabled.
 
+## Technical and content editor hierarchy
+
+The Schema Editor is the technical authoring surface for `page_schemas.schema` and integration metadata. The PageBuilder consumes the saved schema to render a simpler entry-content form; editing an entry cannot mutate the schema definition. Schema-bound product edit links resolve to the canonical tenant/schema/page route, while `/pagebuilder/:legacyProductId` is only a compatibility alias that redirects linked schema pages.
+
+See [`page-builder.md`](page-builder.md) for content editing and [`schema-editor.md`](schema-editor.md) for technical authoring.
+
 ## Schema metadata
 
 The additive schema metadata fields are:

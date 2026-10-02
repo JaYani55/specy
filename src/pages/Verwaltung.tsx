@@ -9,9 +9,7 @@ import {
   Users, 
   UserPlus, 
   UserCheck, 
-  Tags, 
-  BarChart3, 
-  Plus,
+  Tags,
   ShieldCheck,
   Unplug,
   Waypoints,
@@ -96,30 +94,6 @@ const Verwaltung = () => {
     },
   ];
 
-  // Product Administration Cards
-  const productCards: AdminCardType[] = [
-    {
-      title: language === 'de' ? 'Alle Produkte' : 'All Products',
-      description: language === 'de' 
-        ? 'Übersicht und Verwaltung aller verfügbaren Produkte' 
-        : 'Overview and management of all available products',
-      icon: BarChart3,
-      href: '/admin/all-products',
-      permission: 'canManageProducts',
-      color: 'from-teal-500 to-teal-600',
-    },
-    {
-      title: language === 'de' ? 'Neues Produkt' : 'Create Product',
-      description: language === 'de' 
-        ? 'Neue Produkte erstellen und konfigurieren' 
-        : 'Create and configure new products',
-      icon: Plus,
-      href: '/admin/create-product',
-      permission: 'canManageProducts',
-      color: 'from-green-700 to-green-900', // darkish green gradient
-    },
-  ];
-
   // Account Administration Cards (super-admin only)
   const accountCards: AdminCardType[] = [
     {
@@ -179,7 +153,6 @@ const Verwaltung = () => {
 
   // Filter cards based on permissions
   const visibleMentorCards = mentorCards.filter(card => permissions[card.permission as keyof typeof permissions]);
-  const visibleProductCards = productCards.filter(card => permissions[card.permission as keyof typeof permissions]);
   const visibleAccountCards = accountCards.filter(card => {
     const hasPerm = permissions[card.permission as keyof typeof permissions];
     if (card.isSuperAdmin) return hasPerm && permissions.userRoles.includes('super-admin');
@@ -201,8 +174,8 @@ const Verwaltung = () => {
               </h1>
               <p className="text-lg text-gray-600 dark:text-gray-400 mt-1">
                 {language === 'de' 
-                  ? 'Zentrale Verwaltung für MentorInnen und Produkte' 
-                  : 'Central management for mentors and products'
+                  ? 'Zentrale Verwaltung für Mitarbeitende, Konten und Systemeinstellungen'
+                  : 'Central tools for staff, accounts, and system settings'
                 }
               </p>
             </div>
@@ -233,53 +206,7 @@ const Verwaltung = () => {
                     icon={card.icon}
                     iconColor={card.color}
                     clickable={true}
-                    onClick={() => {
-                      if (card.href === '/admin/create-product') {
-                        navigate(card.href, { state: { from: '/admin' } });
-                      } else {
-                        navigate(card.href);
-                      }
-                    }}
-                  >
-                    <div className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                      {card.description}
-                    </div>
-                  </AdminCard>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Product Administration Section */}
-          {visibleProductCards.length > 0 && (
-            <div>
-              <div className="mb-8">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                  {language === 'de' ? 'Produkt-Verwaltung' : 'Product Administration'}
-                </h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                  {language === 'de' 
-                    ? 'Produkte erstellen, bearbeiten und verwalten' 
-                    : 'Create, edit and manage products'
-                  }
-                </p>
-              </div>
-              
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
-                {visibleProductCards.map((card) => (
-                  <AdminCard
-                    key={card.href}
-                    title={card.title}
-                    icon={card.icon}
-                    iconColor={card.color}
-                    clickable={true}
-                    onClick={() => {
-                      if (card.href === '/admin/create-product') {
-                        navigate(card.href, { state: { from: '/admin' } });
-                      } else {
-                        navigate(card.href);
-                      }
-                    }}
+                    onClick={() => navigate(card.href)}
                   >
                     <div className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
                       {card.description}
@@ -325,7 +252,7 @@ const Verwaltung = () => {
           )}
 
           {/* No Access Message */}
-          {visibleMentorCards.length === 0 && visibleProductCards.length === 0 && visibleAccountCards.length === 0 && (
+          {visibleMentorCards.length === 0 && visibleAccountCards.length === 0 && (
             <div className="text-center py-16">
               <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center mx-auto mb-6">
                 <Settings className="h-12 w-12 text-gray-400" />

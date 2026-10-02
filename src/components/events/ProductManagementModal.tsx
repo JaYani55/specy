@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { toast } from 'sonner';
 import { PenTool, Plus } from "lucide-react"; // Add Plus import
 import { ProductForm } from './ProductForm';
 import { DeleteProductDialog } from './DeleteProductDialog';
@@ -114,6 +115,11 @@ const ProductManagementModal: React.FC<ProductManagementModalProps> = ({
       }
     } catch (error) {
       console.error("Error in form submission handler:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : language === 'en' ? 'Product could not be saved.' : 'Produkt konnte nicht gespeichert werden.'
+      );
     }
   };
 

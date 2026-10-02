@@ -6,6 +6,18 @@ The service-product foundation uses one product row and one canonical `pages` ro
 
 Implemented: tenant-scoped list/get/create/update/publish/unpublish/archive; schema-driven page editing; revision-checked saves; idempotent create; product-only public page delivery. Not implemented: staff/team relations, sale pricing/money, customer CRM, event occurrences, outbox/cache-purge guarantees, and migration/backfill of legacy products.
 
+## Dashboard entry points
+
+`/products/manage` is the standard product overview and retains the established event-product management experience for legacy `mentorbooking_products` records. `/products` redirects to this overview. The overview includes an **Edit schemas** button to `/products/schemas`, the separate schema-backed service-product list and editor. `/products/manage/new` creates through the legacy form, and `/products/manage/:productId` shows its legacy detail/edit interface.
+
+Schema-backed product entries open the PageBuilder at the canonical schema/page route. The old `/pagebuilder/:legacyProductId` URL now resolves a linked schema and redirects there; the fixed-layout legacy editor is limited to schema-less historical page content. See [`page-builder.md`](page-builder.md) for the editor hierarchy and compatibility behavior.
+
+The legacy and schema-backed experiences remain separate compatibility paths: existing legacy products are not automatically converted into schema-backed aggregates, and opening the schema workflow does not migrate data. Legacy `/admin/all-products`, `/admin/create-product`, and `/admin/product/:productId` URLs redirect to their `/products/manage` equivalents. Product management links have been removed from the Administration landing page; the main Products navigation opens the standard product overview.
+
+Schema definition and frontend registration remain technical-administrator/developer responsibilities. Product content managers use the schema-backed workflow only after an eligible catalogue has been set up.
+
+The legacy product form remains the standard event-product overview. Its product-card/menu color is optional and purely presentational; omitting it uses the menu's default styling. The staffing requirement control is labelled for staff in both supported dashboard languages. Validation failures show an error toast as well as inline field feedback. These wording and styling changes do not alter the legacy data model.
+
 ## Schema eligibility
 
 A product catalogue is a tenant-owned `page-collection` schema with `entity_kind = service-product`. The schema JSON defines one product entry's presentation contract. `pages.content` is arbitrary developer-owned JSON and remains separate from operational product identity/status.

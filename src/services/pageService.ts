@@ -4,7 +4,6 @@ import {
   type PageSchema,
   type PageSchemaTemplate,
   type PageRecord,
-  type PageBuilderData,
   type TLDGroup,
   type SchemaIntegrationRequirements,
   type SchemaEntityKind,
@@ -100,7 +99,7 @@ const ensureUniqueSchemaSlug = async (requestedSlug: string, tenantId: string | 
   }
 };
 
-const ensureUniquePageSlug = async (requestedSlug: string, pageId?: string): Promise<string> => {
+export const ensureUniquePageSlug = async (requestedSlug: string, pageId?: string): Promise<string> => {
   const baseSlug = normalizeSlug(requestedSlug);
   let candidate = baseSlug;
   let suffix = 2;
@@ -682,96 +681,6 @@ export const checkDomainHealthDirect = async (url: string): Promise<{
   } catch {
     return { status: 'offline', latency_ms: 0 };
   }
-};
-
-// --- Legacy Compatibility ---
-
-/**
- * @deprecated Use getPage() directly. This wrapper exists for backward compat
- * with the old PageBuilder that accessed pages via mentorbooking_products.
- */
-export const getProductPageData = async (mentorProductId: string) => {
-  const { data: mentorProduct, error: mentorProductError } = await supabase
-    .from('mentorbooking_products')
-    .select('product_page_id, name')
-    .eq('id', mentorProductId)
-    .single();
-
-  if (mentorProductError) throw new Error(mentorProductError.message);
-  if (!mentorProduct) throw new Error('Mentor product not found.');
-
-  if (!mentorProduct.product_page_id) {
-    return { product: null, name: mentorProduct.name };
-  }
-
-  const { data: productPage, error: productPageError } = await supabase
-    .from('pages')
-    .select('content')
-    .eq('id', mentorProduct.product_page_id)
-    .single();
-
-  if (productPageError) throw new Error(productPageError.message);
-
-  return { product: productPage.content as PageBuilderData, name: mentorProduct.name };
-};
-
-/**
- * @deprecated Use savePage() directly. Legacy wrapper for old PageBuilder flow.
- */
-export const saveProductPage = async (
-  mentorProductId: string,
-  content: PageBuilderData,
-  productName: string
-): Promise<{ slug: string }> => {
-  const { data: existingMentorProduct, error: existingMentorProductError } = await supabase
-    .from('mentorbooking_products')
-    .select('product_page_id')
-    .eq('id', mentorProductId)
-    .single();
-
-  if (existingMentorProductError) throw new Error(existingMentorProductError.message);
-
-  const slug = await ensureUniquePageSlug(productName, existingMentorProduct?.product_page_id ?? undefined);
-
-  if (existingMentorProduct?.product_page_id) {
-    const { error } = await supabase
-      .from('pages')
-      .update({ content, slug, name: productName })
-      .eq('id', existingMentorProduct.product_page_id);
-
-    if (error) throw error;
-  } else {
-    // Get the service-product schema id for legacy pages
-    const { data: schemaData } = await supabase
-      .from('page_schemas')
-      .select('id, tenant_id')
-      .eq('slug', 'service-product')
-      .single();
-
-    const { data: newPage, error: newPageError } = await supabase
-      .from('pages')
-      .insert({
-        name: productName,
-        slug,
-        content,
-        status: 'draft',
-        schema_id: schemaData?.id || null,
-        tenant_id: schemaData?.tenant_id || null,
-      })
-      .select('id')
-      .single();
-
-    if (newPageError) throw newPageError;
-
-    const { error: updateError } = await supabase
-      .from('mentorbooking_products')
-      .update({ product_page_id: newPage.id })
-      .eq('id', mentorProductId);
-
-    if (updateError) throw updateError;
-  }
-
-  return { slug };
 };
 
 // --- API Communication (Hono Worker) ---

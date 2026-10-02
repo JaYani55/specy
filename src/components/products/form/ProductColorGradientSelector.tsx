@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
+import { Button } from '@/components/ui/button';
 
 interface UsedColor {
   color: string;
@@ -25,13 +26,6 @@ export function ProductColorGradientSelector({
   const { canChangeAnimalIcons } = usePermissions();
   const [selectedBaseColor, setSelectedBaseColor] = useState<string | null>(null);
   
-  // Set default color if no value is provided
-  useEffect(() => {
-    if (!value) {
-      onChange(DEFAULT_COLOR);
-    }
-  }, [value, onChange]);
-
   void usedColors;
 
   // Color palette with 12 base colors (darkest shades) and 4 shades each
@@ -105,14 +99,15 @@ export function ProductColorGradientSelector({
 
   // Find the base color for the current value
   useEffect(() => {
-    if (value) {
-      const foundColor = colorPalette.find(color => 
-        color.shades.includes(value.toLowerCase())
-      );
-      if (foundColor) {
-        setSelectedBaseColor(foundColor.baseColor);
-      }
+    if (!value) {
+      setSelectedBaseColor(null);
+      return;
     }
+
+    const foundColor = colorPalette.find(color =>
+      color.shades.includes(value.toLowerCase())
+    );
+    setSelectedBaseColor(foundColor?.baseColor ?? null);
   }, [colorPalette, value]);
 
   // Get available shades for the selected base color
@@ -128,11 +123,26 @@ export function ProductColorGradientSelector({
 
   return (
     <div className="space-y-4">
-      {/* Base Color Selection - Only for MentoringManagement */}
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label={language === 'en' ? 'Use default menu color' : 'Standardfarbe des Menüs verwenden'}
+          onClick={() => {
+            setSelectedBaseColor(null);
+            onChange('');
+          }}
+        >
+          {language === 'en' ? 'Use default menu style' : 'Menü-Standard verwenden'}
+        </Button>
+      </div>
+
+      {/* Base Color Selection - Only for administrators */}
       {canChangeAnimalIcons && (
         <div>
           <label className="block text-sm font-medium mb-2">
-            {language === 'en' ? 'Select Base Color' : 'Grundfarbe wählen'}
+            {language === 'en' ? 'Select Base Color (optional)' : 'Grundfarbe wählen (optional)'}
           </label>
           <div 
             className="grid gap-2"
@@ -165,7 +175,7 @@ export function ProductColorGradientSelector({
       {/* Shade Selection */}
       <div>
         <label className="block text-sm font-medium mb-2">
-          {language === 'en' ? 'Select Shade' : 'Farbton wählen'}
+          {language === 'en' ? 'Choose a menu color shade (optional)' : 'Menüfarbton auswählen (optional)'}
         </label>
         
         {selectedBaseColor || !canChangeAnimalIcons ? (
@@ -207,8 +217,8 @@ export function ProductColorGradientSelector({
         ) : (
           <div className="text-sm text-gray-500 italic">
             {language === 'en' 
-              ? 'Please select a base color first' 
-              : 'Bitte zuerst eine Grundfarbe wählen'}
+              ? 'Optional: choose a base color to customize the menu appearance.'
+              : 'Optional können Sie eine Grundfarbe wählen, um die Menükarte anzupassen.'}
           </div>
         )}
       </div>

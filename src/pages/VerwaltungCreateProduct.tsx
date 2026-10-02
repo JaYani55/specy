@@ -19,35 +19,33 @@ const VerwaltungCreateProduct = () => {
 
   React.useEffect(() => {
     if (!permissions.canManageProducts) {
-      navigate('/admin');
+      navigate('/products/schemas');
     }
   }, [permissions.canManageProducts, navigate]);
 
-  // Determine where to navigate back based on referrer or state
+  // Keep legacy bookmarks and navigation state pointed at the consolidated routes.
   const getBackPath = () => {
-    // Check if we have state from navigation (preferred method)
-    if (location.state?.from) {
-      return location.state.from;
+    const requestedPath = location.state?.from;
+    if (requestedPath === '/admin/all-products' || requestedPath === '/admin/create-product') {
+      return '/products/manage';
     }
-    
-    // Fallback: check the referrer path
+    if (requestedPath === '/admin') return '/products/manage';
+    if (typeof requestedPath === 'string' && requestedPath.startsWith('/products')) return requestedPath;
+
     const referrer = document.referrer;
     if (referrer) {
       try {
         const referrerPath = new URL(referrer).pathname;
-        if (referrerPath.includes('/admin/all-products')) {
-          return '/admin/all-products';
+        if (referrerPath.includes('/admin/all-products') || referrerPath.includes('/admin/create-product') || referrerPath.startsWith('/products/manage')) {
+          return '/products/manage';
         }
-        if (referrerPath.includes('/admin')) {
-          return '/admin';
-        }
-      } catch (e) {
-        // If URL parsing fails, use default
+        if (referrerPath.startsWith('/admin')) return '/products/manage';
+      } catch {
+        // Use the product-management default when the referrer is unavailable or invalid.
       }
     }
-    
-    // Default fallback to admin
-    return '/admin';
+
+    return '/products/manage';
   };
 
   const backPath = getBackPath();
@@ -62,10 +60,10 @@ const VerwaltungCreateProduct = () => {
   };
 
   const getBackButtonLabel = () => {
-    if (backPath === '/admin/all-products') {
+    if (backPath === '/products/manage') {
       return language === 'en' ? 'Back to Products' : 'Zurück zu Produkten';
     }
-    return language === 'en' ? 'Back to Administration' : 'Zurück zur Verwaltung';
+    return language === 'en' ? 'Back to Products' : 'Zurück zu Produkten';
   };
 
   if (!permissions.canManageProducts) {

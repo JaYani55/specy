@@ -27,11 +27,11 @@ import ProductDetail from "./pages/ProductDetail";
 import NotFound from "./pages/NotFound";
 import TestLoader from "./pages/TestLoader";
 import Info from "./pages/Info";
-import PageBuilder from "./pages/PageBuilder";
+import PageBuilderPage from "./features/page-builder/PageBuilderPage";
 import Pages from "./pages/Pages";
 import Products from "./pages/Products";
 import PagesSchemaDetail from "./pages/PagesSchemaDetail";
-import SchemaEditor from "./pages/SchemaEditor";
+import SchemaEditorPage from "./features/schema-editor/SchemaEditorPage";
 import Forms from "./pages/Forms";
 import FormEditor from "./pages/FormEditor";
 import FormAnswers from "./pages/FormAnswers";
@@ -114,6 +114,11 @@ const RootRoute = () => {
 const LegacySpecDetailRedirect = () => {
   const { specSlug } = useParams<{ specSlug: string }>();
   return <Navigate to={specSlug ? `/mcp/${specSlug}` : '/mcp'} replace />;
+};
+
+const LegacyProductDetailRedirect = () => {
+  const { productId } = useParams<{ productId: string }>();
+  return <Navigate to={productId ? `/products/manage/${productId}` : '/products/manage'} replace />;
 };
 
 // Add this component to update document language
@@ -242,23 +247,27 @@ const AppContent = () => {
             path="/pagebuilder/:id" 
             element={
               <ProtectedRoute>
-                <PageBuilder />
+                <PageBuilderPage />
               </ProtectedRoute>
             } 
           />
 
           {/* Pages Routes */}
           <Route path="/pages" element={<ProtectedRoute requiredRole="user"><Pages /></ProtectedRoute>} />
-          <Route path="/products" element={<ProtectedRoute requiredRole="user"><Products /></ProtectedRoute>} />
-          <Route path="/pages/schema/new" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
-          <Route path="/pages/schema/:tenantSlug/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
-          <Route path="/pages/schema/:tenantSlug/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
-          <Route path="/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
+          <Route path="/products" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage" replace /></ProtectedRoute>} />
+          <Route path="/products/schemas" element={<ProtectedRoute requiredRole="user"><Products /></ProtectedRoute>} />
+          <Route path="/products/manage" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />
+          <Route path="/products/manage/new" element={<ProtectedRoute requiredRole="user"><VerwaltungCreateProduct /></ProtectedRoute>} />
+          <Route path="/products/manage/:productId" element={<ProtectedRoute><ProductDetail /></ProtectedRoute>} />
+          <Route path="/pages/schema/new" element={<ProtectedRoute requiredRole="user"><SchemaEditorPage /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditorPage /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilderPage /></ProtectedRoute>} />
+          <Route path="/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId" element={<ProtectedRoute requiredRole="user"><PageBuilderPage /></ProtectedRoute>} />
           <Route path="/pages/schema/:tenantSlug/:schemaSlug" element={<ProtectedRoute requiredRole="user"><PagesSchemaDetail /></ProtectedRoute>} />
           <Route path="/pages/schema/:schemaSlug" element={<ProtectedRoute requiredRole="user"><PagesSchemaDetail /></ProtectedRoute>} />
-          <Route path="/pages/schema/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditor /></ProtectedRoute>} />
-          <Route path="/pages/schema/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
-          <Route path="/pages/schema/:schemaSlug/edit/:pageId" element={<ProtectedRoute requiredRole="user"><PageBuilder /></ProtectedRoute>} />
+          <Route path="/pages/schema/:schemaSlug/settings" element={<ProtectedRoute requiredRole="user"><SchemaEditorPage /></ProtectedRoute>} />
+          <Route path="/pages/schema/:schemaSlug/new" element={<ProtectedRoute requiredRole="user"><PageBuilderPage /></ProtectedRoute>} />
+          <Route path="/pages/schema/:schemaSlug/edit/:pageId" element={<ProtectedRoute requiredRole="user"><PageBuilderPage /></ProtectedRoute>} />
 
           <Route path="/forms" element={<ProtectedRoute requiredRole="user"><Forms /></ProtectedRoute>} />
           <Route path="/forms/new" element={<ProtectedRoute requiredRole="user"><FormEditor /></ProtectedRoute>} />
@@ -285,16 +294,9 @@ const AppContent = () => {
           <Route path="/admin/branding" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungBranding /></ProtectedRoute>} />
           <Route path="/admin/add-mentor" element={<ProtectedRoute requiredRole="user"><VerwaltungAddMentor /></ProtectedRoute>} />
           <Route path="/admin/all-mentors" element={<ProtectedRoute requiredRole="user"><VerwaltungAllMentors /></ProtectedRoute>} />
-          <Route path="/admin/all-products" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />
-          <Route path="/admin/create-product" element={<ProtectedRoute requiredRole="user"><VerwaltungCreateProduct /></ProtectedRoute>} />
-          <Route 
-            path="/admin/product/:productId" 
-            element={
-              <ProtectedRoute>
-                <ProductDetail />
-              </ProtectedRoute>
-            } 
-          />
+          <Route path="/admin/all-products" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage" replace /></ProtectedRoute>} />
+          <Route path="/admin/create-product" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage/new" replace /></ProtectedRoute>} />
+          <Route path="/admin/product/:productId" element={<ProtectedRoute><LegacyProductDetailRedirect /></ProtectedRoute>} />
           <Route 
             path="/admin/trait" 
             element={

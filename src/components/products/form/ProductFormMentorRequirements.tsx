@@ -37,7 +37,7 @@ export function ProductFormMentorRequirements({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-lg">
-                {language === 'en' ? 'Minimum Mentors' : 'Mindestanzahl Mentoren'}
+                {language === 'en' ? 'Minimum Staff' : 'Mindestanzahl Mitarbeitende'}
               </FormLabel>
               <FormControl>
                 <input
@@ -64,7 +64,7 @@ export function ProductFormMentorRequirements({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-lg">
-                {language === 'en' ? 'Maximum Mentors' : 'Höchstanzahl Mentoren'}
+                {language === 'en' ? 'Maximum Staff' : 'Höchstanzahl Mitarbeitende'}
               </FormLabel>
               <FormControl>
                 <input
@@ -100,8 +100,8 @@ export function ProductFormMentorRequirements({
               </FormLabel>
               <FormDescription className="text-base mt-2">
                 {language === 'en' 
-                  ? 'Select mentor traits that would be beneficial for this product. These are informational only and do not automatically filter mentors.'
-                  : 'Wählen Sie Mentoreneigenschaften aus, die für dieses Produkt vorteilhaft wären. Diese sind nur informativ und filtern Mentoren nicht automatisch.'
+                  ? 'Select staff traits that would be beneficial for this product. These are informational only and do not automatically filter staff.'
+                  : 'Wählen Sie Eigenschaften von Mitarbeitenden aus, die für dieses Produkt hilfreich sein können. Die Auswahl dient nur zur Information und filtert Mitarbeitende nicht automatisch.'
                 }
               </FormDescription>
             </div>

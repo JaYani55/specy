@@ -11,8 +11,10 @@ Service-product schema upload/classification and the first product aggregate wor
 3. Read back the schema UUID, tenant-local slug, stable `api_slug`, `definition_revision`, editor config, and frontend targets. Definition changes use `specy_pages_schemas_update_definition` with the expected revision.
 4. Register the frontend using the existing target registration contract. A product schema's collection is a collection of individual product entries.
 5. Create a draft aggregate with `specy_products_create`, passing the schema's current `definition_revision`; do not use generic `create_page` for classified schemas.
-6. Edit the canonical page route through the schema-driven editor or `specy_products_update`, then explicitly publish with `specy_products_publish`.
+6. Edit the canonical `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` route with the PageBuilder, or call `specy_products_update`; then explicitly publish with `specy_products_publish`.
 7. Fetch public published entries without credentials from `/api/schemas/:apiSlug/pages`. Request `?include=entity` only when the frontend needs the allow-listed product UUID reference.
+
+The PageBuilder edits entry content only; the Schema Editor edits the technical contract. The legacy `/pagebuilder/:legacyProductId` URL resolves a linked schema page and redirects to its canonical route. See [`../features/page-builder.md`](../features/page-builder.md) and [`../features/schema-editor.md`](../features/schema-editor.md) for the user/editor boundary.
 
 ## MCP product tools
 

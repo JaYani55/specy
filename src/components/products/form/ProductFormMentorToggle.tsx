@@ -22,7 +22,7 @@ export function ProductFormMentorToggle({ form }: ProductFormMentorToggleProps) 
     <fieldset className="bg-muted/30 p-6 rounded-lg border border-border/50">
       <legend className="sr-only">
         <span lang={language === 'en' ? 'en' : 'de'}>
-          {language === 'en' ? 'Mentor Requirements Configuration' : 'Mentorenanforderungen Konfiguration'}
+          {language === 'en' ? 'Staff Requirements Configuration' : 'Konfiguration des Personalbedarfs'}
         </span>
       </legend>
       
@@ -58,14 +58,14 @@ export function ProductFormMentorToggle({ form }: ProductFormMentorToggleProps) 
                 className="text-lg font-medium cursor-pointer"
               >
                 <span lang={language === 'en' ? 'en' : 'de'}>
-                  {language === 'en' ? 'Mentors Required' : 'Mentoren erforderlich'}
+                  {language === 'en' ? 'Staff required' : 'Mitarbeitende erforderlich'}
                 </span>
               </FormLabel>
               <FormDescription id="mentor-toggle-description" className="text-base">
                 <span lang={language === 'en' ? 'en' : 'de'}>
                   {language === 'en' 
-                    ? 'Check this if the product requires mentors to participate in events' 
-                    : 'Aktivieren Sie dies, wenn das Produkt Mentoren für Veranstaltungen benötigt'}
+                    ? 'Check this if the product requires staff to participate in events'
+                    : 'Aktivieren Sie diese Option, wenn für das Produkt Mitarbeitende an Veranstaltungen benötigt werden.'}
                 </span>
               </FormDescription>
             </div>

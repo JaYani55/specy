@@ -86,7 +86,7 @@ live dispatch point** (see §3) · ❌ core collector exists but never invoked
 | `media.url.resolve` | transform | `src/utils/mediaUrl.ts` | `MediaUrlResolveHookContext` — `{ storageObjectKey?, … }`; rewrites plugin-owned media keys onto delivery URLs | ✅ |
 | `forms.fileUpload.builder` | transform | `src/services/formFileUploadHooks.ts` | `FormFileUploadBuilderContext` — `{ enabledPluginSlugs, available, providerLabel, warning, uploadProvider, uploadFolderTemplate, language }`; declares the upload provider in the forms builder | ✅ |
 | `knowledgeBase.entity.actions` | transform | `src/components/entity-actions/EntityActionsRow.tsx` | `KnowledgeBaseEntityActionsHookContext` — `{ entityType: 'page'\|'form'\|'object'\|'event', entityId, tenantId?, userRoles, actions }`; adds row-level KB actions | ✅ |
-| `knowledgeBase.entity.afterCreate` | transform | `SchemaPageBuilderForm`, `CreateEvent`, `FormEditor`, `ObjectEditor` | `KnowledgeBaseAfterCreateHookContext`; notifies plugins after entity creation (KB ingestion) | ✅ |
+| `knowledgeBase.entity.afterCreate` | transform | `src/features/page-builder/SchemaContentEditor.tsx`, `CreateEvent`, `FormEditor`, `ObjectEditor` | `KnowledgeBaseAfterCreateHookContext`; notifies plugins after entity creation (KB ingestion) | ✅ |
 | `isibot.flow.types` | transform | `src/services/isibotFlowTypes.ts` → `loadIsibotFlowTypeDescriptors()` | `IsibotFlowTypesHookContext` — `{ descriptors }` (type, label, iconName, color, description, defaultFields, schemaSummary); flow-builder node types. Handler may return the context or a plain descriptor array | ✅ (UI) — ⚠️ API-scope implementations are unreachable, see §3.1 |
 
 ### 2.2 API scope (dispatched via `api/plugin-hooks.ts`)
