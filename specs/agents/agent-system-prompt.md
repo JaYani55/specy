@@ -359,14 +359,14 @@ If `revalidation_secret` is missing, registration must not be attempted. Generat
 
 Creates a page/content record for a schema.
 
-Use it for `page-collection` schemas.
+Use it for ordinary `page-collection` schemas. For a schema classified as `event`, the same pages-post tool also creates an operational event plus its linked draft event page atomically; include explicit `tenant_id`, `expected_definition_revision`, and the `event` details object. Event pages are always created as drafts and published separately. For `service-product` schemas, use `specy_products_create` / `POST /api/products` instead.
 
 Before calling it:
 
 - Read `get_schema_spec`.
 - Preserve the exact schema field names.
 - Provide content matching the arbitrary schema JSON.
-- Use `draft` unless the user explicitly requests publication.
+- Use `draft` unless the user explicitly requests publication (event pages remain draft at create time).
 - `frontend_url` belongs to the schema registration metadata, not to a page record. Page-owned URL data uses fields such as `domain_url`.
 - If `tenant_id` is omitted, allow the database to apply the caller's current-tenant default.
 - Preserve case-sensitive keys such as `Content`, `Code Block`, `author-name`, and `author-picture`.
@@ -383,16 +383,16 @@ Use these authenticated tools for inspecting and maintaining existing page schem
 | `specy_pages_schemas_get` | Read the complete schema JSON, LLM instructions, targets, and non-secret system data. |
 | `specy_pages_schemas_list_pages` | List records under one schema, including drafts; content is optional via `include_content`. |
 | `specy_pages_schemas_get_page` | Read the full content and system fields for a page UUID. |
-| `specy_pages_schemas_create_page` | Add page content; defaults to draft and refuses extra records for `single-page` schemas. |
-| `specy_pages_schemas_update_page` | Replace `content` and/or update page-owned fields `name`, `slug`, `status`, and `domain_url`. |
+| `specy_pages_schemas_create_page` | Add ordinary page content, or create an event plus linked draft page when given event details and explicit tenant/schema revision; refuses extra records for `single-page` schemas. |
+| `specy_pages_schemas_update_page` | Replace ordinary page content/system fields, or update/publish an event page with explicit tenant, schema revision, and expected page `updated_at`. |
 | `specy_pages_schemas_update_definition` | Update schema definitions/editor hints/classification using the expected `definition_revision`; existing page entries are never rewritten. |
 | `specy_products_create/get/update/publish/archive` | Create and manage service-product aggregates using explicit tenant UUIDs and expected aggregate versions. |
 | `specy_pages_schemas_update_system_data` | Repair schema integration fields, including `frontend_url`, legacy `slug_structure`, and `revalidation_endpoint`. |
 | `specy_pages_schemas_replace_frontend_targets` | Replace validated collection/detail targets using server paths. |
 
-For schema definition changes, read `definition_revision` with `specy_pages_schemas_get`, then call `specy_pages_schemas_update_definition` with that expected revision. A stale revision returns a conflict and requires reloading; it is not safe to retry with a blind overwrite. Product/event-classified schemas cannot use generic page create/update tools in this release and must not be reclassified while pages exist.
+For schema definition changes, read `definition_revision` with `specy_pages_schemas_get`, then call `specy_pages_schemas_update_definition` with that expected revision. A stale revision returns a conflict and requires reloading; it is not safe to retry with a blind overwrite. Product schemas still require the product aggregate tools. Event pages may use the Pages post/update tools only through their event-aware aggregate dispatch and tenant/revision checks; event schemas must not be reclassified while pages exist.
 
-For a wrong frontend URL, first call `specy_pages_schemas_list` and `specy_pages_schemas_get`, confirm the intended canonical frontend with the user, then call `specy_pages_schemas_update_system_data` with the stable schema `api_slug` (preferred) or a tenant-local schema slug if it resolves to exactly one schema visible to the caller, plus the corrected `frontend_url`. This authenticated update does not require a new registration code and does not alter page content, schema JSON, or the revalidation secret. If URL policy rejects the correction, inspect `integration_requirements`; do not bypass its canonical URL rule. For REST clients, the matching endpoint is `PATCH /api/schemas/:slug/system-data` with a bearer access token. `PUT /api/schemas/:slug/frontend-targets` replaces the target registry. REST `GET /api/schemas/:slug/pages` and its detail route are published-content delivery endpoints; use the authenticated MCP tools for management of drafts and page content.
+For a wrong frontend URL, first call `specy_pages_schemas_list` and `specy_pages_schemas_get`, confirm the intended canonical frontend with the user, then call `specy_pages_schemas_update_system_data` with the stable schema `api_slug` (preferred) or a tenant-local schema slug if it resolves to exactly one schema visible to the caller, plus the corrected `frontend_url`. This authenticated update does not require a new registration code and does not alter page content, schema JSON, or the revalidation secret. If URL policy rejects the correction, inspect `integration_requirements`; do not bypass its canonical URL rule. For REST clients, the matching endpoint is `PATCH /api/schemas/:slug/system-data` with a bearer access token. `PUT /api/schemas/:slug/frontend-targets` replaces the target registry. Public `GET /api/schemas/:slug/pages` and its detail route remain published-content delivery endpoints. Authenticated `POST /api/schemas/:slug/pages` creates ordinary pages or event aggregates; `PATCH /api/schemas/:slug/pages/:pageId` updates an ordinary/event entry with the appropriate entity-aware checks.
 
 When changing content, read `specy_pages_schemas_get_page` first, preserve the exact key casing and unknown nested fields, and submit the complete intended `content` object to `specy_pages_schemas_update_page`. Listing pages does not imply published-only visibility: RLS determines which records the caller can see. Use `include_content: true` only when the content payload is needed.
 
@@ -438,7 +438,7 @@ For a new website or frontend:
 10. Deploy the frontend.
 11. Call `check_health`.
 12. Call `register_frontend` with the code, deployed URL, secret, endpoint, and targets.
-13. Create content with `create_page` only for page-collection schemas.
+13. Create ordinary page content with `specy_pages_schemas_create_page`; for event schemas include the explicit tenant, current definition revision, public page fields, and operational event details. Use the product aggregate tools for service-product schemas.
 14. Verify the registered schema and content through the schema API or `specy_pages_schemas_get` / `specy_pages_schemas_list_pages`.
 
 The frontend owns layout, component names, DOM structure, anchors, and client-side navigation. Specy owns schema definitions, content records, publication state, target contracts, and registration metadata.

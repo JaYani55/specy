@@ -4,7 +4,7 @@
 
 `page_schemas.schema` remains developer-owned JSON describing entry fields. `pages.content` remains arbitrary JSON data. Classification, editor hints, and definition revisions are metadata on `page_schemas`; they are not injected into either JSON payload.
 
-This document describes the implemented schema/content contract foundation. Service-product aggregates are available through Products, REST, and MCP. A focused dashboard event-page aggregate and public event-schema delivery are also available; staff presentation, customer CRM, event MCP/API mutations, and typed external-service handoff remain out of scope.
+This document describes the implemented schema/content contract foundation. Service-product aggregates are available through Products, REST, and MCP. A focused event-page aggregate and public event-schema delivery are also available through the dashboard and entity-aware Pages REST/MCP operations; staff presentation, customer CRM, dedicated event collection tools, and typed external-service handoff remain out of scope.
 
 ## Technical and content editor hierarchy
 
@@ -67,4 +67,4 @@ The frontend manifest now reports `revalidation.supports_new_routes: null` (unkn
 
 - Existing schema/page records default to ordinary `page`; their JSON is not transformed by the metadata migration.
 - Stable `api_slug`, tenant-local schema slugs, frontend targets, and the existing published-page contract for ordinary pages remain unchanged.
-- Product and event page aggregates use additive compatibility layers and are not substitutes for the live inventory/backfill gate in [`../plans/PRODUCT-INTEGRATION.md`](../plans/PRODUCT-INTEGRATION.md) §§8–9. Staff identity, customer CRM, event API/MCP mutations, typed handoff, durable invalidation, and legacy contraction remain future phases. See [`event-catalogue.md`](event-catalogue.md) for the focused event-page contract.
+- Product and event page aggregates use additive compatibility layers and are not substitutes for the live inventory/backfill gate in [`../plans/PRODUCT-INTEGRATION.md`](../plans/PRODUCT-INTEGRATION.md) §§8–9. Staff identity, customer CRM, dedicated event collection tools, typed handoff, durable invalidation, and legacy contraction remain future phases. See [`event-catalogue.md`](event-catalogue.md) for the focused event-page contract.

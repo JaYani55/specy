@@ -4,7 +4,7 @@
 
 The focused event-page integration is implemented in core. An operational event may optionally own one public page in a tenant-owned `event` page-collection schema. The page is a separate event occurrence page; it is never created in the selected service product's schema.
 
-This is not the broader event/staff/CRM rebuild. Existing scheduling events and legacy integer product references remain. Event MCP tools, recurrence, booking/ticketing, staff public profiles, CRM changes, backfill, and durable invalidation are out of scope.
+This is not the broader event/staff/CRM rebuild. Existing scheduling events and legacy integer product references remain. Event create/update through the entity-aware Pages REST/MCP post/update operations is supported; separate `specy_events_*` collection tools, recurrence, booking/ticketing, staff public profiles, CRM changes, backfill, and durable invalidation are out of scope.
 
 ## Dashboard flow
 
@@ -39,7 +39,7 @@ The app's legacy product service now requires an explicit tenant for list/get/cr
 - `create_event_page_aggregate` creates the event and draft page in one transaction under the caller's RLS identity. It checks the event schema's current `definition_revision` and validates all tenant/entity links.
 - `update_event_page_aggregate` saves the page content through an expected schema revision and expected page `updated_at` concurrency token. Content uses the same recursive schema validator as service products.
 - `set_event_page_publication` publishes, unpublishes, or archives the page. Publishing validates required schema fields and timezone. The operational event status is not changed by page publication.
-- The browser uses `src/services/events/eventPageService.ts`; there are no event aggregate REST or MCP mutation tools in this slice.
+- The dashboard uses `src/services/events/eventPageService.ts`. Authenticated REST `POST/PATCH /api/schemas/:apiSlug/pages` and MCP `specy_pages_schemas_create_page` / `specy_pages_schemas_update_page` dispatch event-classified schemas to the same event aggregate service. Pages PATCH updates event-page content and publication; operational schedule edits remain dashboard-only. No separate event collection API/tool family exists.
 
 A registered event schema can be edited in the existing Schema Editor. The event page itself uses the existing schema-driven PageBuilder, not generic page CRUD. Generic page create/update tools remain disallowed for classified schemas.
 
@@ -70,7 +70,7 @@ PageBuilder save/publication uses the existing frontend revalidation path. Editi
 - `src/pages/CreateEvent.tsx`, `src/pages/EditEvent.tsx`, `src/components/events/EventForm.tsx` — event creation/editing, optional event schema selection, time zone, and editor links.
 - `src/services/events/eventPageService.ts`, `src/utils/eventPage.ts` — caller-scoped RPC adapters and IANA timezone/slug helpers.
 - `src/features/page-builder/PageBuilderPage.tsx`, `SchemaContentEditor.tsx`, `src/pages/PagesSchemaDetail.tsx` — event page loading, editing, publication, and archive.
-- `api/lib/publicEntityProjection.ts`, `api/routes/schemas.ts`, `api/lib/frontendManifest.ts` — event/product allow-listed public projections and manifest includes.
+- `api/lib/eventPageAggregates.ts`, `api/lib/publicEntityProjection.ts`, `api/routes/schemas.ts`, `api/routes/mcp.ts`, `api/lib/frontendManifest.ts`, `src/lib/apiCatalog.ts` — entity-aware Pages post/update REST/MCP operations, event/product allow-listed public projections, and discovery metadata.
 - `migrations/202610030001_event_page_aggregates.sql` — tenant link constraints, write guards, aggregate RPCs, timezone validation, and page lifecycle behavior.
 
 ## Rollout boundary

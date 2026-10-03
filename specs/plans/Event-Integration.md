@@ -36,7 +36,7 @@ This fits the existing schema/PageBuilder architecture and can grow later into a
 
 ### Schema and public delivery boundary
 
-Schema metadata already supports `entity_kind = 'event'`, and event schemas are required to be tenant-owned page collections. The PageBuilder now resolves event pages through `getEventPageAggregateByPage`; event saves/publication use event-aware RPCs. Generic page create/update remains rejected for event schemas. `api/routes/schemas.ts` now delivers registered published event pages with allow-listed `entity`, `event`, and optional published-product includes. Event public delivery is implemented, but event aggregate REST/MCP mutation tools remain intentionally deferred.
+Schema metadata already supports `entity_kind = 'event'`, and event schemas are required to be tenant-owned page collections. The PageBuilder now resolves event pages through `getEventPageAggregateByPage`; event saves/publication use event-aware RPCs. Generic page create/update does not write event schemas directly. The existing Pages post/update MCP tools and matching authenticated REST endpoints now dispatch event schemas through the event aggregate. `api/routes/schemas.ts` delivers registered published event pages with allow-listed `entity`, `event`, and optional published-product includes. A separate event collection tool family remains deferred.
 
 The service-product implementation remains a pattern for transactions, revisions, validation, and safe public projection; event operations use event records and event authorization rather than product aggregate operations.
 
@@ -146,7 +146,7 @@ Use the existing frontend target and revalidation machinery. Published event-pag
 ### Deliberately deferred
 
 - Public staff profiles, staff/account-link conversion, customer CRM changes, event assignments rebuild, and mentor terminology cleanup.
-- Event API/MCP creation tools unless the customer needs agent-driven event authoring now.
+- A separate `specy_events_*` collection API/tool family. Agents create/update occurrences through the entity-aware Pages post/update REST/MCP operations; dedicated event list/search tools can be added later if needed.
 - Multiple event pages per occurrence, recurrence/series, ticketing/booking, and availability.
 - Automatic event content mirroring into product pages or product-specific schema selection for event content.
 - Full historical event/page backfill, table renames, and product legacy contraction.

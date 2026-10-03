@@ -4,7 +4,7 @@
 
 The service-product foundation uses one product row and one canonical `pages` row per aggregate. It reuses the historical product table as a compatibility backing store; new code sees the neutral `service_products` projection and UUID `id`. The legacy integer ID remains internal for existing event FKs and is not part of the new MCP/REST DTO.
 
-Implemented: tenant-scoped list/get/create/update/publish/unpublish/archive; schema-driven page editing; revision-checked saves; idempotent create; product-only public page delivery; active-workspace scoping in legacy product dashboard reads. A focused optional event-page workflow is documented in [`event-catalogue.md`](event-catalogue.md). Not implemented: staff/team relations, sale pricing/money, customer CRM, event REST/MCP mutation tools, durable outbox/cache-purge guarantees, and migration/backfill of legacy products.
+Implemented: tenant-scoped list/get/create/update/publish/unpublish/archive; schema-driven page editing; revision-checked saves; idempotent create; product-only public page delivery; active-workspace scoping in legacy product dashboard reads. A focused optional event-page workflow is documented in [`event-catalogue.md`](event-catalogue.md). Not implemented: staff/team relations, sale pricing/money, customer CRM, a separate event collection API/tool family, durable outbox/cache-purge guarantees, and migration/backfill of legacy products.
 
 ## Dashboard entry points
 

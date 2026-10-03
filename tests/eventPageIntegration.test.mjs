@@ -6,6 +6,7 @@ const migration = readFileSync(new URL('../migrations/202610030001_event_page_ag
 const createEvent = readFileSync(new URL('../src/pages/CreateEvent.tsx', import.meta.url), 'utf8');
 const pageBuilder = readFileSync(new URL('../src/features/page-builder/PageBuilderPage.tsx', import.meta.url), 'utf8');
 const schemasRoute = readFileSync(new URL('../api/routes/schemas.ts', import.meta.url), 'utf8');
+const mcpRoute = readFileSync(new URL('../api/routes/mcp.ts', import.meta.url), 'utf8');
 
 
 describe('event page integration contract', () => {
@@ -34,6 +35,14 @@ describe('event page integration contract', () => {
     assert.match(migration, /create or replace function public\.delete_event_page_after_event_delete/i);
     assert.match(migration, /delete from public\.pages where id = old\.page_id and tenant_id = old\.tenant_id/i);
     assert.match(pageBuilder, /getEventPageAggregateByPage/);
+  });
+
+  it('exposes event-aware REST and MCP Pages post/update operations', () => {
+    assert.match(schemasRoute, /schemas\.post\('\/:slug\/pages'/);
+    assert.match(schemasRoute, /schemas\.patch\('\/:slug\/pages\/:pageId'/);
+    assert.match(mcpRoute, /eventPageCreateDetailsSchema/);
+    assert.match(mcpRoute, /createEventPageAggregate\(supabase, schema, parsed\.value\)/);
+    assert.match(mcpRoute, /updateEventPageAggregate\(supabase, schema, page_id/);
   });
 
   it('serves event pages only through registered schema delivery and allow-listed projections', () => {

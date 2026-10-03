@@ -2,7 +2,7 @@
 
 ## Status
 
-Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). This is not the full Products × Pages plan: staff presentation/identity migration, CRM, event MCP/API mutations, external invoice handoff, durable outbox delivery, and legacy product/event backfill remain pending.
+Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). This is not the full Products × Pages plan: staff presentation/identity migration, CRM, dedicated event collection tools, external invoice handoff, durable outbox delivery, and legacy product/event backfill remain pending.
 
 ## Frontend-first setup
 
@@ -31,7 +31,7 @@ All operations require the authenticated caller's permissions and an explicit wo
 
 Schema definition `definition_revision` and product aggregate `version` are distinct concurrency tokens. Create, update, and publication check the schema revision; update/publication also check aggregate version. Idempotency protects aggregate creation; a repeated key with changed payload conflicts.
 
-Generic `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` reject product/event schemas. They remain available for ordinary `page` schemas. Event page creation is currently a dashboard flow; event aggregate MCP mutation tools are not implemented.
+Generic page writes remain disallowed for service-product schemas, which use `specy_products_*`. For event schemas, `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` dispatch to the event aggregate workflow when the caller supplies the required tenant, schema revision, event fields, and page revision. Ordinary page schemas continue using generic page operations.
 
 ## Public page relation
 

@@ -35,10 +35,25 @@ import {
   updateProductAggregate,
 } from '../lib/productAggregateService';
 import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '../lib/productAggregates';
+import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
+
+const eventPageCreateDetailsSchema = z.object({
+  company: z.string().min(1).describe('Legacy operational company label; it is not included in public event delivery.'),
+  company_id: z.string().uuid().nullable().optional(),
+  product_id: z.string().uuid().optional().describe('Service-product UUID from specy_products_list; must belong to the same workspace.'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  duration_minutes: z.number().int().min(1),
+  timezone: z.string().min(1).describe('Confirmed IANA timezone such as Europe/Berlin.'),
+  mode: z.enum(['live', 'online', 'hybrid']).optional(),
+  required_staff_count: z.number().int().min(1).optional(),
+  required_trait_id: z.number().int().positive().nullable().optional(),
+  description: z.string().optional().describe('Operational description; it is not included in the public event projection.'),
+});
 
 const BUILT_IN_MCP_TOOLS = [
   'start_here',
@@ -221,7 +236,7 @@ async function createMcpServerWithTools(
             '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, ordinary page tools, schema-management tools, and specy_products_* aggregate tools.',
             '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
-            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For products, use specy_products_create/get/update/publish/archive and always pass an explicit tenant_id.'
+            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details; it creates a linked draft event page. Product schemas use specy_products_create/get/update/publish/archive.'
           ],
           how_to_authenticate: {
             mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
@@ -399,23 +414,25 @@ async function createMcpServerWithTools(
 
     server.tool(
       'create_page',
-      'Create a draft page validated against a registered or unregistered page schema. Requires a valid OAuth bearer token.',
+      'Create a schema page entry with a valid OAuth bearer token. For event schemas, supply tenant_id, expected_definition_revision, and event details; this atomically creates an operational event plus a linked draft page. Service products use specy_products_create.',
       {
       schema_slug: z.string().min(1).describe('Schema API slug (api_slug) returned by list_schemas/create_schema'),
       name: z.string().min(1).describe('Page display name'),
       slug: z.string().optional().describe('Optional URL slug; generated from name when omitted'),
       content: z.record(z.string(), z.unknown()).describe('Page content matching the schema definition'),
-      status: z.enum(['draft', 'published']).optional().describe('Page status; defaults to draft'),
-      tenant_id: z.string().uuid().optional().describe('Optional tenant override for a tenant the caller belongs to'),
+      status: z.enum(['draft', 'published']).optional().describe('Page status; defaults to draft. Event pages are always created as drafts.'),
+      tenant_id: z.string().uuid().optional().describe('Tenant UUID; required for event schemas.'),
+      expected_definition_revision: z.number().int().min(1).optional().describe('Required for event schemas.'),
+      event: eventPageCreateDetailsSchema.optional().describe('Required when schema_slug identifies an event schema; operational event facts are stored separately from page content.'),
       },
-      async ({ schema_slug, name, slug, content, status, tenant_id }) => {
+      async ({ schema_slug, name, slug, content, status, tenant_id, expected_definition_revision, event }) => {
       if (!authToken) {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Authentication required. Use the MCP client OAuth flow first.' }, null, 2) }] };
       }
 
       const { data: schema, error: schemaError } = await supabase
         .from('page_schemas')
-        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope, entity_kind')
+        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope, entity_kind, definition_revision')
         .eq('api_slug', schema_slug)
         .single();
       if (schemaError || !schema) {
@@ -428,11 +445,43 @@ async function createMcpServerWithTools(
           content_scope: schema.content_scope,
         }, null, 2) }] };
       }
+      if (schema.entity_kind === 'event') {
+        if (status === 'published') return mcpToolFailure('Event pages are created as drafts; publish them separately after content review.', 400);
+        if (!event || !tenant_id || expected_definition_revision === undefined) {
+          return mcpToolFailure('tenant_id, expected_definition_revision, and event details are required for an event schema.', 400);
+        }
+        const parsed = parseEventPageCreateInput({
+          tenant_id, expected_definition_revision, name, slug, content, event,
+        });
+        if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
+        try {
+          const aggregate = await createEventPageAggregate(supabase, schema, parsed.value) as { event_id: string; page_id: string; page_slug: string; page_status: string };
+          const { data: tenant } = schema.tenant_id
+            ? await supabase.from('tenants').select('slug').eq('id', schema.tenant_id).maybeSingle()
+            : { data: null };
+          const cmsPath = tenant?.slug
+            ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}`
+            : `/pages/schema/${encodeURIComponent(schema.api_slug)}`;
+          return { content: [{ type: 'text' as const, text: JSON.stringify({
+            success: true,
+            event: { id: aggregate.event_id, tenant_id: schema.tenant_id, page_id: aggregate.page_id },
+            page: { id: aggregate.page_id, slug: aggregate.page_slug, name, status: aggregate.page_status, schema_id: schema.id, tenant_id: schema.tenant_id, content },
+            editor_url: `${baseUrl}${cmsPath}/edit/${aggregate.page_id}`,
+            next_step: 'Open the event page in PageBuilder, complete schema-required content, then explicitly publish it.',
+          }, null, 2) }] };
+        } catch (error) {
+          if (error instanceof EventPageAggregateError) return mcpToolFailure(error.message, error.status, error.code ? { code: error.code } : {});
+          return mcpToolFailure(error instanceof Error ? error.message : 'Event page creation failed.', 500);
+        }
+      }
+      if (schema.entity_kind === 'service-product') {
+        return mcpToolFailure('Use specy_products_create for service-product schemas.', 409, { code: 'aggregate_operation_required' });
+      }
       if (schema.entity_kind && schema.entity_kind !== 'page') {
-        return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page creation is not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
+        return mcpToolFailure(`Unsupported page entity kind: ${schema.entity_kind}.`, 409, { code: 'aggregate_operation_required' });
       }
       if (tenant_id && tenant_id !== schema.tenant_id) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Page tenant must match the owning schema tenant.' }, null, 2) }] };
+        return mcpToolFailure('Page tenant must match the owning schema tenant.', 409);
       }
 
       const requestedSlug = normalizeSchemaPageSlug(slug || name);
@@ -603,28 +652,63 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_create_page',
-      '[specy-pages > schemas > pages] Add a draft page with content conforming to the selected schema. Single-page schemas cannot receive additional records.',
+      '[specy-pages > schemas > pages] Create a schema page entry. For event schemas include tenant_id, expected_definition_revision, and operational event details; this creates an atomic event plus draft event page. Event pages are published separately.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
         name: z.string().min(1),
         slug: z.string().optional().describe('Optional URL slug; generated from name when omitted.'),
         content: z.record(z.string(), z.unknown()).describe('Complete page JSON content; keys and casing are preserved.'),
-        status: z.enum(['draft', 'published']).optional().describe('Defaults to draft. Publish only when explicitly requested.'),
-        domain_url: z.string().max(2048).nullable().optional().describe('Optional page-owned domain URL system field.'),
+        status: z.enum(['draft', 'published']).optional().describe('Defaults to draft. Event pages are always created as drafts.'),
+        domain_url: z.string().max(2048).nullable().optional().describe('Optional ordinary page-owned domain URL system field.'),
+        tenant_id: z.string().uuid().optional().describe('Required for event schemas; must match the schema workspace.'),
+        expected_definition_revision: z.number().int().min(1).optional().describe('Required for event schemas.'),
+        event: eventPageCreateDetailsSchema.optional().describe('Required for event schemas; these operational fields are separate from page content.'),
       },
-      async ({ schema_slug, name, slug, content, status, domain_url }) => {
+      async ({ schema_slug, name, slug, content, status, domain_url, tenant_id, expected_definition_revision, event }) => {
         const { data: schema, error: schemaError } = await supabase
           .from('page_schemas')
-          .select('id, api_slug, tenant_id, content_scope, entity_kind')
+          .select('id, api_slug, slug, tenant_id, content_scope, entity_kind, definition_revision')
           .eq('api_slug', schema_slug)
           .single();
         if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
         if (schema.content_scope === 'single-page') {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is a single-page schema; edit its existing page record instead of adding another page.' }, null, 2) }] };
         }
-        if (schema.entity_kind && schema.entity_kind !== 'page') {
-          return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page creation is not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
+        if (schema.entity_kind === 'event') {
+          if (status === 'published') return mcpToolFailure('Event pages are created as drafts; publish them separately after content review.', 400);
+          if (domain_url !== undefined) return mcpToolFailure('domain_url is not supported for event aggregate creation.', 400);
+          if (!event || !tenant_id || expected_definition_revision === undefined) {
+            return mcpToolFailure('tenant_id, expected_definition_revision, and event details are required for an event schema.', 400);
+          }
+          const parsed = parseEventPageCreateInput({ tenant_id, expected_definition_revision, name, slug, content, event });
+          if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
+          try {
+            const aggregate = await createEventPageAggregate(supabase, schema, parsed.value) as { event_id: string; page_id: string; page_slug: string; page_status: string };
+            const { data: tenant } = schema.tenant_id
+              ? await supabase.from('tenants').select('slug').eq('id', schema.tenant_id).maybeSingle()
+              : { data: null };
+            const cmsPath = tenant?.slug
+              ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}`
+              : `/pages/schema/${encodeURIComponent(schema.api_slug)}`;
+            return { content: [{ type: 'text' as const, text: JSON.stringify({
+              success: true,
+              event: { id: aggregate.event_id, tenant_id: schema.tenant_id, page_id: aggregate.page_id },
+              page: { id: aggregate.page_id, slug: aggregate.page_slug, name, status: aggregate.page_status, schema_id: schema.id, tenant_id: schema.tenant_id, content },
+              editor_url: `${baseUrl}${cmsPath}/edit/${aggregate.page_id}`,
+              next_step: 'Open the event page in PageBuilder, complete schema-required content, then explicitly publish it.',
+            }, null, 2) }] };
+          } catch (error) {
+            if (error instanceof EventPageAggregateError) return mcpToolFailure(error.message, error.status, error.code ? { code: error.code } : {});
+            return mcpToolFailure(error instanceof Error ? error.message : 'Event page creation failed.', 500);
+          }
         }
+        if (schema.entity_kind === 'service-product') {
+          return mcpToolFailure('Use specy_products_create for service-product schemas.', 409, { code: 'aggregate_operation_required' });
+        }
+        if (schema.entity_kind && schema.entity_kind !== 'page') {
+          return mcpToolFailure(`Unsupported page entity kind: ${schema.entity_kind}.`, 409, { code: 'aggregate_operation_required' });
+        }
+        if (tenant_id && tenant_id !== schema.tenant_id) return mcpToolFailure('Page tenant must match the owning schema tenant.', 409);
 
         const requestedSlug = normalizeSchemaPageSlug(slug || name);
         let uniqueSlug = requestedSlug;
@@ -656,7 +740,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_update_page',
-      '[specy-pages > schemas > pages] Edit page content or system fields (name, slug, publication status, domain_url). Only fields supplied are changed; schema linkage and tenant ownership cannot be reassigned.',
+      '[specy-pages > schemas > pages] Edit page content or system fields. Event pages use the event aggregate and require explicit tenant/schema/page revisions; schema linkage and tenant ownership cannot be reassigned.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
         page_id: z.string().uuid().describe('Page UUID from the schema page list'),
@@ -665,12 +749,39 @@ async function createMcpServerWithTools(
         slug: z.string().min(1).optional(),
         status: z.enum(['draft', 'published', 'archived']).optional(),
         domain_url: z.string().max(2048).nullable().optional(),
+        tenant_id: z.string().uuid().optional().describe('Required for event pages.'),
+        expected_definition_revision: z.number().int().min(1).optional().describe('Required for event pages.'),
+        expected_page_updated_at: z.string().min(1).optional().describe('Page updated_at from the latest page read; required for event pages.'),
       },
-      async ({ schema_slug, page_id, content, name, slug, status, domain_url }) => {
-        const { data: schema } = await supabase.from('page_schemas').select('id, entity_kind').eq('api_slug', schema_slug).single();
+      async ({ schema_slug, page_id, content, name, slug, status, domain_url, tenant_id, expected_definition_revision, expected_page_updated_at }) => {
+        const { data: schema } = await supabase.from('page_schemas').select('id, tenant_id, entity_kind, definition_revision').eq('api_slug', schema_slug).single();
         if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        if (schema.entity_kind === 'event') {
+          if (!tenant_id || tenant_id !== schema.tenant_id || expected_definition_revision === undefined || !expected_page_updated_at) {
+            return mcpToolFailure('Event page updates require matching tenant_id, expected_definition_revision, and expected_page_updated_at.', 400);
+          }
+          if (domain_url !== undefined) return mcpToolFailure('domain_url is not supported for event pages.', 400);
+          try {
+            const page = await updateEventPageAggregate(supabase, schema, page_id, {
+              tenant_id,
+              expected_definition_revision,
+              expected_page_updated_at,
+              ...(content !== undefined ? { content } : {}),
+              ...(name !== undefined ? { name } : {}),
+              ...(slug !== undefined ? { slug } : {}),
+              ...(status !== undefined ? { status } : {}),
+            });
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+          } catch (error) {
+            if (error instanceof EventPageAggregateError) return mcpToolFailure(error.message, error.status, error.code ? { code: error.code } : {});
+            return mcpToolFailure(error instanceof Error ? error.message : 'Event page update failed.', 500);
+          }
+        }
+        if (schema.entity_kind === 'service-product') {
+          return mcpToolFailure('Use specy_products_update/publish for service-product pages.', 409, { code: 'aggregate_operation_required' });
+        }
         if (schema.entity_kind && schema.entity_kind !== 'page') {
-          return mcpToolFailure(`Schema entity_kind is ${schema.entity_kind}; generic page updates are not allowed. An entity-aware aggregate service is required.`, 409, { code: 'aggregate_operation_required' });
+          return mcpToolFailure(`Unsupported page entity kind: ${schema.entity_kind}.`, 409, { code: 'aggregate_operation_required' });
         }
         const { data: currentPage, error: pageError } = await supabase
           .from('pages')

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { createSupabaseAdminClient, createSupabaseClient, hasSupabaseAdminCredential, type Env } from '../lib/supabase';
 import { parseBearerToken, requireAppRole, requireAuthSession } from '../lib/auth';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
@@ -26,6 +27,9 @@ import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 import { parseSchemaDefinitionPatch } from '../lib/schemaDefinition';
+import { normalizeSchemaPageSlug } from '../lib/schemaPages';
+import { validateSchemaContent } from '../lib/schemaContentValidation';
+import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import {
   parsePublicEntityIncludes,
   projectPublicEventRelations,
@@ -957,6 +961,98 @@ schemas.get('/:slug/manifest', async (c) => {
   return c.json(await buildFrontendIntegrationManifest(c.env, schema, baseUrl));
 });
 
+schemas.post('/:slug/pages', async (c) => {
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Request body must be an object.' }, 400);
+  const input = body as Record<string, unknown>;
+  const client = await createSupabaseClient(c.env, auth.token);
+  const { data: schema, error: schemaError } = await client.from('page_schemas')
+    .select('id, api_slug, slug, tenant_id, name, entity_kind, content_scope, definition_revision, schema, frontend_url, slug_structure')
+    .eq('api_slug', c.req.param('slug'))
+    .maybeSingle();
+  if (schemaError) return c.json({ error: schemaError.message }, 500);
+  if (!schema) return c.json({ error: 'Schema not found.' }, 404);
+  if (schema.content_scope === 'single-page') return c.json({ error: 'This is a single-page schema; it cannot receive additional entries.' }, 409);
+
+  if (schema.entity_kind === 'event') {
+    if (input.domain_url !== undefined) return c.json({ error: 'domain_url is not supported for event aggregate creation.' }, 400);
+    if (input.status !== undefined && input.status !== 'draft') {
+      return c.json({ error: 'Event pages are created as drafts and published separately.' }, 400);
+    }
+    const parsed = parseEventPageCreateInput(input);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const aggregate = await createEventPageAggregate(client, schema, parsed.value) as {
+        event_id: string; page_id: string; page_slug: string; page_status: 'draft'; page_updated_at: string;
+      };
+      const { data: tenant } = schema.tenant_id
+        ? await client.from('tenants').select('slug').eq('id', schema.tenant_id).maybeSingle()
+        : { data: null };
+      const editorPath = tenant?.slug
+        ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}/edit/${aggregate.page_id}`
+        : `/pages/schema/${encodeURIComponent(schema.api_slug)}/edit/${aggregate.page_id}`;
+      return c.json({
+        success: true,
+        event: { id: aggregate.event_id, tenant_id: schema.tenant_id, page_id: aggregate.page_id },
+        page: {
+          id: aggregate.page_id, schema_id: schema.id, tenant_id: schema.tenant_id,
+          name: parsed.value.name, slug: aggregate.page_slug, status: 'draft',
+          content: parsed.value.content, updated_at: aggregate.page_updated_at,
+        },
+        editor_url: `${await getPublicWorkerUrl(c.env, new URL(c.req.url).origin)}${editorPath}`,
+      }, 201);
+    } catch (error) {
+      if (error instanceof EventPageAggregateError) {
+        return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status as ContentfulStatusCode);
+      }
+      return c.json({ error: error instanceof Error ? error.message : 'Event page creation failed.' }, 500);
+    }
+  }
+
+  if (schema.entity_kind === 'service-product') {
+    return c.json({ error: 'Use POST /api/products for service-product schemas.', code: 'aggregate_operation_required' }, 409);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'event')) {
+    return c.json({ error: 'event details are accepted only by event-classified schemas.' }, 400);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'tenant_id') && input.tenant_id !== schema.tenant_id) {
+    return c.json({ error: 'Page tenant must match the owning schema workspace.' }, 409);
+  }
+  if (typeof input.name !== 'string' || !input.name.trim() || !input.content || typeof input.content !== 'object' || Array.isArray(input.content)) {
+    return c.json({ error: 'name and object content are required.' }, 400);
+  }
+  if (input.status !== undefined && !['draft', 'published'].includes(String(input.status))) {
+    return c.json({ error: 'status must be draft or published.' }, 400);
+  }
+  const pageContent = input.content as Record<string, unknown>;
+  if (input.status === 'published') {
+    const validation = validateSchemaContent(schema.schema, pageContent);
+    if (!validation.ok) return c.json({ error: 'Page content does not satisfy its schema.', details: validation.errors }, 400);
+  }
+  const requestedSlug = normalizeSchemaPageSlug(typeof input.slug === 'string' && input.slug.trim() ? input.slug : input.name);
+  let uniqueSlug = requestedSlug;
+  for (let suffix = 2; suffix <= 100; suffix += 1) {
+    const { data: matches, error } = await client.from('pages').select('id').eq('slug', uniqueSlug).limit(1);
+    if (error) return c.json({ error: error.message }, 500);
+    if (!matches?.length) break;
+    uniqueSlug = `${requestedSlug}-${suffix}`;
+  }
+  const pageInsert: Record<string, unknown> = {
+    name: input.name.trim(), slug: uniqueSlug, content: pageContent,
+    status: input.status ?? 'draft', schema_id: schema.id, owner_user_id: auth.userId,
+    ...(input.domain_url !== undefined ? { domain_url: input.domain_url } : {}),
+  };
+  if (schema.tenant_id) pageInsert.tenant_id = schema.tenant_id;
+  const { data: page, error: pageError } = await client.from('pages').insert(pageInsert)
+    .select('id, slug, name, status, content, schema_id, tenant_id, domain_url, updated_at, published_at')
+    .single();
+  if (pageError || !page) return c.json({ error: pageError?.message || 'Failed to create page.' }, pageError?.code === '23505' ? 409 : 500);
+  return c.json({ success: true, page }, 201);
+});
+
 schemas.get('/:slug/pages', async (c) => {
   const slug = c.req.param('slug');
   // Public delivery must work for tenant-owned schemas without requiring the
@@ -1068,6 +1164,103 @@ schemas.get('/:slug/pages', async (c) => {
     },
     pages: publicPages,
   });
+});
+
+schemas.patch('/:slug/pages/:pageId', async (c) => {
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Request body must be an object.' }, 400);
+  const input = body as Record<string, unknown>;
+  const client = await createSupabaseClient(c.env, auth.token);
+  const { data: schema, error: schemaError } = await client.from('page_schemas')
+    .select('id, api_slug, tenant_id, entity_kind, definition_revision, schema')
+    .eq('api_slug', c.req.param('slug'))
+    .maybeSingle();
+  if (schemaError) return c.json({ error: schemaError.message }, 500);
+  if (!schema) return c.json({ error: 'Schema not found.' }, 404);
+
+  if (schema.entity_kind === 'event') {
+    if (input.event !== undefined) return c.json({ error: 'Operational event schedule changes are managed through the event editor; Pages PATCH updates page content and publication only.' }, 400);
+    if (typeof input.tenant_id !== 'string' || input.tenant_id !== schema.tenant_id
+      || !Number.isSafeInteger(input.expected_definition_revision) || Number(input.expected_definition_revision) < 1
+      || typeof input.expected_page_updated_at !== 'string' || !Number.isFinite(Date.parse(input.expected_page_updated_at))
+      || (input.status !== undefined && !['draft', 'published', 'archived'].includes(String(input.status)))
+      || (input.domain_url !== undefined)) {
+      return c.json({ error: 'Event page updates require the matching tenant_id, expected_definition_revision and expected_page_updated_at; domain_url is not supported.' }, 400);
+    }
+    if (input.content === undefined && input.name === undefined && input.slug === undefined && input.status === undefined) {
+      return c.json({ error: 'Provide content, name, slug, or status to update.' }, 400);
+    }
+    if (input.content !== undefined && (typeof input.content !== 'object' || input.content === null || Array.isArray(input.content))) {
+      return c.json({ error: 'content must be a JSON object.' }, 400);
+    }
+    if (input.name !== undefined && (typeof input.name !== 'string' || !input.name.trim())) return c.json({ error: 'name must be a non-empty string.' }, 400);
+    if (input.slug !== undefined && (typeof input.slug !== 'string' || !input.slug.trim())) return c.json({ error: 'slug must be a non-empty string.' }, 400);
+    try {
+      const page = await updateEventPageAggregate(client, schema, c.req.param('pageId'), {
+        tenant_id: input.tenant_id,
+        expected_definition_revision: Number(input.expected_definition_revision),
+        expected_page_updated_at: input.expected_page_updated_at,
+        ...(input.content !== undefined ? { content: input.content as Record<string, unknown> } : {}),
+        ...(typeof input.name === 'string' ? { name: input.name } : {}),
+        ...(typeof input.slug === 'string' ? { slug: input.slug } : {}),
+        ...(typeof input.status === 'string' ? { status: input.status as 'draft' | 'published' | 'archived' } : {}),
+      });
+      return c.json({ success: true, page });
+    } catch (error) {
+      if (error instanceof EventPageAggregateError) {
+        return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status as ContentfulStatusCode);
+      }
+      return c.json({ error: error instanceof Error ? error.message : 'Event page update failed.' }, 500);
+    }
+  }
+  if (schema.entity_kind === 'service-product') {
+    return c.json({ error: 'Use the product aggregate API to update product pages.', code: 'aggregate_operation_required' }, 409);
+  }
+  const pageId = c.req.param('pageId');
+  const { data: currentPage, error: pageError } = await client.from('pages')
+    .select('id, slug, name, content, status, tenant_id, schema_id')
+    .eq('id', pageId).eq('schema_id', schema.id).maybeSingle();
+  if (pageError) return c.json({ error: pageError.message }, 500);
+  if (!currentPage) return c.json({ error: 'Page not found in the requested schema.' }, 404);
+  if (Object.prototype.hasOwnProperty.call(input, 'tenant_id') && input.tenant_id !== currentPage.tenant_id) {
+    return c.json({ error: 'Page tenant cannot be reassigned.' }, 409);
+  }
+  const patch: Record<string, unknown> = {};
+  if (input.content !== undefined) {
+    if (typeof input.content !== 'object' || input.content === null || Array.isArray(input.content)) return c.json({ error: 'content must be a JSON object.' }, 400);
+    patch.content = input.content;
+  }
+  if (input.name !== undefined) {
+    if (typeof input.name !== 'string' || !input.name.trim()) return c.json({ error: 'name must be a non-empty string.' }, 400);
+    patch.name = input.name.trim();
+  }
+  if (input.slug !== undefined) {
+    if (typeof input.slug !== 'string' || !input.slug.trim()) return c.json({ error: 'slug must be a non-empty string.' }, 400);
+    const normalizedSlug = normalizeSchemaPageSlug(input.slug);
+    const { data: duplicate, error } = await client.from('pages').select('id').eq('slug', normalizedSlug).neq('id', pageId).limit(1);
+    if (error) return c.json({ error: error.message }, 500);
+    if (duplicate?.length) return c.json({ error: `Page slug "${normalizedSlug}" is already in use.` }, 409);
+    patch.slug = normalizedSlug;
+  }
+  if (input.status !== undefined) {
+    if (!['draft', 'published', 'archived'].includes(String(input.status))) return c.json({ error: 'Unsupported page status.' }, 400);
+    patch.status = input.status;
+  }
+  if (input.domain_url !== undefined) patch.domain_url = input.domain_url;
+  if (!Object.keys(patch).length) return c.json({ error: 'Provide at least one page field to update.' }, 400);
+  if (patch.status === 'published' || currentPage.status === 'published') {
+    const content = (patch.content ?? currentPage.content) as Record<string, unknown>;
+    const validation = validateSchemaContent(schema.schema, content);
+    if (!validation.ok) return c.json({ error: 'Page content does not satisfy its schema.', details: validation.errors }, 400);
+  }
+  const { data: page, error } = await client.from('pages').update(patch)
+    .eq('id', pageId).eq('schema_id', schema.id).eq('tenant_id', currentPage.tenant_id)
+    .select('id, slug, name, status, content, schema_id, tenant_id, domain_url, updated_at, published_at').single();
+  if (error || !page) return c.json({ error: error?.message || 'Page update failed.' }, 500);
+  return c.json({ success: true, page });
 });
 
 schemas.get('/:slug/pages/:pageSlug', async (c) => {
