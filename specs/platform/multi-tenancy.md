@@ -855,6 +855,8 @@ Impact:
 - event data is no longer globally visible
 - notifications are scoped by user and tenant
 - products and groups are no longer globally shared across authenticated users
+- the legacy product list, event product selector, product detail and company/group selectors now apply the active workspace explicitly; product list/get helpers fail closed without a tenant ID
+- event-to-product/company/schema/page links are checked against the same workspace by event database triggers and aggregate RPCs; public event projections are tenant-filtered and allow-listed
 
 ### Pages And Page Schemas
 

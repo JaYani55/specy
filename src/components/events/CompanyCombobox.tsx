@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 interface Company {
   id: string;
@@ -25,6 +26,7 @@ interface CompanyComboboxProps {
 
 export function CompanyCombobox({ value, onChange, disabled = false }: CompanyComboboxProps) {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState("");
@@ -32,58 +34,60 @@ export function CompanyCombobox({ value, onChange, disabled = false }: CompanyCo
   const [selectedCompany, setSelectedCompany] = React.useState<Company | null>(null);
   const [highlightedIndex, setHighlightedIndex] = React.useState<number>(-1);
   const itemsRef = React.useRef<(HTMLDivElement | null)[]>([]);
+  const activeTenantRef = React.useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
 
   // Debug logging and load selected company by value
   React.useEffect(() => {
-    if (value !== undefined) {
-      if (value) {
-        loadCompanyById(value);
-      } else {
-        setSelectedCompany(null);
-      }
-    }
-  }, [value]);
+    setCompanies([]);
+    setSelectedCompany(null);
+    if (value && activeTenantId) void loadCompanyById(value, activeTenantId);
+  }, [value, activeTenantId]);
 
   // Load companies when popover opens
   React.useEffect(() => {
-    if (open) {
-      loadCompanies();
-    }
-  }, [open]);
+    if (open && activeTenantId) void loadCompanies(activeTenantId);
+  }, [open, activeTenantId]);
 
   // Function to load all companies
-  const loadCompanies = async () => {
+  const loadCompanies = async (tenantId: string) => {
+    if (!tenantId) {
+      setCompanies([]);
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('companies')
         .select('id, name, logo_url')
+        .eq('tenant_id', tenantId)
         .order('name');
       if (error) {
         console.error("Error loading companies:", error);
         return;
       }
-      setCompanies(data);
+      if (activeTenantRef.current === tenantId) setCompanies(data);
     } catch (err) {
       console.error("Exception loading companies:", err);
     } finally {
-      setLoading(false);
+      if (activeTenantRef.current === tenantId) setLoading(false);
     }
   };
 
   // Load company by ID and add to companies list if not present
-  const loadCompanyById = async (id: string) => {
+  const loadCompanyById = async (id: string, tenantId: string) => {
     try {
       const { data, error } = await supabase
         .from('companies')
         .select('id, name, logo_url')
         .eq('id', id)
+        .eq('tenant_id', tenantId)
         .single();
       if (error) {
         console.error("Error loading company by ID:", error);
         return;
       }
-      if (data) {
+      if (data && activeTenantRef.current === tenantId) {
         setSelectedCompany(data);
         setCompanies(prevCompanies => {
           if (!prevCompanies.find(c => c.id === data.id)) {

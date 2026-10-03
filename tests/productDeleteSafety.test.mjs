@@ -28,7 +28,7 @@ describe('product/page delete safety contract', () => {
     assert.match(migration, /delete_mentorbooking_product_aggregate/);
     assert.match(migration, /grant execute .* to authenticated/i);
     assert.doesNotMatch(migration, /grant execute .* to anon/i);
-    assert.match(productService, /A workspace is required to delete a product/);
+    assert.match(productService, /requireProductTenantId\(tenantId\)/);
     assert.match(productService, /supabase\.rpc\('delete_mentorbooking_product_aggregate'/);
     assert.doesNotMatch(productService, /Continuing with product deletion despite page deletion error/);
   });

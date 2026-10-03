@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Product, fetchProducts, deleteProduct, updateProduct, createProduct } from '@/services/events/productService';
 import { toast } from 'sonner';
@@ -36,6 +36,8 @@ const mapToEventSummaries = (rows: unknown[] | null | undefined): EventSummary[]
 export function useProductManagement(onProductsChange?: () => void) {
   const { language } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
+  const activeTenantRef = useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
   const [Products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -50,17 +52,35 @@ export function useProductManagement(onProductsChange?: () => void) {
   const [ProductInUseDialogOpen, setProductInUseDialogOpen] = useState(false);
   const [ProductEditWarningOpen, setProductEditWarningOpen] = useState(false);
 
+  useEffect(() => {
+    setProducts([]);
+    setEditingProduct(null);
+    setProductToDelete(null);
+    setProductToEdit(null);
+    setEventsUsingProduct([]);
+    setEventsUsingProductForEdit([]);
+    setDeleteProductDialogOpen(false);
+    setProductInUseDialogOpen(false);
+    setProductEditWarningOpen(false);
+  }, [activeTenantId]);
+
   // Load Products data
   const loadProducts = useCallback(async () => {
+    const requestedTenantId = activeTenantId;
+    setProducts([]);
+    if (!requestedTenantId) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const data = await fetchProducts(activeTenantId);
-      setProducts(data);
+      const data = await fetchProducts(requestedTenantId);
+      if (activeTenantRef.current === requestedTenantId) setProducts(data);
     } catch (error) {
       console.error('Error loading Products:', error);
       toast.error(language === 'en' ? 'Error loading Products' : 'Fehler beim Laden der Produkte');
     } finally {
-      setIsLoading(false);
+      if (activeTenantRef.current === requestedTenantId) setIsLoading(false);
     }
   }, [activeTenantId, language]);
 
@@ -114,11 +134,16 @@ export function useProductManagement(onProductsChange?: () => void) {
 
   // Check if Product is in use and prepare for deletion
   const checkProductUsageForDelete = useCallback(async (product: Product) => {
+    if (!activeTenantId || product.tenant_id !== activeTenantId) {
+      toast.error(language === 'en' ? 'The product does not belong to the active workspace.' : 'Das Produkt gehört nicht zum aktiven Workspace.');
+      return false;
+    }
     try {
-      // First, get a sample row to check the column names
+      // Confirm the known product reference in this workspace before deletion.
       const { data: columnData, error: columnError } = await supabase
         .from('mentorbooking_events')
-        .select('*')
+        .select('product_id')
+        .eq('tenant_id', activeTenantId)
         .limit(1);
       
       if (columnError) {
@@ -156,14 +181,15 @@ export function useProductManagement(onProductsChange?: () => void) {
       
       console.log(`Using column '${productColumnName}' to check product references`);
       
-      // Now query with the correct column name
+      // Now query in the active workspace only.
       const { data: rawEvents, error: checkError } = await supabase
         .from('mentorbooking_events')
         .select('id, company')
-        .eq(productColumnName, product.id);
+        .eq(productColumnName, product.id)
+        .eq('tenant_id', activeTenantId);
 
       if (checkError) {
-        console.warn(`Error checking relationships: ${checkError.message}, proceeding with delete`);
+        console.warn(`Error checking relationships: ${checkError.message}`);
         setProductToDelete(product);
         setDeleteProductDialogOpen(true);
         return true;
@@ -227,6 +253,10 @@ export function useProductManagement(onProductsChange?: () => void) {
 
   // Check if Product is in use and prepare for editing
   const checkProductUsageForEdit = useCallback(async (product: Product) => {
+    if (!activeTenantId || product.tenant_id !== activeTenantId) {
+      toast.error(language === 'en' ? 'The product does not belong to the active workspace.' : 'Das Produkt gehört nicht zum aktiven Workspace.');
+      return false;
+    }
     try {
       console.log(`useProductManagement: Checking usage for product ${product.id} before edit`);
       
@@ -252,11 +282,11 @@ export function useProductManagement(onProductsChange?: () => void) {
         setEditingProduct(null);
       }
       
-      // Continue with the rest of the function...
-      // First, get a sample row to check the column names
+      // Continue with a workspace-scoped usage check.
       const { data: columnData, error: columnError } = await supabase
         .from('mentorbooking_events')
-        .select('*')
+        .select('product_id')
+        .eq('tenant_id', activeTenantId)
         .limit(1);
       
       if (columnError) {
@@ -292,7 +322,8 @@ export function useProductManagement(onProductsChange?: () => void) {
       const { data: rawEvents, error: checkError } = await supabase
         .from('mentorbooking_events')
         .select('id, company')
-        .eq(productColumnName, product.id);
+        .eq(productColumnName, product.id)
+        .eq('tenant_id', activeTenantId);
 
       if (checkError) {
         console.warn(`Error checking relationships: ${checkError.message}, proceeding with edit`);
@@ -341,7 +372,7 @@ export function useProductManagement(onProductsChange?: () => void) {
       
       return true;
     }
-  }, [language]);
+  }, [activeTenantId, language]);
 
   const confirmEdit = useCallback(() => {
     if (ProductToEdit) {

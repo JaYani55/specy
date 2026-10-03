@@ -7,6 +7,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { getLegacyProductPageContext } from './legacy/productPageService';
 import { getPage, getSchema } from '@/services/pageService';
 import { getServiceProductByPage, type ServiceProduct } from '@/services/productService';
+import { getEventPageAggregateByPage, type EventPageAggregate } from '@/services/events/eventPageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import type { PageBuilderData, PageRecord, PageSchema } from '@/types/pagebuilder';
 import { LegacyProductContentEditor } from './LegacyProductContentEditor';
@@ -29,6 +30,7 @@ const PageBuilderPage: React.FC = () => {
   const [schema, setSchema] = useState<PageSchema | null>(null);
   const [page, setPage] = useState<PageRecord | null>(null);
   const [productAggregate, setProductAggregate] = useState<ServiceProduct | null>(null);
+  const [eventAggregate, setEventAggregate] = useState<EventPageAggregate | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,13 +50,14 @@ const PageBuilderPage: React.FC = () => {
       setSchema(null);
       setPage(null);
       setProductAggregate(null);
+      setEventAggregate(null);
       try {
         if (isSchemaRoute && schemaSlug) {
           const loadedSchema = await getSchema(schemaSlug, tenantSlug);
-          if (loadedSchema.entity_kind === 'event') {
+          if (loadedSchema.entity_kind === 'event' && !isEditRoute) {
             throw new Error(languageRef.current === 'en'
-              ? 'Event page editing is not available yet.'
-              : 'Die Bearbeitung von Veranstaltungsseiten ist noch nicht verfügbar.');
+              ? 'Create event pages from the event form so the event and page are linked safely.'
+              : 'Erstelle Veranstaltungsseiten über das Veranstaltungsformular, damit Veranstaltung und Seite sicher verknüpft werden.');
           }
           if (cancelled) return;
           setSchema(loadedSchema);
@@ -81,6 +84,11 @@ const PageBuilderPage: React.FC = () => {
               const aggregate = await getServiceProductByPage(loadedPage.id, loadedSchema.tenant_id);
               if (cancelled) return;
               setProductAggregate(aggregate);
+            } else if (loadedSchema.entity_kind === 'event') {
+              if (!loadedSchema.tenant_id) throw new Error('Event schema must belong to a workspace.');
+              const aggregate = await getEventPageAggregateByPage(loadedPage.id, loadedSchema.tenant_id);
+              if (cancelled) return;
+              setEventAggregate(aggregate);
             }
           } else if (!isEditRoute) {
             setProductName(loadedSchema.name);
@@ -183,6 +191,8 @@ const PageBuilderPage: React.FC = () => {
           initialData={schemaContent}
           productAggregateId={productAggregate?.id}
           productVersion={productAggregate?.version}
+          eventAggregateId={eventAggregate?.id}
+          initialPageUpdatedAt={page?.updated_at}
           initialName={productName}
           initialSlug={page?.slug}
           initialStatus={page?.status}

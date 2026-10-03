@@ -23,7 +23,7 @@ export async function buildFrontendIntegrationManifest(
   const targets = await getSchemaFrontendTargets(env, schema.id, undefined, { publicRead: true });
   const requirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
   const detailTarget = targets.find((target) => target.kind === 'detail-page');
-  const publicDeliveryAvailable = !schema.entity_kind || schema.entity_kind === 'page' || schema.entity_kind === 'service-product';
+  const publicDeliveryAvailable = !schema.entity_kind || schema.entity_kind === 'page' || schema.entity_kind === 'service-product' || schema.entity_kind === 'event';
 
   return {
     manifest_version: '1',
@@ -46,7 +46,7 @@ export async function buildFrontendIntegrationManifest(
       detail_url_template: publicDeliveryAvailable ? `${baseUrl}/api/schemas/${schema.api_slug}/pages/:slug` : null,
       authentication: 'public-registered-schema',
       published_only: true,
-      supported_includes: schema.entity_kind === 'service-product' ? ['entity'] : [],
+      supported_includes: schema.entity_kind === 'service-product' ? ['entity'] : schema.entity_kind === 'event' ? ['entity', 'event', 'product'] : [],
       page_fields: ['id', 'slug', 'name', 'status', 'content', 'domain_url', 'updated_at', 'published_at'],
     },
     targets,

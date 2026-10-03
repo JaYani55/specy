@@ -11,6 +11,10 @@ import { Button } from "@/components/ui/button";
 import { useData } from '../contexts/DataContext';
 import { calculateEndTime } from '@/utils/timeUtils';
 import { ensureCompanyRecord } from '@/services/company/companyService';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { createPublicEventPage } from '@/services/events/eventPageService';
+import { getSchema } from '@/services/pageService';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const CreateEvent = () => {
   const { user, loading } = useAuth();
@@ -19,6 +23,7 @@ const CreateEvent = () => {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { refetchEvents } = useData();
+  const { activeTenantId, loading: workspaceLoading } = useActiveWorkspace();
   
   // Debug the component lifecycle - only in development
   useEffect(() => {
@@ -46,6 +51,7 @@ const CreateEvent = () => {
     setIsSubmitting(true);
 
     try {
+      if (!activeTenantId) throw new Error(language === 'en' ? 'Select a workspace before creating an event.' : 'Wähle vor dem Erstellen einen Workspace aus.');
       const endTime = calculateEndTime(values.time, values.duration_minutes);
       const staffMembers = values.staff_members && values.staff_members.length > 0
         ? values.staff_members
@@ -53,37 +59,78 @@ const CreateEvent = () => {
       const companyRecord = await ensureCompanyRecord({
         companyId: values.company_id,
         companyName: values.company,
+        tenantId: activeTenantId,
       });
 
-      const { data: createdRecords, error } = await supabase
-        .from('mentorbooking_events')
-        .insert({
-          company: companyRecord.name,
-          company_id: companyRecord.id,
-          date: values.date,
-          time: values.time,
-          end_time: endTime,
-          duration_minutes: values.duration_minutes,
-          description: values.description ?? '',
-          staff_members: staffMembers,
-          status: values.status,
-          mode: values.mode ?? 'online',
-          requesting_mentors: [],
-          accepted_mentors: [],
-          declined_mentors: [],
-          amount_requiredmentors: values.required_staff_count,
-          required_staff_count: values.required_staff_count,
-          required_trait_id: values.required_trait_id ?? null,
-          product_id: values.product_id ?? null,
-          teams_link: values.teams_link ?? "",
-          initial_selected_mentors: values.initial_selected_mentors ?? [],
-        })
-        .select('id, tenant_id');
-      
-      if (error) throw error;
+      let createdRecord: { id: string; tenant_id: string } | null = null;
+      let publicPage: { page_id: string; editor_path: string } | null = null;
+      if (values.event_schema_id) {
+        const schema = await getSchema(values.event_schema_id);
+        if (schema.tenant_id !== activeTenantId || schema.entity_kind !== 'event' || schema.content_scope !== 'page-collection') {
+          throw new Error(language === 'en' ? 'The selected event catalogue is not available in this workspace.' : 'Der gewählte Veranstaltungskatalog ist in diesem Workspace nicht verfügbar.');
+        }
+        const result = await createPublicEventPage({
+          tenant_id: activeTenantId,
+          schema_id: schema.id,
+          expected_definition_revision: schema.definition_revision ?? 1,
+          event: {
+            company: companyRecord.name,
+            company_id: companyRecord.id,
+            date: values.date,
+            time: values.time,
+            end_time: endTime,
+            duration_minutes: values.duration_minutes,
+            description: values.description ?? '',
+            status: values.status,
+            mode: values.mode ?? 'online',
+            staff_members: staffMembers,
+            requesting_mentors: [],
+            accepted_mentors: [],
+            declined_mentors: [],
+            amount_requiredmentors: values.required_staff_count,
+            required_staff_count: values.required_staff_count,
+            required_trait_id: values.required_trait_id ?? null,
+            product_id: values.product_id ?? null,
+            teams_link: values.teams_link ?? '',
+            initial_selected_mentors: values.initial_selected_mentors ?? [],
+            timezone: values.timezone ?? '',
+          },
+          page_name: values.event_page_name ?? '',
+        });
+        createdRecord = { id: result.event_id, tenant_id: result.tenant_id };
+        publicPage = { page_id: result.page_id, editor_path: `${getSchemaConsolePath(schema)}/edit/${result.page_id}` };
+      } else {
+        const { data: createdRecords, error } = await supabase
+          .from('mentorbooking_events')
+          .insert({
+            company: companyRecord.name,
+            company_id: companyRecord.id,
+            date: values.date,
+            time: values.time,
+            end_time: endTime,
+            duration_minutes: values.duration_minutes,
+            description: values.description ?? '',
+            staff_members: staffMembers,
+            status: values.status,
+            mode: values.mode ?? 'online',
+            requesting_mentors: [],
+            accepted_mentors: [],
+            declined_mentors: [],
+            amount_requiredmentors: values.required_staff_count,
+            required_staff_count: values.required_staff_count,
+            required_trait_id: values.required_trait_id ?? null,
+            product_id: values.product_id ?? null,
+            teams_link: values.teams_link ?? '',
+            initial_selected_mentors: values.initial_selected_mentors ?? [],
+            tenant_id: activeTenantId,
+            owner_user_id: user?.id,
+          })
+          .select('id, tenant_id');
+        if (error) throw error;
+        createdRecord = createdRecords?.[0] ?? null;
+      }
 
       // Trigger afterCreate hook for KB auto sync
-      const createdRecord = createdRecords?.[0];
       if (createdRecord?.id) {
         try {
           const { getPluginHooks } = await import('@/plugins/loader');
@@ -113,7 +160,11 @@ const CreateEvent = () => {
           : 'Veranstaltung erfolgreich erstellt'
       );
       
-      navigate('/events');
+      if (publicPage) {
+        navigate(publicPage.editor_path);
+      } else {
+        navigate('/events');
+      }
     } catch (error: unknown) {
       console.error('Error creating event:', error);
       const message = error instanceof Error ? error.message : undefined;
@@ -128,7 +179,7 @@ const CreateEvent = () => {
   };
   
   // Show loading state while we wait for authentication
-  if (loading || (!canShowForm && !user)) {
+  if (loading || workspaceLoading || (!canShowForm && !user)) {
     return (
       <div className="flex justify-center items-center min-h-[200px]">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -139,6 +190,10 @@ const CreateEvent = () => {
     );
   }
   
+  if (!activeTenantId) {
+    return <div className="rounded-lg border p-6 text-center text-muted-foreground">{language === 'en' ? 'Select a workspace before creating an event.' : 'Wähle vor dem Erstellen einer Veranstaltung einen Workspace aus.'}</div>;
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4 mb-6">
@@ -166,7 +221,10 @@ const CreateEvent = () => {
           staff_members: user?.id ? [user.id] : [],
           teams_link: "",
           product_id: undefined,
-          initial_selected_mentors: []
+          initial_selected_mentors: [],
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          event_page_name: '',
+          event_schema_id: undefined,
         }}
         onSubmit={handleSubmit}
         isLoading={isSubmitting}

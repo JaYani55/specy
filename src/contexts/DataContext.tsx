@@ -93,6 +93,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const primaryStaffName = staffNames[primaryStaffId] || 'Unknown';
         return {
           id: event.id,
+          tenant_id: event.tenant_id || '',
+          page_id: event.page_id || null,
+          timezone: event.timezone || null,
           title: event.company || '',
           company_id: event.company_id || '',
           company: event.company || '',

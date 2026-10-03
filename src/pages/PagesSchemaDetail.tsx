@@ -41,6 +41,7 @@ import {
 } from '@/services/pageService';
 import { getSchemaSpecBundle } from '@/services/specService';
 import { archiveServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
+import { getEventPageAggregateByPage, setEventPagePublication } from '@/services/events/eventPageService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
@@ -160,6 +161,16 @@ const PagesSchemaDetail: React.FC = () => {
         } else {
           await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
         }
+      } else if (schema.entity_kind === 'event') {
+        if (!schema.tenant_id || !currentPage) throw new Error('Veranstaltungsseite ohne Workspace oder Seitenrevision.');
+        const event = await getEventPageAggregateByPage(pageId, schema.tenant_id);
+        await setEventPagePublication({
+          event_id: event.id,
+          tenant_id: schema.tenant_id,
+          expected_definition_revision: schema.definition_revision ?? 1,
+          expected_page_updated_at: currentPage.updated_at,
+          status,
+        });
       } else {
         await updatePageStatus(pageId, status);
       }
@@ -295,7 +306,12 @@ const PagesSchemaDetail: React.FC = () => {
             <Button onClick={() => navigate('/products/schemas')}>
               {language === 'en' ? 'Open products' : 'Produkte öffnen'}
             </Button>
-          ) : schema.entity_kind === 'event' ? null : (
+          ) : schema.entity_kind === 'event' ? (
+            <Button onClick={() => navigate('/create-event')}>
+              <Plus className="h-4 w-4 mr-2" />
+              {language === 'en' ? 'Create Event' : 'Veranstaltung erstellen'}
+            </Button>
+          ) : (
             <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
               <Plus className="h-4 w-4 mr-2" />
               {language === 'en' ? 'New Page' : 'Neue Seite'}
@@ -591,14 +607,21 @@ const PagesSchemaDetail: React.FC = () => {
                 {language === 'en' ? 'No pages yet' : 'Noch keine Seiten'}
               </h3>
               <p className="text-muted-foreground text-center mb-4">
-                {language === 'en'
-                  ? 'Create your first page using this schema.'
-                  : 'Erstelle deine erste Seite mit diesem Schema.'}
+                {schema.entity_kind === 'event'
+                  ? language === 'en' ? 'Create an event and select this event catalogue to add its public page.' : 'Erstelle eine Veranstaltung und wähle diesen Katalog für ihre öffentliche Seite.'
+                  : language === 'en' ? 'Create your first page using this schema.' : 'Erstelle deine erste Seite mit diesem Schema.'}
               </p>
-              <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
-                <Plus className="h-4 w-4 mr-2" />
-                {language === 'en' ? 'Create Page' : 'Seite erstellen'}
-              </Button>
+              {schema.entity_kind === 'event' ? (
+                <Button onClick={() => navigate('/create-event')}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  {language === 'en' ? 'Create Event' : 'Veranstaltung erstellen'}
+                </Button>
+              ) : (
+                <Button onClick={() => navigate(`${getSchemaConsolePath(schema)}/new`)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  {language === 'en' ? 'Create Page' : 'Seite erstellen'}
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (

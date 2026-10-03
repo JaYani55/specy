@@ -45,6 +45,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 import { savePage, triggerRevalidation } from '@/services/pageService';
 import { setServiceProductPublication, updateServiceProduct, type ServiceProduct } from '@/services/productService';
+import { setEventPagePublication, updateEventPage } from '@/services/events/eventPageService';
 import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
 import { StandaloneContentBlockEditor } from '@/components/pagebuilder/StandaloneContentBlockEditor';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
@@ -767,6 +768,8 @@ interface SchemaContentEditorProps {
   initialStatus?: PageRecord['status'];
   productAggregateId?: string;
   productVersion?: number;
+  eventAggregateId?: string;
+  initialPageUpdatedAt?: string;
 }
 
 export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
@@ -779,6 +782,8 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   initialStatus,
   productAggregateId,
   productVersion: initialProductVersion,
+  eventAggregateId,
+  initialPageUpdatedAt,
 }) => {
   const { language } = useTheme();
   const permissions = usePermissions();
@@ -811,6 +816,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const [isSaving, setIsSaving]                 = useState(false);
   const [savedSlug, setSavedSlug]               = useState<string | null>(null);
   const [aggregateVersion, setAggregateVersion] = useState(initialProductVersion);
+  const [pageUpdatedAt, setPageUpdatedAt] = useState(initialPageUpdatedAt);
   const [publicationStatus, setPublicationStatus] = useState(initialStatus ?? 'draft');
   const [revalResult, setRevalResult]           = useState<{ success: boolean; message: string } | null>(null);
 
@@ -857,6 +863,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const inactiveOptionalGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => !field.required && !activeOptional.has(field.name)));
   const inactiveOptionalCount = inactiveOptionalGroups.reduce((total, group) => total + group.fields.length, 0);
   const isServiceProduct = schema.entity_kind === 'service-product';
+  const isEventPage = schema.entity_kind === 'event';
 
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
@@ -885,6 +892,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
       const content = buildSchemaContent(initialData, formData, fields, activeOptional, removedOptional);
 
       let updatedProduct: ServiceProduct | null = null;
+      let updatedEventPage: { updated_at: string } | null = null;
       const result = schema.entity_kind === 'service-product'
         ? await (async () => {
             if (!productAggregateId || !aggregateVersion || !schema.tenant_id) {
@@ -903,7 +911,25 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             setAggregateVersion(product.version);
             return { id: product.page_id, slug: product.slug || pageSlug };
           })()
-        : await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
+        : schema.entity_kind === 'event'
+          ? await (async () => {
+              if (!eventAggregateId || !schema.tenant_id || !pageUpdatedAt) {
+                throw new Error('Event aggregate or page revision could not be loaded. Reload the page and retry.');
+              }
+              const result = await updateEventPage({
+                event_id: eventAggregateId,
+                tenant_id: schema.tenant_id,
+                expected_definition_revision: schema.definition_revision ?? 1,
+                expected_page_updated_at: pageUpdatedAt,
+                name: pageName,
+                slug: pageSlug,
+                content,
+              });
+              updatedEventPage = result;
+              setPageUpdatedAt(result.updated_at);
+              return { id: result.page_id, slug: result.slug };
+            })()
+          : await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
       setSavedSlug(result.slug);
 
       if (schema.entity_kind === 'service-product' && statusAfterSave && updatedProduct && schema.tenant_id) {
@@ -915,6 +941,16 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
           status: statusAfterSave,
         });
         setAggregateVersion(updatedProduct.version);
+        setPublicationStatus(statusAfterSave);
+      } else if (schema.entity_kind === 'event' && statusAfterSave && updatedEventPage && eventAggregateId && schema.tenant_id) {
+        const publication = await setEventPagePublication({
+          event_id: eventAggregateId,
+          tenant_id: schema.tenant_id,
+          expected_definition_revision: schema.definition_revision ?? 1,
+          expected_page_updated_at: updatedEventPage.updated_at,
+          status: statusAfterSave,
+        });
+        setPageUpdatedAt(publication.updated_at);
         setPublicationStatus(statusAfterSave);
       }
       // Trigger afterCreate hook for KB auto sync
@@ -984,10 +1020,12 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <span>{isServiceProduct ? '📦' : '📝'}</span>
+            <span>{isServiceProduct ? '📦' : isEventPage ? '📅' : '📝'}</span>
             <span>{isServiceProduct
               ? (language === 'en' ? 'Product details' : 'Produktdetails')
-              : (language === 'en' ? 'Page details' : 'Seitendetails')}</span>
+              : isEventPage
+                ? (language === 'en' ? 'Event page details' : 'Veranstaltungsseite')
+                : (language === 'en' ? 'Page details' : 'Seitendetails')}</span>
           </CardTitle>
           {schema.description && <CardDescription>{schema.description}</CardDescription>}
         </CardHeader>
@@ -996,7 +1034,9 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             <Label htmlFor="page-name" className="text-sm font-medium">
               {isServiceProduct
                 ? (language === 'en' ? 'Product name' : 'Produktname')
-                : (language === 'en' ? 'Page name' : 'Seitenname')}
+                : isEventPage
+                  ? (language === 'en' ? 'Public event page title' : 'Titel der Veranstaltungsseite')
+                  : (language === 'en' ? 'Page name' : 'Seitenname')}
               <span className="text-destructive"> *</span>
             </Label>
             <Input
@@ -1206,7 +1246,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
           <AlertDescription className="space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-green-800 dark:text-green-200 font-medium">
-                {isServiceProduct ? (language === 'en' ? 'Product saved:' : 'Produkt gespeichert:') : (language === 'en' ? 'Page saved:' : 'Seite gespeichert:')}{' '}
+                {isServiceProduct ? (language === 'en' ? 'Product saved:' : 'Produkt gespeichert:') : isEventPage ? (language === 'en' ? 'Event page saved:' : 'Veranstaltungsseite gespeichert:') : (language === 'en' ? 'Page saved:' : 'Seite gespeichert:')}{' '}
                 <code className="font-mono text-sm bg-green-100 dark:bg-green-900 px-1.5 py-0.5 rounded">
                   /{savedSlug}
                 </code>
@@ -1246,7 +1286,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             <p className="text-sm text-muted-foreground">
               {isServiceProduct
                 ? (language === 'en' ? 'Product' : 'Produkt')
-                : (language === 'en' ? 'Page' : 'Seite')}:{' '}
+                : isEventPage ? (language === 'en' ? 'Event page' : 'Veranstaltungsseite') : (language === 'en' ? 'Page' : 'Seite')}:{' '}
               <span className="font-semibold">{pageName || (language === 'en' ? 'Untitled' : 'Unbenannt')}</span>
               {permissions.canManageAccounts && schema.registration_status === 'registered' && (
                 <Badge variant="default" className="ml-2 text-[10px]">ISR aktiv</Badge>
@@ -1264,7 +1304,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             )}
           </div>
           <div className="flex items-center gap-2">
-          {schema.entity_kind === 'service-product' && publicationStatus === 'published' && (
+          {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus === 'published' && (
             <Button type="button" variant="outline" onClick={() => handleSave('draft')} size="lg" disabled={isSaving}>
               Veröffentlichung zurückziehen
             </Button>
@@ -1273,7 +1313,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             type="button"
             onClick={() => handleSave()}
             size="lg"
-            variant={schema.entity_kind === 'service-product' ? 'outline' : 'default'}
+            variant={schema.entity_kind === 'service-product' || isEventPage ? 'outline' : 'default'}
             disabled={isSaving}
             className="min-w-[180px]"
           >
@@ -1285,11 +1325,11 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             ) : (
               <>
                 <Save className="h-4 w-4 mr-2" />
-                {schema.entity_kind === 'service-product' && publicationStatus === 'published' ? 'Änderungen speichern' : 'Speichern'}
+                {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus === 'published' ? 'Änderungen speichern' : 'Speichern'}
               </>
             )}
           </Button>
-          {schema.entity_kind === 'service-product' && publicationStatus !== 'published' && (
+          {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus !== 'published' && (
             <Button type="button" onClick={() => handleSave('published')} size="lg" disabled={isSaving} className="min-w-[180px]">
               {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eye className="h-4 w-4 mr-2" />}
               Veröffentlichen

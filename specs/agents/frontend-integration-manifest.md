@@ -14,10 +14,10 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
   "schema": {
     "id": "uuid",
     "slug": "d41c...",
-    "schema_slug": "field-notes-journal",
+    "schema_slug": "public-events",
     "api_slug": "d41c...",
     "content_scope": "page-collection",
-    "entity_kind": "page"
+    "entity_kind": "event"
   },
   "frontend": {
     "url": "https://frontend.example.com",
@@ -28,13 +28,14 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
     "collection_url": "https://cms.example.com/api/schemas/d41c.../pages",
     "detail_url_template": "https://cms.example.com/api/schemas/d41c.../pages/:slug",
     "authentication": "public-registered-schema",
-    "published_only": true
+    "published_only": true,
+    "supported_includes": ["entity", "event", "product"]
   },
   "targets": [
     {
-      "target_key": "field-notes.detail",
+      "target_key": "events.detail",
       "kind": "detail-page",
-      "host_path": "/blog/:slug",
+      "host_path": "/events/:slug",
       "supports_preview": true
     }
   ],
@@ -46,7 +47,7 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
     "supports_new_routes": null
   },
   "legacy": {
-    "slug_structure": "/:slug"
+    "slug_structure": "/events/:slug"
   }
 }
 ```
@@ -57,8 +58,9 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
 - `schema_slug` is tenant-local and suitable for CMS display. `api_slug` is the stable API identifier used in schema endpoint URLs; existing schemas retain their former slug as their `api_slug`.
 - `frontend.url` is the normalized registered origin; canonical requirements and historical preview URLs are separate metadata.
 - `targets` are authoritative for route construction. `legacy.slug_structure` is compatibility metadata only.
-- `schema.entity_kind` identifies `page`, `service-product`, or `event`; the current public page delivery endpoints are available only for ordinary `page` schemas. Product/event aggregate delivery is not yet enabled.
-- `data.available` is false and collection/detail URLs are null when an entity-specific public delivery contract is not implemented.
+- `schema.entity_kind` identifies `page`, `service-product`, or `event`. Registered ordinary pages and service-product pages have public delivery; a focused event-page collection/detail projection is also available.
+- `data.supported_includes` is allow-listed by entity kind: service products support `entity`; event pages support `entity`, `event`, and `product`; ordinary pages support none.
+- `data.available` is false and collection/detail URLs are null only when an entity-specific public delivery contract is unavailable.
 - Public collection and detail endpoints expose only registered schemas and pages with `status = 'published'`.
 - `published_at` represents the latest transition into `published` and is returned by public page delivery.
 - Revalidation is a CMS/operator-triggered request. The CMS sends one request per enabled target with `path` and the bare page `slug` query parameters plus `Authorization: Bearer <secret>`.
@@ -67,11 +69,11 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
 ## Endpoint contract
 
 ```text
-GET /api/schemas/:slug/pages
-GET /api/schemas/:slug/pages/:pageSlug
+GET /api/schemas/:slug/pages[?include=entity,event,product]
+GET /api/schemas/:slug/pages/:pageSlug[?include=entity,event,product]
 ```
 
-Both responses use the same schema slug and target contract. Page records include `id`, `slug`, `name`, `status`, `content`, `domain_url`, `updated_at`, and `published_at`.
+Both responses use the same schema slug and target contract. Page records include `id`, `slug`, `name`, `status`, `content`, `domain_url`, `updated_at`, and `published_at`. Event schemas return only published pages linked to same-tenant event rows with a valid IANA timezone. `include=event` adds the allow-listed schedule projection; `include=product` adds a product reference only when its product page is published and registered. These relation envelopes do not modify `content` and never expose company, meeting URL, staff/account, approval, compensation, or internal scheduling fields.
 
 The revalidation handler receives one request per target:
 

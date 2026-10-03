@@ -3,8 +3,10 @@ import { fetchMentorGroups, MentorGroup } from '@/services/mentorGroupService';
 import { fetchMentors } from '@/services/events/productService';
 import { supabase } from '@/lib/supabase';
 import { ExtendedMentor } from '@/components/products/types';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 export function useMentorGroupsAndMentors() {
+  const { activeTenantId } = useActiveWorkspace();
   const [mentorGroups, setMentorGroups] = useState<MentorGroup[]>([]);
   const [mentors, setMentors] = useState<ExtendedMentor[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
@@ -13,9 +15,14 @@ export function useMentorGroupsAndMentors() {
   // Load traits
   useEffect(() => {
     const loadMentorGroups = async () => {
+      if (!activeTenantId) {
+        setMentorGroups([]);
+        setLoadingGroups(false);
+        return;
+      }
       setLoadingGroups(true);
       try {
-        const groups = await fetchMentorGroups();
+        const groups = await fetchMentorGroups(activeTenantId);
         setMentorGroups(groups);
       } catch (error) {
         console.error("Failed to load traits:", error);
@@ -25,7 +32,7 @@ export function useMentorGroupsAndMentors() {
     };
     
     loadMentorGroups();
-  }, []);
+  }, [activeTenantId]);
 
   // Load mentors  
   useEffect(() => {
@@ -44,6 +51,7 @@ export function useMentorGroupsAndMentors() {
               const { data } = await supabase
                 .from('mentor_groups')
                 .select('group_name, user_in_group')
+                .eq('tenant_id', activeTenantId)
               
               // Extract group names with proper null/undefined checks
               const traits = data
@@ -90,7 +98,7 @@ export function useMentorGroupsAndMentors() {
     };
 
     loadMentors();
-  }, []);
+  }, [activeTenantId]);
 
   return {
     mentorGroups,

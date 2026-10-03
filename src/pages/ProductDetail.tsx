@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions'; // Add this import
@@ -10,11 +10,15 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, ArrowLeft, Pencil, CheckCircle2 } from 'lucide-react';
 import { getIconByName } from '@/constants/pillaricons';
 import ProductManagementModal from '@/components/events/ProductManagementModal';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
 const ProductDetail = () => {
   const { productId } = useParams<{ productId: string }>();
   const { language, theme } = useTheme();
   const permissions = usePermissions(); // Add this hook
+  const { activeTenantId } = useActiveWorkspace();
+  const activeTenantRef = useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
   const navigate = useNavigate();
   const [product, setProduct] = useState<Product | null>(null);
   const [mentors, setMentors] = useState<Mentor[]>([]);
@@ -30,14 +34,25 @@ const ProductDetail = () => {
   }, [permissions.canViewAdminData, permissions.canManageProducts, navigate]);
 
   useEffect(() => {
+    setProduct(null);
+    setShowEditForm(false);
+  }, [activeTenantId]);
+
+  useEffect(() => {
     document.title = product ? `${product.name} | Product Details` : 'Product Details';
   }, [product]);
 
   useEffect(() => {
+    let cancelled = false;
     const loadData = async () => {
       // Only load if user has permission
       if (!permissions.canViewAdminData && !permissions.canManageProducts) return;
-      
+      if (!activeTenantId) {
+        setProduct(null);
+        setIsLoading(false);
+        return;
+      }
+      setProduct(null);
       setIsLoading(true);
       
       // Parse productId as a number since that's what the API expects
@@ -49,11 +64,12 @@ const ProductDetail = () => {
 
       try {
         const [productData, mentorsData, groupsData] = await Promise.all([
-          fetchProductById(id),
+          fetchProductById(id, activeTenantId),
           fetchMentors(),
-          fetchMentorGroups()
+          fetchMentorGroups(activeTenantId)
         ]);
         
+        if (cancelled || activeTenantRef.current !== activeTenantId) return;
         setProduct(productData);
         setMentors(mentorsData);
         setMentorGroups(groupsData);
@@ -61,11 +77,12 @@ const ProductDetail = () => {
         console.error('Error loading product details:', error);
       }
       
-      setIsLoading(false);
+      if (!cancelled && activeTenantRef.current === activeTenantId) setIsLoading(false);
     };
 
-    loadData();
-  }, [permissions.canManageProducts, permissions.canViewAdminData, productId]);
+    void loadData();
+    return () => { cancelled = true; };
+  }, [activeTenantId, permissions.canManageProducts, permissions.canViewAdminData, productId]);
 
   // Add loading state while checking permissions
   if (!permissions.canViewAdminData && !permissions.canManageProducts) {
@@ -83,8 +100,10 @@ const ProductDetail = () => {
     if (productId) {
       const loadProduct = async () => {
         const id = parseInt(productId, 10);
-        const updatedProduct = await fetchProductById(id);
-        setProduct(updatedProduct);
+        const requestedTenantId = activeTenantId;
+        if (!requestedTenantId) return;
+        const updatedProduct = await fetchProductById(id, requestedTenantId);
+        if (activeTenantRef.current === requestedTenantId) setProduct(updatedProduct);
       };
       loadProduct();
     }

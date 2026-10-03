@@ -6,19 +6,25 @@ import { usePermissions } from '@/hooks/usePermissions'; // Add this import
 import { useTheme } from '../contexts/ThemeContext';
 import { EventForm, EventFormValues } from '../components/events/EventForm';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { useData } from '../contexts/DataContext'; 
 import { calculateEndTime } from '@/utils/timeUtils';
 import { calculateEventStatus } from '../utils/eventUtils';
 import { EventStatus, EventMode } from '@/types/event';
 import { ensureCompanyRecord } from '@/services/company/companyService';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { getSchema, triggerRevalidation } from '@/services/pageService';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
 
 type SupabaseEventRow = {
   id: string;
+  tenant_id: string;
+  page_id: string | null;
+  timezone: string | null;
   company_id: string | null;
   company: string | null;
   date: string | null;
@@ -39,6 +45,11 @@ type SupabaseEventRow = {
 
 const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormInitialValues => ({
   id: input.id,
+  tenant_id: input.tenant_id,
+  page_id: input.page_id ?? null,
+  timezone: input.timezone ?? undefined,
+  event_schema_id: input.event_schema_id,
+  event_page_name: input.event_page_name,
   company_id: input.company_id ?? "",
   company: input.company ?? "",
   date: input.date ?? "",
@@ -63,11 +74,13 @@ const EditEvent = () => {
   const { language } = useTheme();
   const { getEventById, refetchEvents } = useData();
   const { user } = useAuth();
+  const { activeTenantId, loading: workspaceLoading } = useActiveWorkspace();
   const permissions = usePermissions(); // Use centralized permissions
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingEvent, setIsLoadingEvent] = useState(true);
   const [eventData, setEventData] = useState<EventFormInitialValues | null>(null);
   const [isSubmitSuccessful, setIsSubmitSuccessful] = useState(false);
+  const [eventPageInfo, setEventPageInfo] = useState<{ path: string; slug: string; schemaSlug: string; status: string; registered: boolean } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -92,8 +105,11 @@ const EditEvent = () => {
   // Fetch event data directly to ensure we have the latest data
   useEffect(() => {
     const fetchEvent = async () => {
-      if (!id) {
+      if (workspaceLoading) return;
+      if (!id || !activeTenantId) {
         setIsLoadingEvent(false);
+        setEventData(null);
+        setEventPageInfo(null);
         return;
       }
       
@@ -104,6 +120,7 @@ const EditEvent = () => {
         if (cachedEvent) {
           const normalizedFromCache = toInitialValues({
             id: cachedEvent.id,
+            tenant_id: cachedEvent.tenant_id,
             company_id: cachedEvent.company_id,
             company: cachedEvent.company,
             date: cachedEvent.date,
@@ -119,6 +136,8 @@ const EditEvent = () => {
             staff_members: cachedEvent.staff_members,
             teams_link: cachedEvent.teams_link,
             initial_selected_mentors: cachedEvent.initial_selected_mentors,
+            page_id: cachedEvent.page_id,
+            timezone: cachedEvent.timezone,
           });
 
           setEventData(normalizedFromCache);
@@ -129,12 +148,16 @@ const EditEvent = () => {
           .from('mentorbooking_events')
           .select('*')
           .eq('id', id)
+          .eq('tenant_id', activeTenantId)
           .single<SupabaseEventRow>();
 
         if (error) throw error;
 
         const normalizedFromDb = toInitialValues({
           id: data.id,
+          tenant_id: data.tenant_id,
+          page_id: data.page_id,
+          timezone: data.timezone,
           company_id: data.company_id ?? undefined,
           company: data.company ?? undefined,
           date: data.date ?? undefined,
@@ -168,17 +191,60 @@ const EditEvent = () => {
     };
     
     fetchEvent();
-  }, [id, getEventById, language]);
+  }, [activeTenantId, workspaceLoading, id, getEventById, language]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPublicPage = async () => {
+      setEventPageInfo(null);
+      if (!activeTenantId || !eventData?.page_id) return;
+      try {
+        const { data: page, error } = await supabase.from('pages')
+          .select('id, schema_id, name, slug, status')
+          .eq('id', eventData.page_id)
+          .eq('tenant_id', activeTenantId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!page) throw new Error('Event page not found in the active workspace.');
+        const schema = await getSchema(page.schema_id);
+        if (schema.tenant_id !== activeTenantId || schema.entity_kind !== 'event') {
+          throw new Error('The linked page is not owned by this workspace event schema.');
+        }
+        if (cancelled) return;
+        setEventData((current) => current ? {
+          ...current,
+          event_schema_id: schema.id,
+          event_page_name: page.name,
+        } : current);
+        setEventPageInfo({
+          path: `${getSchemaConsolePath(schema)}/edit/${page.id}`,
+          slug: page.slug,
+          schemaSlug: schema.api_slug,
+          status: page.status,
+          registered: schema.registration_status === 'registered',
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Could not load event page link:', error);
+          setEventPageInfo(null);
+        }
+      }
+    };
+    void loadPublicPage();
+    return () => { cancelled = true; };
+  }, [activeTenantId, eventData?.page_id]);
 
   const handleSubmit = async (values: EventFormValues) => {
     setIsLoading(true);
     try {
+      if (!id || !activeTenantId) throw new Error(language === 'en' ? 'Select a workspace before updating this event.' : 'Wähle vor dem Aktualisieren einen Workspace aus.');
       const staffMembers = values.staff_members && values.staff_members.length > 0
         ? values.staff_members
         : [];
       const companyRecord = await ensureCompanyRecord({
         companyId: values.company_id,
         companyName: values.company,
+        tenantId: activeTenantId,
       });
       const endTime = calculateEndTime(values.time, values.duration_minutes);
       const currentEvent = getEventById(id);
@@ -211,10 +277,21 @@ const EditEvent = () => {
           required_trait_id: values.required_trait_id ?? null,
           product_id: values.product_id ?? null,
           teams_link: values.teams_link ?? "",
+          ...(eventData?.page_id ? { timezone: values.timezone ?? null } : {}),
         })
-        .eq('id', id);
+        .eq('id', id)
+        .eq('tenant_id', activeTenantId);
 
       if (error) throw error;
+
+      if (eventPageInfo?.registered && eventPageInfo.status === 'published') {
+        try {
+          const result = await triggerRevalidation(eventPageInfo.schemaSlug, eventPageInfo.slug);
+          if (!result.success) toast.warning(language === 'en' ? 'Event saved, but frontend revalidation failed.' : 'Veranstaltung gespeichert, aber die Frontend-Aktualisierung ist fehlgeschlagen.');
+        } catch {
+          toast.warning(language === 'en' ? 'Event saved, but frontend revalidation could not be reached.' : 'Veranstaltung gespeichert, aber der Frontend-Aktualisierungsdienst war nicht erreichbar.');
+        }
+      }
 
       // Mark submission as successful
       setIsSubmitSuccessful(true);
@@ -279,6 +356,13 @@ const EditEvent = () => {
         </Button>
       </div>
     
+      {eventPageInfo && (
+        <Button variant="outline" onClick={() => navigate(eventPageInfo.path)}>
+          <ExternalLink className="mr-2 h-4 w-4" />
+          {language === 'en' ? 'Edit public event page' : 'Öffentliche Veranstaltungsseite bearbeiten'}
+        </Button>
+      )}
+
       <EventForm
         initialValues={eventData}
         onSubmit={handleSubmit}

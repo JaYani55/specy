@@ -10,6 +10,7 @@ the implementation is recorded in `../changes/`.
 | [`CLAIM_MANAGEMENT.md`](CLAIM_MANAGEMENT.md) | Custom JWT claims for build-time plugins — **implemented 2026-09-09**, implemented contract: [`../auth/plugin-claims.md`](../auth/plugin-claims.md) |
 | [`DEPLOYMENT-STATE-TRACKING.md`](DEPLOYMENT-STATE-TRACKING.md) | Deployment/installation state registry (core vs plugin ownership, FK to `plugins`, clean uninstall, prod re-check) — **implemented 2026-09-10**, contract: [`../platform/unified-setup-tui.md`](../platform/unified-setup-tui.md) §5 |
 | [`PRODUCT-INTEGRATION.md`](PRODUCT-INTEGRATION.md) | Proposed service-product rebuild: Pages/MCP integration, independent staff/freelancer/guest identities, optional single-table customer CRM, event catalogue, typed external-service handoff, risk controls and legacy migration/removal |
+| [`Event-Integration.md`](Event-Integration.md) | Focused event-page integration slice — MVP implemented; snapshot-backed migration, live RLS/persona and frontend deployment verification remain pending |
 | [`docker-installer.md`](docker-installer.md) | Docker installer planning |
 | [`managed_secrets_changes.md`](managed_secrets_changes.md) | Managed secrets change plan |
 | [`Twilio_SMS_Notif.md`](Twilio_SMS_Notif.md) | Twilio SMS notification planning |

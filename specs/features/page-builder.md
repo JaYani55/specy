@@ -4,7 +4,7 @@
 
 The PageBuilder is the **content-editing layer** above a schema contract. Developers and technical administrators define field structure in a schema; content managers edit entry values through a simpler form derived from that schema.
 
-The PageBuilder does not edit `page_schemas.schema`, registration settings, frontend targets, or schema revisions. It edits `pages.name`, `pages.slug`, and `pages.content` through the appropriate page or service-product save adapter. The Schema Editor remains a separate technical feature; see [`schema-editor.md`](schema-editor.md).
+The PageBuilder does not edit `page_schemas.schema`, registration settings, frontend targets, or schema revisions. It edits `pages.name`, `pages.slug`, and `pages.content` through the appropriate ordinary-page, service-product, or event-page save adapter. The Schema Editor remains a separate technical feature; see [`schema-editor.md`](schema-editor.md).
 
 ## Routes
 
@@ -13,10 +13,10 @@ The PageBuilder does not edit `page_schemas.schema`, registration settings, fron
 | `/pages/schema/new` | Technical schema authoring in Schema Editor. |
 | `/pages/schema/:tenantSlug/:schemaSlug/settings` (and the legacy one-segment equivalent) | Technical schema/configuration editing in Schema Editor. |
 | `/pages/schema/:tenantSlug/:schemaSlug/new` | Create an ordinary page using the schema-driven PageBuilder. |
-| `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` | Edit the canonical page entry using the schema-driven PageBuilder. This is also the canonical content route for service products. |
+| `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` | Edit the canonical page entry using the schema-driven PageBuilder. This is also the canonical content route for service products and event pages. |
 | `/pagebuilder/:legacyProductId` | Compatibility route for old numeric product links. It resolves the legacy product to its linked page. If that page has a schema, it redirects to the canonical schema route; it never opens the fixed-layout legacy editor for schema-bound content. |
 
-The schema route loads and verifies the page/schema/workspace tuple. Event-classified schemas do not yet have an event aggregate editor and are refused by this route.
+The schema route loads and verifies the page/schema/workspace tuple. Event pages are created through the event workflow and edited through an event-aware aggregate adapter; generic page creation is not used to create event occurrences.
 
 ## Feature structure
 
@@ -68,7 +68,8 @@ Example presentation metadata (kept outside both schema field JSON and entry con
 - Optional fields are activated by presence, preserving `false`, `0`, `null`, empty strings, arrays, and objects.
 - Unknown keys and custom block data are preserved when known fields change. An incompatible saved value is shown as unchanged rather than silently coerced.
 - Ordinary `page` schemas save through `savePage()` after schema/workspace checks.
-- `service-product` schemas save through `updateServiceProduct()` with the aggregate UUID/version and schema definition revision. Publication uses the aggregate publish operation. Generic page writes and the legacy editor are not allowed to bypass these checks.
+- `service-product` schemas save through `updateServiceProduct()` with the aggregate UUID/version and schema definition revision. Publication uses the product aggregate publish operation.
+- `event` schemas save through the event-page aggregate adapter with tenant, schema definition revision, and optimistic page `updated_at` checks. Publication uses the event-page operation; event scheduling status is separate. Generic page writes and the legacy editor cannot bypass these checks.
 - Raw JSON import and technical diagnostics are available only in the administrator-only developer-tools disclosure; they are not part of the default content-manager workflow.
 
 ## Legacy boundary

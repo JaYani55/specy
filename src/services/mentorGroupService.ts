@@ -16,10 +16,12 @@ export interface MentorWithTraits {
   traits: number[];
 }
 
-export const fetchMentorGroups = async (): Promise<MentorGroup[]> => {
+export const fetchMentorGroups = async (tenantId: string): Promise<MentorGroup[]> => {
+  if (!tenantId) return [];
   const { data, error } = await supabase
     .from('mentor_groups')
     .select('id, group_name, description, user_in_group')
+    .eq('tenant_id', tenantId)
     .order('group_name', { ascending: true });
 
   if (error) {

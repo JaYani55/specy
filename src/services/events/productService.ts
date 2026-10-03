@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { normalizeProductTenantId, requireProductTenantId } from '@/utils/productTenantScope';
 
 // Ensure this is explicitly exported as an interface
 export interface Product {
@@ -27,12 +28,14 @@ export interface SupabaseResponse<T> {
   error: Error | null;
 }
 
-export const fetchProducts = async (tenantId?: string | null): Promise<Product[]> => {
-  let query = supabase
+export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
+  const scopedTenantId = normalizeProductTenantId(tenantId);
+  if (!scopedTenantId) return [];
+  const query = supabase
     .from('mentorbooking_products')
     .select('*')
+    .eq('tenant_id', scopedTenantId)
     .order('name', { ascending: true });
-  if (tenantId) query = query.eq('tenant_id', tenantId);
   const response: SupabaseResponse<Product[]> = await query;
 
   const { data, error } = response;
@@ -45,14 +48,15 @@ export const fetchProducts = async (tenantId?: string | null): Promise<Product[]
   return data || [];
 };
 
-export const fetchProductById = async (id: number, tenantId?: string | null): Promise<Product | null> => {
-  if (!id) return null;
+export const fetchProductById = async (id: number, tenantId: string): Promise<Product | null> => {
+  const scopedTenantId = normalizeProductTenantId(tenantId);
+  if (!id || !scopedTenantId) return null;
 
-  let query = supabase
+  const query = supabase
     .from('mentorbooking_products')
     .select('*')
-    .eq('id', id);
-  if (tenantId) query = query.eq('tenant_id', tenantId);
+    .eq('id', id)
+    .eq('tenant_id', scopedTenantId);
   const { data, error } = await query.single();
 
   if (error) {
@@ -64,7 +68,8 @@ export const fetchProductById = async (id: number, tenantId?: string | null): Pr
 };
 
 // Create a new Product
-export const createProduct = async (Product: Omit<Product, 'id'>, tenantId?: string | null): Promise<Product | null> => {
+export const createProduct = async (Product: Omit<Product, 'id'>, tenantId: string): Promise<Product | null> => {
+  const scopedTenantId = requireProductTenantId(tenantId);
   try {
     // Ensure required fields have defaults and proper data types
     // DO NOT include 'id' in the insert data - let the database generate it
@@ -83,7 +88,7 @@ export const createProduct = async (Product: Omit<Product, 'id'>, tenantId?: str
       is_mentor_product: Boolean(Product.is_mentor_product)
       // DO NOT include id, created_at, or updated_at - let the database handle these
     };
-    if (tenantId) Object.assign(sanitizedProduct, { tenant_id: tenantId });
+    Object.assign(sanitizedProduct, { tenant_id: scopedTenantId });
     
     console.log('Creating product with sanitized data:', sanitizedProduct);
     
@@ -109,23 +114,25 @@ export const createProduct = async (Product: Omit<Product, 'id'>, tenantId?: str
 };
 
 // Update an existing Product
-export const updateProduct = async (id: number, Product: Partial<Product>, tenantId?: string | null): Promise<Product | null> => {
+export const updateProduct = async (id: number, Product: Partial<Product>, tenantId: string): Promise<Product | null> => {
+  const scopedTenantId = requireProductTenantId(tenantId);
   console.log(`Updating product with ID ${id}:`, Product);
   
   try {
     // Format the approved field as array
     const updateData = { ...Product };
+    delete updateData.tenant_id;
     if ('approved' in updateData) {
       updateData.approved = Array.isArray(updateData.approved) ? updateData.approved : [];
     }
     
     // Remove delivery_mode handling since it's no longer part of products
     
-    let query = supabase
+    const query = supabase
       .from('mentorbooking_products')
       .update(updateData)
-      .eq('id', id);
-    if (tenantId) query = query.eq('tenant_id', tenantId);
+      .eq('id', id)
+      .eq('tenant_id', scopedTenantId);
     const { data, error } = await query.select();
 
     if (error) {
@@ -147,11 +154,11 @@ export const updateProduct = async (id: number, Product: Partial<Product>, tenan
 };
 
 // Delete a Product
-export const deleteProduct = async (id: number, tenantId?: string | null): Promise<boolean> => {
-  if (!tenantId) throw new Error('A workspace is required to delete a product.');
+export const deleteProduct = async (id: number, tenantId: string): Promise<boolean> => {
+  const scopedTenantId = requireProductTenantId(tenantId);
   const { error } = await supabase.rpc('delete_mentorbooking_product_aggregate', {
     target_product_id: id,
-    expected_tenant_id: tenantId,
+    expected_tenant_id: scopedTenantId,
   });
   if (error) {
     // The database performs both deletes in one transaction and refuses to

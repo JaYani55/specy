@@ -6,6 +6,9 @@ export type EventMode = 'live' | 'online' | 'hybrid';
 
 export interface Event {
   id: string;
+  tenant_id?: string;
+  page_id?: string | null;
+  timezone?: string | null;
   title: string;
   company: string;
   company_id?: string;
@@ -55,6 +58,7 @@ export interface EventFormData {
   staff_members: string[]; // Replace with this
   teams_link: string;
   isLocked: boolean;
+  timezone?: string | null;
 }
 
 export interface EventFormErrors {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from "@/contexts/ThemeContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNavigate } from "react-router-dom";
@@ -25,6 +25,8 @@ const VerwaltungManageProducts = () => {
   const permissions = usePermissions();
   const navigate = useNavigate();
   const { activeTenantId } = useActiveWorkspace();
+  const activeTenantRef = useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
   
   const [products, setProducts] = useState<Product[]>([]);
   const [mentors, setMentors] = useState<Mentor[]>([]);
@@ -46,31 +48,53 @@ const VerwaltungManageProducts = () => {
   }, [permissions.canManageProducts, navigate]);
 
   useEffect(() => {
+    setProducts([]);
+    setMentors([]);
+    setMentorGroups([]);
+    setSelectedProduct(null);
+    setShowProductForm(false);
+    setProductToDelete(null);
+    setDeleteDialogOpen(false);
+  }, [activeTenantId]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadData = async () => {
       // Only load data if user has permission
-      if (!permissions.canManageProducts) return;
+      if (!permissions.canManageProducts || !activeTenantId) {
+        setProducts([]);
+        setMentors([]);
+        setMentorGroups([]);
+        setIsLoading(false);
+        return;
+      }
       
+      setProducts([]);
+      setMentors([]);
+      setMentorGroups([]);
       setIsLoading(true);
       try {
-        // Load all data in parallel
+        // Load all data in parallel for the active workspace only
         const [fetchedProducts, fetchedMentors, fetchedGroups] = await Promise.all([
-          fetchProducts(),
+          fetchProducts(activeTenantId),
           fetchMentors(),
-          fetchMentorGroups()
+          fetchMentorGroups(activeTenantId)
         ]);
         
+        if (cancelled || activeTenantRef.current !== activeTenantId) return;
         setProducts(fetchedProducts);
         setMentors(fetchedMentors);
         setMentorGroups(fetchedGroups);
       } catch (error) {
         console.error("Error loading data:", error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled && activeTenantRef.current === activeTenantId) setIsLoading(false);
       }
     };
 
-    loadData();
-  }, [permissions.canManageProducts]);
+    void loadData();
+    return () => { cancelled = true; };
+  }, [permissions.canManageProducts, activeTenantId]);
 
   // Add loading state while checking permissions
   if (!permissions.canManageProducts) {
@@ -102,9 +126,21 @@ const VerwaltungManageProducts = () => {
   const handleProductsChange = () => {
     const loadProducts = async () => {
       setIsLoading(true);
-      const fetchedProducts = await fetchProducts();
-      setProducts(fetchedProducts);
-      setIsLoading(false);
+      if (!activeTenantId) {
+        setProducts([]);
+        setIsLoading(false);
+        return;
+      }
+      const requestedTenantId = activeTenantId;
+      const [fetchedProducts, fetchedGroups] = await Promise.all([
+        fetchProducts(requestedTenantId),
+        fetchMentorGroups(requestedTenantId),
+      ]);
+      if (activeTenantRef.current === requestedTenantId) {
+        setProducts(fetchedProducts);
+        setMentorGroups(fetchedGroups);
+        setIsLoading(false);
+      }
     };
     loadProducts();
     setShowProductForm(false);

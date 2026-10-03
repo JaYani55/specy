@@ -31,11 +31,17 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
   const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
   const [highlightedIndex, setHighlightedIndex] = React.useState<number>(-1);
   const itemsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const activeTenantRef = useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
 
   const loadProducts = React.useCallback(async () => {
+    const requestedTenantId = activeTenantId;
     setLoading(true);
+    setProducts([]);
+    setSelectedProduct(null);
     try {
-      const data = await fetchProducts(activeTenantId);
+      const data = await fetchProducts(requestedTenantId);
+      if (activeTenantRef.current !== requestedTenantId) return;
       setProducts(data);
 
       if (value !== undefined) {
@@ -47,7 +53,7 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
     } catch (err) {
       console.error("Exception loading Products:", err);
     } finally {
-      setLoading(false);
+      if (activeTenantRef.current === requestedTenantId) setLoading(false);
     }
   }, [activeTenantId, value]);
 

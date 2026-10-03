@@ -6,8 +6,8 @@ export interface CompanyRecord {
   logo_url?: string | null;
 }
 
-export const getCompanyById = async (id: string): Promise<CompanyRecord | null> => {
-  if (!id) {
+export const getCompanyById = async (id: string, tenantId: string): Promise<CompanyRecord | null> => {
+  if (!id || !tenantId) {
     return null;
   }
 
@@ -15,6 +15,7 @@ export const getCompanyById = async (id: string): Promise<CompanyRecord | null> 
     .from('companies')
     .select('id, name, logo_url')
     .eq('id', id)
+    .eq('tenant_id', tenantId)
     .maybeSingle<CompanyRecord>();
 
   if (error) {
@@ -28,18 +29,21 @@ export const getCompanyById = async (id: string): Promise<CompanyRecord | null> 
 export const ensureCompanyRecord = async ({
   companyId,
   companyName,
+  tenantId,
 }: {
   companyId?: string;
   companyName: string;
+  tenantId: string;
 }): Promise<CompanyRecord> => {
   const normalizedName = companyName.trim();
 
+  if (!tenantId) throw new Error('An active workspace is required for company selection.');
   if (!normalizedName) {
     throw new Error('Company name is required');
   }
 
   if (companyId) {
-    const existingCompany = await getCompanyById(companyId);
+    const existingCompany = await getCompanyById(companyId, tenantId);
     if (existingCompany) {
       return existingCompany;
     }
@@ -49,6 +53,7 @@ export const ensureCompanyRecord = async ({
     .from('companies')
     .select('id, name, logo_url')
     .ilike('name', normalizedName)
+    .eq('tenant_id', tenantId)
     .limit(1)
     .maybeSingle<CompanyRecord>();
 
@@ -62,7 +67,7 @@ export const ensureCompanyRecord = async ({
 
   const { data: createdCompany, error: createError } = await supabase
     .from('companies')
-    .insert({ name: normalizedName })
+    .insert({ name: normalizedName, tenant_id: tenantId })
     .select('id, name, logo_url')
     .single<CompanyRecord>();
 

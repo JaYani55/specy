@@ -8,7 +8,7 @@ Specy has two distinct editing features with a one-way dependency:
 Frontend developer / technical administrator
   └─ Schema Editor: defines the versioned entry contract and site integration
        └─ PageBuilder: reads that contract and edits one entry's content
-            └─ Save adapter: ordinary page save OR service-product aggregate save
+            └─ Save adapter: ordinary page save OR service-product/event aggregate save
 ```
 
 The **Schema Editor** owns `page_schemas.schema` and technical schema/integration metadata. The **PageBuilder** is a content editor projected from that contract. It does not edit the schema definition. Content managers can edit an entry without changing field structure, required rules, frontend targets, or schema revisions.
@@ -27,23 +27,24 @@ The source features are separated accordingly:
 | `/pages/schema/:tenantSlug/:schemaSlug/settings` (and the legacy one-segment equivalent) | Schema Editor | Edit the schema definition and integration configuration. |
 | `/pages/schema/:tenantSlug/:schemaSlug` | Schema detail | List entries and navigate to content editing or technical settings. |
 | `/pages/schema/:tenantSlug/:schemaSlug/new` | PageBuilder | Create an ordinary page using the selected schema. |
-| `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` | PageBuilder | Edit the canonical page entry. Service products use aggregate update/publish operations. |
+| `/pages/schema/:tenantSlug/:schemaSlug/edit/:pageId` | PageBuilder | Edit the canonical page entry. Service products and event pages use their entity-aware aggregate update/publication operations. |
 | `/pagebuilder/:legacyProductId` | Compatibility alias | Resolve an old numeric product reference. If it has a schema-linked page, redirect to that page's canonical schema route. Only linked schema-less historical pages use the fixed-layout legacy editor. |
 
-The schema route verifies the page/schema/workspace tuple. Event-classified schemas do not yet have an event aggregate editor and are refused by this route.
+The schema route verifies the page/schema/workspace tuple. Event pages use an event-aware aggregate writer; new event occurrences must be created through the event workflow rather than generic page creation.
 
 ## PageBuilder source behavior
 
 ### Route controller
 
-`src/features/page-builder/PageBuilderPage.tsx` loads either a canonical schema route or a legacy numeric product alias. For canonical routes it loads the schema and page, verifies ownership, and loads a service-product aggregate when needed. For a legacy alias it resolves `mentorbooking_products.product_page_id`; schema-bound pages redirect with history replacement before any legacy form renders.
+`src/features/page-builder/PageBuilderPage.tsx` loads either a canonical schema route or a legacy numeric product alias. For canonical routes it loads the schema and page, verifies ownership, and loads the appropriate service-product or event aggregate when needed. For a legacy alias it resolves `mentorbooking_products.product_page_id`; schema-bound pages redirect with history replacement before any legacy form renders.
 
 ### Schema content editor
 
 `src/features/page-builder/SchemaContentEditor.tsx` renders schema fields as content-oriented widgets for strings, numbers, booleans, enums, media, arrays, objects, content blocks, and code blocks. It initializes defaults without overwriting saved values. Unknown keys and custom block data remain intact. Incompatible saved values are preserved and reported rather than coerced.
 
 - Ordinary `page` entries save through `savePage()` after schema/workspace ownership checks.
-- `service-product` entries save through `updateServiceProduct()` using the aggregate UUID, expected aggregate version, and schema definition revision. Publication uses the aggregate publish operation.
+- `service-product` entries save through `updateServiceProduct()` using the aggregate UUID, expected aggregate version, and schema definition revision. Publication uses the product aggregate publish operation.
+- `event` pages save and publish through the event-page aggregate RPC using tenant, schema definition revision, and optimistic page `updated_at` checks. Schedule facts remain on the event row and are delivered through an allow-listed relation.
 - Schema-bound content cannot be written through the old `saveLegacyProductPage()` adapter or generic page save.
 
 ### Presentation derived from schema
@@ -93,3 +94,4 @@ Legacy records and schema-less content are not backfilled by this source refacto
 - [Technical Schema Editor](../features/schema-editor.md)
 - [Schema/content contracts](../features/schema-contracts.md)
 - [Service products](../features/service-products.md)
+- [Event catalogue pages](../features/event-catalogue.md)

@@ -4,7 +4,7 @@
 
 `page_schemas.schema` remains developer-owned JSON describing entry fields. `pages.content` remains arbitrary JSON data. Classification, editor hints, and definition revisions are metadata on `page_schemas`; they are not injected into either JSON payload.
 
-This document describes the implemented schema/content contract foundation. A first service-product aggregate workflow is available through Products, REST, and MCP. Event aggregates/public event pages, staff presentation, customer CRM, and the typed external-service handoff are not yet enabled.
+This document describes the implemented schema/content contract foundation. Service-product aggregates are available through Products, REST, and MCP. A focused dashboard event-page aggregate and public event-schema delivery are also available; staff presentation, customer CRM, event MCP/API mutations, and typed external-service handoff remain out of scope.
 
 ## Technical and content editor hierarchy
 
@@ -55,9 +55,9 @@ Unknown or malformed content blocks are shown as retained JSON instead of being 
 
 ## Entity write and public-delivery boundary
 
-Generic page create/update tools reject schemas classified as `service-product` or `event`. The generic dashboard `savePage` path rejects those entity kinds and validates the routed page/schema/workspace tuple. Product pages must be created/updated/published/archived through the service-product aggregate API. Event aggregate writes remain unavailable.
+Generic page create/update tools reject schemas classified as `service-product` or `event`. The generic dashboard `savePage` path rejects those entity kinds and validates the routed page/schema/workspace tuple. Product pages use the service-product aggregate API. Event pages are created from Create Event and saved/published through the event-page aggregate RPC; event schema pages are not created through generic page CRUD.
 
-The current public `GET /api/schemas/:apiSlug/pages` and detail endpoint serve ordinary `page` and `service-product` schemas. Product entries are filtered to published pages with a non-retired product row; `?include=entity` adds only `{ kind, id }` under a separate `relations` envelope. Event-classified schemas remain unavailable and return not found. Product publication and retirement suppress delivery; content remains unchanged.
+The current public `GET /api/schemas/:apiSlug/pages` and detail endpoint serve registered ordinary `page`, `service-product`, and `event` schemas. Product entries are filtered to published pages with a non-retired product row; `?include=entity` adds only `{ kind, id }` under a separate `relations` envelope. Event pages are filtered to published pages with a linked same-tenant event and a valid timezone. `?include=entity,event,product` adds allow-listed occurrence facts and, only when its product page is registered and published, a product UUID reference. Private event/company/staff fields are not returned. Stored content remains unchanged.
 
 ## Routing capability honesty
 
@@ -67,4 +67,4 @@ The frontend manifest now reports `revalidation.supports_new_routes: null` (unkn
 
 - Existing schema/page records default to ordinary `page`; their JSON is not transformed by the metadata migration.
 - Stable `api_slug`, tenant-local schema slugs, frontend targets, and the existing published-page contract for ordinary pages remain unchanged.
-- Product aggregate writes now use the additive compatibility layer and are not a substitute for the live inventory/backfill gate in [`../plans/PRODUCT-INTEGRATION.md`](../plans/PRODUCT-INTEGRATION.md) §§8–9. Staff identity, customer CRM, event aggregates/public event pages, typed handoff, invalidation, and legacy contraction remain future phases.
+- Product and event page aggregates use additive compatibility layers and are not substitutes for the live inventory/backfill gate in [`../plans/PRODUCT-INTEGRATION.md`](../plans/PRODUCT-INTEGRATION.md) §§8–9. Staff identity, customer CRM, event API/MCP mutations, typed handoff, durable invalidation, and legacy contraction remain future phases. See [`event-catalogue.md`](event-catalogue.md) for the focused event-page contract.

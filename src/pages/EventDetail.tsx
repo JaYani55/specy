@@ -1,16 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Loader2, Clock, Package, MessageSquarePlus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, Clock, Package, MessageSquarePlus, ExternalLink } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { fetchProductById, Product } from '@/services/events/productService';
 import type { ProductInfo } from '@/components/products/types';
 import { getIconByName } from '@/constants/pillaricons';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { usePermissions } from '@/hooks/usePermissions';
 import { getEventTimeDisplay } from '@/utils/timeUtils';
 import { supabase } from '../lib/supabase';
 import { isEventInPast } from '@/utils/eventUtils';
+import { getSchema } from '@/services/pageService';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 import { useEventDetail } from '@/hooks/useEventDetail';
 import useEventActions from '@/hooks/useEventActions';
@@ -73,8 +78,10 @@ const buildDisplayProduct = (
 };
 
 const EventDetail = () => {
+  const navigate = useNavigate();
   const { refetchEvents, getUserProfile } = useData();
   const { language, theme } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const { user } = useAuth();
 
@@ -102,10 +109,14 @@ const EventDetail = () => {
 
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [selectedMentorNames, setSelectedMentorNames] = useState<{name: string}[]>([]);
+  const [eventPagePath, setEventPagePath] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const loadProductDetails = async () => {
       if (!event?.product_id) {
+        if (cancelled) return;
+        setIsLoadingProduct(false);
         setProductDetails(event?.ProductInfo
           ? {
               id: event.ProductInfo.id,
@@ -121,7 +132,8 @@ const EventDetail = () => {
 
       setIsLoadingProduct(true);
       try {
-        const product = await fetchProductById(event.product_id);
+        const product = activeTenantId ? await fetchProductById(event.product_id, activeTenantId) : null;
+        if (cancelled) return;
         if (product) {
           setProductDetails(product);
         } else if (event.ProductInfo) {
@@ -137,6 +149,7 @@ const EventDetail = () => {
           setProductDetails(null);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Error loading product details:', error);
         if (event?.ProductInfo) {
           setProductDetails({
@@ -151,12 +164,13 @@ const EventDetail = () => {
           setProductDetails(null);
         }
       } finally {
-        setIsLoadingProduct(false);
+        if (!cancelled) setIsLoadingProduct(false);
       }
     };
 
-    loadProductDetails();
-  }, [event?.product_id, event?.ProductInfo]);
+    void loadProductDetails();
+    return () => { cancelled = true; };
+  }, [activeTenantId, event?.product_id, event?.ProductInfo]);
 
   useEffect(() => {
     const loadAdditionalData = async () => {
@@ -203,6 +217,30 @@ const EventDetail = () => {
     loadAdditionalData();
   }, [event, productDetails]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadEventPagePath = async () => {
+      setEventPagePath(null);
+      if (!event?.page_id || !activeTenantId) return;
+      try {
+        const { data: page, error } = await supabase.from('pages')
+          .select('id, schema_id')
+          .eq('id', event.page_id)
+          .eq('tenant_id', activeTenantId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!page) return;
+        const schema = await getSchema(page.schema_id);
+        if (schema.entity_kind !== 'event' || schema.tenant_id !== activeTenantId) return;
+        if (!cancelled) setEventPagePath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
+      } catch (error) {
+        console.error('Could not resolve event page editor route:', error);
+      }
+    };
+    void loadEventPagePath();
+    return () => { cancelled = true; };
+  }, [activeTenantId, event?.page_id]);
+
   const isPastEvent = event ? isEventInPast(event) : false;
 
   const currentProduct = useMemo(
@@ -247,6 +285,14 @@ const EventDetail = () => {
         onDeleteClick={() => setShowDeleteDialog(true)}
         isPastEvent={isPastEvent}
       />
+      {eventPagePath && permissions.canEditEvents && (
+        <div className="mb-4 flex justify-end">
+          <Button variant="outline" onClick={() => navigate(eventPagePath)}>
+            <ExternalLink className="mr-2 h-4 w-4" />
+            {language === 'en' ? 'Edit public event page' : 'Öffentliche Veranstaltungsseite bearbeiten'}
+          </Button>
+        </div>
+      )}
 
       {isPastEvent && (
         <div className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">

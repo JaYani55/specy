@@ -26,7 +26,14 @@ import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 import { parseSchemaDefinitionPatch } from '../lib/schemaDefinition';
-import { parsePublicEntityIncludes, projectPublicProductRelations, type PublicPageRecord } from '../lib/publicEntityProjection';
+import {
+  parsePublicEntityIncludes,
+  projectPublicEventRelations,
+  projectPublicProductRelations,
+  type PublicEventProduct,
+  type PublicEventReference,
+  type PublicPageRecord,
+} from '../lib/publicEntityProjection';
 
 const schemas = new Hono<{ Bindings: Env }>();
 
@@ -971,7 +978,6 @@ schemas.get('/:slug/pages', async (c) => {
     return c.json({ error: `Schema "${slug}" is not publicly registered` }, 404);
   }
   const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
-  if (entityKind === 'event') return c.json({ error: 'Event public delivery is not enabled for this schema yet.' }, 404);
   const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
 
@@ -987,7 +993,6 @@ schemas.get('/:slug/pages', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   let publicPages = (data ?? []) as PublicPageRecord[];
-  let productRefs: Array<{ id: string; page_id: string }> = [];
   if (entityKind === 'service-product') {
     const { data: productsData, error: productsError } = await supabase
       .from('service_products')
@@ -995,10 +1000,56 @@ schemas.get('/:slug/pages', async (c) => {
       .eq('tenant_id', schema.tenant_id)
       .is('retired_at', null);
     if (productsError) return c.json({ error: productsError.message }, 500);
-    productRefs = (productsData ?? []).filter((product): product is { id: string; page_id: string } => Boolean(product.page_id));
+    const productRefs = (productsData ?? []).filter((product): product is { id: string; page_id: string } => Boolean(product.page_id));
     const activePageIds = new Set(productRefs.map((product) => product.page_id));
     publicPages = publicPages.filter((page) => activePageIds.has(page.id));
-    if (includeResult.includeEntity) publicPages = projectPublicProductRelations(publicPages, productRefs);
+    if (includeResult.includes.includeEntity) publicPages = projectPublicProductRelations(publicPages, productRefs);
+  } else if (entityKind === 'event') {
+    if (!schema.tenant_id) return c.json({ error: 'Event schema is not assigned to a workspace.' }, 404);
+    const pageIds = publicPages.map((page) => page.id);
+    const { data: eventRows, error: eventError } = pageIds.length
+      ? await supabase.from('mentorbooking_events')
+        .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id')
+        .eq('tenant_id', schema.tenant_id)
+        .in('page_id', pageIds)
+      : { data: [], error: null };
+    if (eventError) return c.json({ error: eventError.message }, 500);
+    const eventRefs = (eventRows ?? []) as PublicEventReference[];
+    let eventProducts: PublicEventProduct[] = [];
+    if (includeResult.includes.includeProduct) {
+      const productIds = [...new Set(eventRefs.map((event) => event.product_id).filter((id): id is number => typeof id === 'number'))];
+      if (productIds.length) {
+        const { data: productRows, error: productError } = await supabase.from('mentorbooking_products')
+          .select('id, integration_id, name, product_page_id')
+          .eq('tenant_id', schema.tenant_id)
+          .is('retired_at', null)
+          .in('id', productIds);
+        if (productError) return c.json({ error: productError.message }, 500);
+        const productPages = (productRows ?? []).filter((product) => typeof product.product_page_id === 'string');
+        const productPageIds = productPages.map((product) => product.product_page_id as string);
+        const { data: visibleProductPages, error: productPageError } = productPageIds.length
+          ? await supabase.from('pages').select('id, slug, schema_id').eq('tenant_id', schema.tenant_id).eq('status', 'published').in('id', productPageIds)
+          : { data: [], error: null };
+        if (productPageError) return c.json({ error: productPageError.message }, 500);
+        const productSchemaIds = [...new Set((visibleProductPages ?? []).map((productPage) => productPage.schema_id).filter((id): id is string => typeof id === 'string'))];
+        const { data: visibleProductSchemas, error: productSchemaError } = productSchemaIds.length
+          ? await supabase.from('page_schemas').select('id, api_slug').eq('tenant_id', schema.tenant_id).eq('entity_kind', 'service-product').eq('registration_status', 'registered').in('id', productSchemaIds)
+          : { data: [], error: null };
+        if (productSchemaError) return c.json({ error: productSchemaError.message }, 500);
+        const publicProductSchemaById = new Map((visibleProductSchemas ?? []).map((productSchema) => [productSchema.id, productSchema.api_slug]));
+        const visiblePageById = new Map((visibleProductPages ?? []).flatMap((productPage) => {
+          const schemaApiSlug = publicProductSchemaById.get(productPage.schema_id);
+          return schemaApiSlug ? [[productPage.id, { slug: productPage.slug, schemaApiSlug }] as const] : [];
+        }));
+        eventProducts = productPages.flatMap((product) => {
+          const publicPage = product.product_page_id ? visiblePageById.get(product.product_page_id) : undefined;
+          return publicPage
+            ? [{ legacy_id: product.id, id: product.integration_id, name: product.name, page_slug: publicPage.slug, schema_api_slug: publicPage.schemaApiSlug }]
+            : [];
+        });
+      }
+    }
+    publicPages = projectPublicEventRelations(publicPages, eventRefs, eventProducts, includeResult.includes);
   }
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, undefined, { publicRead: true });
@@ -1010,7 +1061,7 @@ schemas.get('/:slug/pages', async (c) => {
       api_slug: schema.api_slug,
       name: schema.name,
       entity_kind: entityKind,
-      supported_includes: entityKind === 'service-product' ? ['entity'] : [],
+      supported_includes: entityKind === 'service-product' ? ['entity'] : entityKind === 'event' ? ['entity', 'event', 'product'] : [],
       slug_structure: schema.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
       targets,
@@ -1036,7 +1087,6 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     return c.json({ error: `Schema "${slug}" not found` }, 404);
   }
   const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
-  if (entityKind === 'event') return c.json({ error: 'Event public delivery is not enabled for this schema yet.' }, 404);
   const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
 
@@ -1063,12 +1113,54 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
       .maybeSingle();
     if (productError) return c.json({ error: productError.message }, 500);
     if (!product) return c.json({ error: 'Published product not found' }, 404);
-    if (includeResult.includeEntity) {
+    if (includeResult.includes.includeEntity) {
       deliveredPage = { ...page, relations: { entity: { kind: 'service-product', id: product.id } } };
+    }
+  } else if (entityKind === 'event') {
+    if (!schema.tenant_id) return c.json({ error: 'Event schema is not assigned to a workspace.' }, 404);
+    const { data: event, error: eventError } = await supabase.from('mentorbooking_events')
+      .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id')
+      .eq('tenant_id', schema.tenant_id)
+      .eq('page_id', page.id)
+      .maybeSingle();
+    if (eventError) return c.json({ error: eventError.message }, 500);
+    if (!event || !event.timezone) return c.json({ error: 'Published event not found' }, 404);
+    const [projected] = projectPublicEventRelations([page as PublicPageRecord], [event as PublicEventReference], [], includeResult.includes);
+    if (!projected) return c.json({ error: 'Published event not found' }, 404);
+    deliveredPage = projected as unknown as Record<string, unknown>;
+    if (includeResult.includes.includeProduct && event.product_id !== null) {
+      const { data: product, error: productError } = await supabase.from('mentorbooking_products')
+        .select('id, integration_id, name, product_page_id')
+        .eq('id', event.product_id)
+        .eq('tenant_id', schema.tenant_id)
+        .is('retired_at', null)
+        .maybeSingle();
+      if (productError) return c.json({ error: productError.message }, 500);
+      if (product?.product_page_id) {
+        const { data: productPage, error: productPageError } = await supabase.from('pages').select('slug, schema_id')
+          .eq('id', product.product_page_id).eq('tenant_id', schema.tenant_id).eq('status', 'published').maybeSingle();
+        if (productPageError) return c.json({ error: productPageError.message }, 500);
+        const { data: productSchema, error: productSchemaError } = productPage
+          ? await supabase.from('page_schemas').select('id, api_slug').eq('id', productPage.schema_id).eq('tenant_id', schema.tenant_id).eq('entity_kind', 'service-product').eq('registration_status', 'registered').maybeSingle()
+          : { data: null, error: null };
+        if (productSchemaError) return c.json({ error: productSchemaError.message }, 500);
+        if (productPage && productSchema) {
+          const relations = deliveredPage.relations && typeof deliveredPage.relations === 'object'
+            ? deliveredPage.relations as Record<string, unknown>
+            : {};
+          deliveredPage = {
+            ...deliveredPage,
+            relations: {
+              ...relations,
+              product: { id: product.integration_id, name: product.name, slug: productPage.slug, schema_api_slug: productSchema.api_slug },
+            },
+          };
+        }
+      }
     }
   }
 
-  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind }, page: deliveredPage });
+  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind, supported_includes: entityKind === 'event' ? ['entity', 'event', 'product'] : entityKind === 'service-product' ? ['entity'] : [] }, page: deliveredPage });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback
