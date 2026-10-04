@@ -46,6 +46,7 @@ test('schema system data validates route and revalidation paths', () => {
 
 test('schema page slugs retain the dashboard normalization behavior', () => {
   assert.equal(normalizeSchemaPageSlug('Über die Größe'), 'ueber-die-groesse');
+  assert.equal(normalizeSchemaPageSlug('themenwerkstatt_22102026'), 'themenwerkstatt-22102026');
   assert.equal(normalizeSchemaPageSlug('!!!'), 'page');
 });
 
@@ -71,6 +72,8 @@ test('MCP page tools expose the specy-pages > schemas hierarchy and management a
     assert.match(mcpSource, new RegExp(`'${toolName}'`));
   }
   assert.match(mcpSource, /include_content: z\.boolean\(\)\.optional\(\)/);
+  assert.match(mcpSource, /updateSchemaDefinition\(supabase, schema_slug, parsed\.patch\)/);
+  assert.doesNotMatch(mcpSource, /fetch\(`\$\{baseUrl\}\/api\/schemas\/\$\{encodeURIComponent\(schema_slug\)\}\/definition`/);
 });
 
 test('REST schema system data repair is authenticated and restricted to non-secret integration fields', () => {
@@ -97,4 +100,11 @@ test('schema definition patch parser enforces revisioned classification metadata
   }
   assert.equal(parseSchemaDefinitionPatch({ expected_revision: 0, schema: {} }).ok, false);
   assert.equal(parseSchemaDefinitionPatch({ expected_revision: 1, entity_kind: 'product' }).ok, false);
+});
+
+test('new schema creation carries the required route into the legacy slug structure', () => {
+  const creationSource = readFileSync(new URL('../api/lib/schemaCreation.ts', import.meta.url), 'utf8');
+  const pageServiceSource = readFileSync(new URL('../src/services/pageService.ts', import.meta.url), 'utf8');
+  assert.match(creationSource, /slug_structure: integrationRequirements\.required_slug_structure \?\? '\/:slug'/);
+  assert.match(pageServiceSource, /slug_structure: integrationRequirements\.required_slug_structure \?\? '\/:slug'/);
 });

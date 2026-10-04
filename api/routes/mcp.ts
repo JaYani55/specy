@@ -38,6 +38,7 @@ import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '
 import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
+import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schemaDefinition';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -846,18 +847,17 @@ async function createMcpServerWithTools(
           ...(tenant_id !== undefined ? { tenant_id } : {}),
           ...(slug !== undefined ? { slug } : {}),
         };
-        try {
-          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(schema_slug)}/definition`, {
-            method: 'PATCH',
-            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify(patch),
-          });
-          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
-          if (!response.ok) return mcpToolFailure(String(result.error || `Schema definition update failed (${response.status}).`), response.status, result.code ? { code: result.code } : {});
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-        } catch (error) {
-          return mcpToolFailure(error instanceof Error ? error.message : 'Schema definition update failed.', 502);
+        const parsed = parseSchemaDefinitionPatch(patch);
+        if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
+        const result = await updateSchemaDefinition(supabase, schema_slug, parsed.patch);
+        if (result.status !== 200) {
+          return mcpToolFailure(
+            String(result.body.error || `Schema definition update failed (${result.status}).`),
+            result.status,
+            result.body.code ? { code: result.body.code } : {},
+          );
         }
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result.body, null, 2) }] };
       },
     );
 
@@ -1141,6 +1141,19 @@ async function createMcpServerWithTools(
         '  video:   { src: string, provider: "youtube" | "vimeo" | "other", caption?: string }',
         '',
       );
+      lines.push('Legacy schema type "string[]" is supported as an array of strings; prefer type "array" with an items schema for new definitions.', '');
+      if (schema.entity_kind === 'event') {
+        lines.push(
+          '--- EVENT PUBLIC DELIVERY ---',
+          '',
+          `GET ${baseUrl}/api/schemas/${schema.api_slug}/pages`,
+          `GET ${baseUrl}/api/schemas/${schema.api_slug}/pages/:pageSlug`,
+          'Published event pages include relations.event by default with date, time, end_time, duration_minutes, mode, and timezone.',
+          'Use ?include=entity,event,product when you also need the event identity and an eligible published product reference.',
+          'Operational schedule facts come from the event record, not page content. Private company, meeting URL, staff, status, and compensation fields are never returned.',
+          '',
+        );
+      }
 
       if (schema.llm_instructions) {
         lines.push('--- LLM INSTRUCTIONS ---', '', schema.llm_instructions, '');

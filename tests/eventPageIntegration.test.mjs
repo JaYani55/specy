@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(new URL('../migrations/202610030001_event_page_aggregates.sql', import.meta.url), 'utf8');
 const createEvent = readFileSync(new URL('../src/pages/CreateEvent.tsx', import.meta.url), 'utf8');
+const productCombobox = readFileSync(new URL('../src/components/events/ProductCombobox.tsx', import.meta.url), 'utf8');
 const pageBuilder = readFileSync(new URL('../src/features/page-builder/PageBuilderPage.tsx', import.meta.url), 'utf8');
 const schemasRoute = readFileSync(new URL('../api/routes/schemas.ts', import.meta.url), 'utf8');
 const mcpRoute = readFileSync(new URL('../api/routes/mcp.ts', import.meta.url), 'utf8');
@@ -20,12 +21,19 @@ describe('event page integration contract', () => {
     assert.match(migration, /enforce_event_page_link[\s\S]*deferrable initially deferred/i);
   });
 
+  it('loads product options independently from the selected value to avoid a fetch/render loop', () => {
+    assert.match(productCombobox, /\}, \[activeTenantId\]\);/);
+    assert.doesNotMatch(productCombobox, /console\.log\("ProductCombobox value changed/);
+    assert.match(productCombobox, /Products\.find\(\(product\) => product\.id === value\)/);
+  });
+
   it('creates the event and draft page atomically through caller-scoped RPCs', () => {
     assert.match(migration, /create or replace function public\.create_event_page_aggregate/i);
     assert.match(migration, /security invoker/i);
     assert.match(migration, /set_config\('specy\.event_page_write', 'on', true\)/i);
     assert.match(migration, /grant execute on function public\.create_event_page_aggregate[\s\S]*to authenticated/i);
     assert.match(createEvent, /createPublicEventPage\(/);
+    assert.match(createEvent, /page_slug: normalizeEventPageSlug/);
     assert.match(createEvent, /tenant_id: activeTenantId/);
     assert.match(migration, /values \(btrim\(target_page_name\), target_page_slug, 'draft'/i);
   });
@@ -43,6 +51,7 @@ describe('event page integration contract', () => {
     assert.match(mcpRoute, /eventPageCreateDetailsSchema/);
     assert.match(mcpRoute, /createEventPageAggregate\(supabase, schema, parsed\.value\)/);
     assert.match(mcpRoute, /updateEventPageAggregate\(supabase, schema, page_id/);
+    assert.match(mcpRoute, /relations\.event by default/);
   });
 
   it('serves event pages only through registered schema delivery and allow-listed projections', () => {

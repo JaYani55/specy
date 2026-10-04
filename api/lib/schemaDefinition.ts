@@ -1,3 +1,5 @@
+import type { createSupabaseClient } from './supabase';
+
 export type SchemaEntityKind = 'page' | 'service-product' | 'event';
 
 export interface SchemaDefinitionPatch {
@@ -16,6 +18,11 @@ export interface SchemaDefinitionPatch {
 export type SchemaDefinitionPatchResult =
   | { ok: true; patch: SchemaDefinitionPatch }
   | { ok: false; error: string };
+
+export interface SchemaDefinitionUpdateResult {
+  status: number;
+  body: Record<string, unknown>;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -74,4 +81,99 @@ export function parseSchemaDefinitionPatch(input: unknown): SchemaDefinitionPatc
     return { ok: false, error: 'Provide at least one schema definition or metadata field to update.' };
   }
   return { ok: true, patch };
+}
+
+/** Apply a revision-checked schema update without making an HTTP self-request. */
+export async function updateSchemaDefinition(
+  client: Awaited<ReturnType<typeof createSupabaseClient>>,
+  apiSlug: string,
+  patch: SchemaDefinitionPatch,
+): Promise<SchemaDefinitionUpdateResult> {
+  const { data: current, error: readError } = await client
+    .from('page_schemas')
+    .select('id, api_slug, tenant_id, content_scope, entity_kind, definition_revision')
+    .eq('api_slug', apiSlug)
+    .maybeSingle();
+  if (readError) return { status: 500, body: { error: readError.message } };
+  if (!current) return { status: 404, body: { error: 'Schema not found.' } };
+
+  if (patch.expected_revision !== current.definition_revision) {
+    return {
+      status: 409,
+      body: {
+        error: 'Schema definition changed since it was loaded. Reload it before saving.',
+        code: 'definition_revision_conflict',
+        expected_revision: patch.expected_revision,
+        current_revision: current.definition_revision,
+      },
+    };
+  }
+
+  const entityKindChanges = patch.entity_kind !== undefined && patch.entity_kind !== current.entity_kind;
+  const tenantChanges = patch.tenant_id !== undefined && patch.tenant_id !== current.tenant_id;
+  const nextEntityKind = patch.entity_kind ?? current.entity_kind;
+  const nextTenantId = patch.tenant_id !== undefined ? patch.tenant_id : current.tenant_id;
+  const requestedScope = patch.integration_requirements?.content_scope;
+  if (requestedScope !== undefined && requestedScope !== 'page-collection' && requestedScope !== 'single-page') {
+    return { status: 400, body: { error: 'integration_requirements.content_scope must be page-collection or single-page.' } };
+  }
+  const nextContentScope = requestedScope ?? current.content_scope;
+  if (nextEntityKind !== 'page' && nextTenantId == null) {
+    return { status: 400, body: { error: 'Product and event schemas must belong to a workspace.' } };
+  }
+  if (nextEntityKind !== 'page' && nextContentScope !== 'page-collection') {
+    return { status: 400, body: { error: 'Product and event schemas must use page-collection content scope.' } };
+  }
+
+  if (patch.slug) {
+    let slugQuery = client.from('page_schemas').select('id').eq('slug', patch.slug).neq('id', current.id).limit(1);
+    slugQuery = nextTenantId ? slugQuery.eq('tenant_id', nextTenantId) : slugQuery.is('tenant_id', null);
+    const { data: slugMatches, error: slugError } = await slugQuery;
+    if (slugError) return { status: 500, body: { error: slugError.message } };
+    if (slugMatches?.length) return { status: 409, body: { error: 'That schema slug is already used in this workspace.', code: 'schema_slug_conflict' } };
+  }
+
+  if (tenantChanges && current.entity_kind !== 'page') {
+    return { status: 409, body: { error: 'Product/event schemas cannot be moved between workspaces until an explicit aggregate migration is available.', code: 'schema_tenant_migration_required' } };
+  }
+  if (entityKindChanges || tenantChanges) {
+    const { count, error: countError } = await client
+      .from('pages')
+      .select('id', { count: 'exact', head: true })
+      .eq('schema_id', current.id);
+    if (countError) return { status: 500, body: { error: countError.message } };
+    if ((count ?? 0) > 0) {
+      return {
+        status: 409,
+        body: {
+          error: entityKindChanges
+            ? 'Schemas with existing pages cannot be reclassified until an explicit conversion workflow is available.'
+            : 'Schemas with existing pages cannot be moved to another workspace until an explicit migration workflow is available.',
+          code: entityKindChanges ? 'schema_conversion_required' : 'schema_tenant_migration_required',
+          affected_pages: count,
+        },
+      };
+    }
+  }
+
+  const { expected_revision: _expectedRevision, ...update } = patch;
+  const updateData: Record<string, unknown> = { ...update };
+  if (requestedScope !== undefined) updateData.content_scope = requestedScope;
+  if (patch.integration_requirements && Object.prototype.hasOwnProperty.call(patch.integration_requirements, 'page_target')) {
+    updateData.page_target = patch.integration_requirements.page_target ?? null;
+  }
+  const { data: schema, error: updateError } = await client
+    .from('page_schemas')
+    .update(updateData)
+    .eq('id', current.id)
+    .eq('definition_revision', patch.expected_revision)
+    .select('id, slug, api_slug, tenant_id, name, schema, entity_kind, definition_revision, editor_config, content_scope, page_target, updated_at')
+    .maybeSingle();
+  if (updateError) {
+    if (updateError.code === '23505') return { status: 409, body: { error: 'That schema slug is already in use.', code: 'schema_slug_conflict' } };
+    return { status: 500, body: { error: updateError.message } };
+  }
+  if (!schema) return { status: 409, body: { error: 'Schema definition changed during save. Reload it and retry.', code: 'definition_revision_conflict' } };
+
+  return { status: 200, body: { success: true, schema, changed_fields: Object.keys(updateData) } };
 }

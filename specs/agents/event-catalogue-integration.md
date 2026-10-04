@@ -11,7 +11,7 @@ The dashboard event-page workflow, authenticated Pages REST/MCP post/update oper
 3. Register the frontend with the existing schema registration and target workflow. Registration alone does not prove that a static frontend can generate new detail routes; check the manifest's route capability.
 4. Create an event through the dashboard or authenticated `POST /api/schemas/:apiSlug/pages` / MCP `specy_pages_schemas_create_page`. Include `tenant_id`, `expected_definition_revision`, page `name`/`content`, and an `event` object with operational `company`, date, time, duration, IANA timezone, and optional service-product UUID. The event and draft page are created atomically.
 5. Edit schema-defined presentation content through PageBuilder or authenticated `PATCH /api/schemas/:apiSlug/pages/:pageId` / MCP `specy_pages_schemas_update_page`, passing tenant, expected schema revision, and expected page `updated_at` for event pages. Publish explicitly through that same update operation with `status: "published"`.
-6. Fetch the public event collection or detail without credentials from the registered schema endpoint. Request only the named relations the frontend needs.
+6. Fetch the public event collection or detail without credentials from the registered schema endpoint. The operational schedule projection is included by default; request `entity` or `product` when those relations are needed.
 
 A product schema describes a reusable service offering. A scheduled occurrence uses an event schema and must not be inserted into the product schema. Event operational date/time/product facts remain on the event record; the page's developer-owned JSON remains unchanged and presentation-oriented.
 
@@ -48,10 +48,13 @@ The same fields are accepted by MCP `specy_pages_schemas_create_page` (or its `c
 ## Public API includes
 
 ```text
+GET /api/schemas/:apiSlug/pages
+GET /api/schemas/:apiSlug/pages/:pageSlug
 GET /api/schemas/:apiSlug/pages?include=entity,event,product
 GET /api/schemas/:apiSlug/pages/:pageSlug?include=entity,event,product
 ```
 
+- With no `include` query, `relations.event` is returned by default with allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, and IANA `timezone`. Supplying `include` opts into the named relations only.
 - `entity`: `{ kind: "event", id: "<event-uuid>" }`
 - `event`: allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, and IANA `timezone`
 - `product`: only an active product whose service-product page is registered and published; returns its opaque UUID, name, page slug, and `schema_api_slug`

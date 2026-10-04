@@ -12,6 +12,7 @@ describe('event page helpers', () => {
 
   it('normalizes page slugs without depending on event display content', () => {
     assert.equal(normalizeEventPageSlug('Sommer-Workshop Ä & Ö'), 'sommer-workshop-ae-oe');
+    assert.equal(normalizeEventPageSlug('themenwerkstatt_22102026'), 'themenwerkstatt-22102026');
     assert.equal(normalizeEventPageSlug('!!!'), 'event');
   });
 });

@@ -333,6 +333,7 @@ export const createSchema = async (input: {
 }): Promise<PageSchema> => {
   const slug = await ensureUniqueSchemaSlug(input.name, input.tenant_id ?? null);
   const registrationCode = generateRegistrationCode();
+  const integrationRequirements = normalizeIntegrationRequirements(input.integration_requirements);
 
   const { data, error } = await supabase
     .from('page_schemas')
@@ -342,7 +343,8 @@ export const createSchema = async (input: {
       description: input.description || null,
       schema: input.schema,
       llm_instructions: input.llm_instructions || null,
-      integration_requirements: normalizeIntegrationRequirements(input.integration_requirements),
+      integration_requirements: integrationRequirements,
+      slug_structure: integrationRequirements.required_slug_structure ?? '/:slug',
       content_scope: input.integration_requirements?.content_scope ?? 'page-collection',
       page_target: input.integration_requirements?.page_target ?? null,
       tenant_id: input.tenant_id || null,

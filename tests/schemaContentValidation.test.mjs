@@ -25,6 +25,18 @@ describe('recursive schema content validator', () => {
     assert.ok(result.errors.some((error) => error.includes('sections[0].variant is required')));
   });
 
+  it('continues to validate legacy string[] fields, including nested list items', () => {
+    const legacySchema = {
+      tags: { type: 'string[]' },
+      cards: { type: 'array', items: { type: 'object', properties: { items: { type: 'string[]' } } } },
+    };
+    assert.equal(validateSchemaContent(legacySchema, { tags: ['online', 'live'], cards: [{ items: ['one', 'two'] }] }).ok, true);
+    const invalid = validateSchemaContent(legacySchema, { tags: ['online', 2], cards: [{ items: [false] }] });
+    assert.equal(invalid.ok, false);
+    assert.ok(invalid.errors.some((error) => error.includes('tags[1] must be a string')));
+    assert.ok(invalid.errors.some((error) => error.includes('cards[0].items[0] must be a string')));
+  });
+
   it('rejects unsafe keys, over-deep content, and invalid root values', () => {
     assert.equal(validateSchemaContent(schema, JSON.parse('{"enabled":true,"amount":1,"__proto__":"bad"}')).ok, false);
     assert.equal(validateSchemaContent(schema, []).ok, false);

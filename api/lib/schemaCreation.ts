@@ -99,6 +99,7 @@ export async function createPendingSchema(
   const schemaSlug = await ensureUniqueSchemaSlug(client, input.slug || input.name, tenantId);
   const entityKind = input.entity_kind ?? 'page';
   const contentScope = input.content_scope ?? 'page-collection';
+  const integrationRequirements = normalizeSchemaIntegrationRequirements(input.integration_requirements);
   if (entityKind !== 'page' && !tenantId) {
     throw new Error('Service-product and event schemas require an explicit tenant/workspace.');
   }
@@ -114,7 +115,8 @@ export async function createPendingSchema(
       description: input.description ?? null,
       schema: input.schema,
       llm_instructions: input.llm_instructions ?? null,
-      integration_requirements: normalizeSchemaIntegrationRequirements(input.integration_requirements),
+      integration_requirements: integrationRequirements,
+      slug_structure: integrationRequirements.required_slug_structure ?? '/:slug',
       tenant_id: tenantId,
       content_scope: contentScope,
       page_target: input.page_target ?? null,

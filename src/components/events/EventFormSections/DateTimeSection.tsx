@@ -3,7 +3,7 @@ import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/comp
 import { TimePicker } from "../time-picker";
 import { DurationPicker } from "../duration-picker";
 
-export function DateTimeSection({ form, endTime, language }) {
+export function DateTimeSection({ form, endTime, language, isLoading = false }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <FormField
@@ -17,6 +17,7 @@ export function DateTimeSection({ form, endTime, language }) {
                 type="date"
                 {...field}
                 className="input input-bordered w-full"
+                disabled={isLoading}
               />
             </FormControl>
             <FormMessage />
@@ -30,7 +31,7 @@ export function DateTimeSection({ form, endTime, language }) {
           <FormItem>
             <FormLabel>{language === "en" ? "Start Time" : "Startzeit"}</FormLabel>
             <FormControl>
-              <TimePicker value={field.value} onChange={field.onChange} />
+              <TimePicker value={field.value} onChange={field.onChange} disabled={isLoading} />
             </FormControl>
             <FormMessage />
           </FormItem>
@@ -43,7 +44,7 @@ export function DateTimeSection({ form, endTime, language }) {
           <FormItem>
             <FormLabel>{language === "en" ? "Duration (min)" : "Dauer (Minuten)"}</FormLabel>
             <FormControl>
-              <DurationPicker value={field.value} onChange={field.onChange} />
+              <DurationPicker value={field.value} onChange={field.onChange} disabled={isLoading} />
             </FormControl>
             <FormMessage />
             {endTime && (

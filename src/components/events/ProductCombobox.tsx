@@ -36,26 +36,23 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
 
   const loadProducts = React.useCallback(async () => {
     const requestedTenantId = activeTenantId;
+    if (!requestedTenantId) {
+      setProducts([]);
+      setSelectedProduct(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    setProducts([]);
-    setSelectedProduct(null);
     try {
       const data = await fetchProducts(requestedTenantId);
-      if (activeTenantRef.current !== requestedTenantId) return;
-      setProducts(data);
-
-      if (value !== undefined) {
-        const selected = data.find((product) => product.id === value);
-        if (selected) {
-          setSelectedProduct(selected);
-        }
-      }
+      if (activeTenantRef.current === requestedTenantId) setProducts(data);
     } catch (err) {
       console.error("Exception loading Products:", err);
     } finally {
       if (activeTenantRef.current === requestedTenantId) setLoading(false);
     }
-  }, [activeTenantId, value]);
+  }, [activeTenantId]);
 
   // Format salary display
   const formatSalary = (Product: Product) => {
@@ -74,33 +71,17 @@ export function ProductCombobox({ value, onChange, disabled = false }: ProductCo
     return '-';
   };
 
-  // Debug log for value changes
   React.useEffect(() => {
-    console.log("ProductCombobox value changed:", value, typeof value);
-    if (value === undefined) {
-      setSelectedProduct(null);
-      return;
-    }
-
-    const productInState = Products.find((product) => product.id === value);
-    if (productInState) {
-      setSelectedProduct(productInState);
-      return;
-    }
-
-    void loadProducts();
-  }, [value, Products, loadProducts]);
-
-  React.useEffect(() => {
+    setProducts([]);
+    setSelectedProduct(null);
     void loadProducts();
   }, [loadProducts]);
 
   React.useEffect(() => {
-    if (!open) {
-      return;
-    }
-    void loadProducts();
-  }, [open, loadProducts]);
+    setSelectedProduct(value === undefined
+      ? null
+      : Products.find((product) => product.id === value) ?? null);
+  }, [value, Products]);
   
   // Filter Products based on search text
   const filteredProducts = React.useMemo(() => {

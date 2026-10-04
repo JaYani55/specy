@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as zod from 'zod';
@@ -37,6 +37,7 @@ import { AdditionalInfoAndLinkSection } from "./EventFormSections/AdditionalInfo
 import { LockAndMentorCountSection } from "./EventFormSections/LockAndMentorCountSection";
 import { FooterSection } from "./EventFormSections/FooterSection";
 import { Users, Building2, CalendarDays, Info } from "lucide-react";
+import { toast } from 'sonner';
 
 const formSchema = zod.object({
   company_id: zod.string().optional(),
@@ -118,27 +119,32 @@ export const EventForm: React.FC<EventFormProps> = ({
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(formSchema),
+    shouldFocusError: true,
     defaultValues: {
-      company_id: "",
-      company: "",
-      date: format(new Date(), 'yyyy-MM-dd'),
-      time: '09:00',
-      duration_minutes: 60,
-      description: '',
-      status: 'new',
-      mode: 'online',
-      required_staff_count: 1,
-      required_trait_id: null,
-      product_id: undefined,
-      event_schema_id: undefined,
-      event_page_name: '',
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      staff_members: [],
-      teams_link: "",
-      initial_selected_mentors: [],
+      company_id: initialValues?.company_id || "",
+      company: initialValues?.company || "",
+      date: initialValues?.date || format(new Date(), 'yyyy-MM-dd'),
+      time: initialValues?.time || '09:00',
+      duration_minutes: initialValues?.duration_minutes || 60,
+      description: initialValues?.description || '',
+      status: initialValues?.status || 'new',
+      mode: initialValues?.mode || 'online',
+      required_staff_count: initialValues?.required_staff_count ?? 1,
+      required_trait_id: initialValues?.required_trait_id ?? null,
+      product_id: initialValues?.product_id,
+      event_schema_id: initialValues?.event_schema_id,
+      event_page_name: initialValues?.event_page_name || '',
+      timezone: initialValues?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      staff_members: initialValues?.staff_members || [],
+      teams_link: initialValues?.teams_link || "",
+      initial_selected_mentors: initialValues?.initial_selected_mentors || [],
     }
   });
 
+  const formElementRef = useRef<HTMLFormElement>(null);
+  const validationMessages = Object.values(form.formState.errors)
+    .map((error) => error?.message)
+    .filter((message): message is string => typeof message === 'string');
   const isDirty = form.formState.isDirty;
 
   const selectedMode = form.watch('mode');
@@ -156,65 +162,15 @@ export const EventForm: React.FC<EventFormProps> = ({
     return () => window.removeEventListener('beforeunload', warnUnsavedChanges);
   }, [isDirty, isLoading]);
 
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      console.log("EventForm initialValues:", initialValues);
-    }
-  }, [initialValues]);
-
-  useEffect(() => {
-    if (!initialValues) return;
-
-    try {
-      if (import.meta.env.DEV) {
-        console.log("EventForm initializing with values:", initialValues);
-        console.log("Product ID from initialValues:", initialValues.product_id, typeof initialValues.product_id);
-      }
-
-      const formValues: EventFormValues = {
-        company_id: initialValues.company_id || "",
-        company: initialValues.company || "",
-        date: initialValues.date || format(new Date(), 'yyyy-MM-dd'),
-        time: initialValues.time || '09:00',
-        description: initialValues.description || '',
-        status: initialValues.status || 'new',
-        mode: initialValues.mode || 'online',
-        required_staff_count:
-          initialValues.required_staff_count != null
-            ? Number(initialValues.required_staff_count)
-            : 1,
-        required_trait_id:
-          initialValues.required_trait_id != null
-            ? Number(initialValues.required_trait_id)
-            : null,
-        product_id: initialValues.product_id !== undefined ? Number(initialValues.product_id) : undefined,
-        event_schema_id: initialValues.event_schema_id,
-        event_page_name: initialValues.event_page_name || '',
-        timezone: initialValues.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        staff_members: initialValues.staff_members || [],
-        teams_link: initialValues.teams_link || "",
-        duration_minutes: initialValues.duration_minutes || 60,
-        initial_selected_mentors: initialValues.initial_selected_mentors || [],
-      };
-      
-      if (import.meta.env.DEV) {
-        console.log("Setting form values:", formValues);
-      }
-      setTimeout(() => {
-        form.reset(formValues);
-
-        if (import.meta.env.DEV) {
-          console.log("Form values after reset:", form.getValues());
-        }
-      }, 50);
-    } catch (error) {
-      console.error("Error setting form values:", error);
-      console.error("Problem initialValues:", initialValues);
-    }
-  }, [initialValues, form]);
-
   const [showPastEventWarning, setShowPastEventWarning] = useState(false);
   const [pendingSubmission, setPendingSubmission] = useState<EventFormValues | null>(null);
+
+  const handleInvalidSubmit = () => {
+    toast.error(language === 'en'
+      ? 'Check the highlighted fields before creating the event.'
+      : 'Bitte prüfe die markierten Felder, bevor du die Veranstaltung erstellst.');
+    formElementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const handleSubmit = async (values: EventFormValues) => {
     try {
@@ -363,7 +319,17 @@ export const EventForm: React.FC<EventFormProps> = ({
       </CardHeader>
       <CardContent className="space-y-8">
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-10">
+          <form ref={formElementRef} onSubmit={form.handleSubmit(handleSubmit, handleInvalidSubmit)} className="space-y-10">
+            {form.formState.isSubmitted && validationMessages.length > 0 && (
+              <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <p className="font-semibold">
+                  {language === 'en' ? 'Please fix the following before saving:' : 'Bitte korrigiere vor dem Speichern:'}
+                </p>
+                <ul className="mt-1 list-inside list-disc">
+                  {validationMessages.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}
+                </ul>
+              </div>
+            )}
             {/* Product Section */}
             <div>
               <ProductSection
@@ -453,6 +419,7 @@ export const EventForm: React.FC<EventFormProps> = ({
                 form={form}
                 endTime={endTime}
                 language={language}
+                isLoading={isLoading}
               />
             </div>
             {/* Required Staff Section */}

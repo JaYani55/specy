@@ -39,7 +39,7 @@ The app's legacy product service now requires an explicit tenant for list/get/cr
 - `create_event_page_aggregate` creates the event and draft page in one transaction under the caller's RLS identity. It checks the event schema's current `definition_revision` and validates all tenant/entity links.
 - `update_event_page_aggregate` saves the page content through an expected schema revision and expected page `updated_at` concurrency token. Content uses the same recursive schema validator as service products.
 - `set_event_page_publication` publishes, unpublishes, or archives the page. Publishing validates required schema fields and timezone. The operational event status is not changed by page publication.
-- The dashboard uses `src/services/events/eventPageService.ts`. Authenticated REST `POST/PATCH /api/schemas/:apiSlug/pages` and MCP `specy_pages_schemas_create_page` / `specy_pages_schemas_update_page` dispatch event-classified schemas to the same event aggregate service. Pages PATCH updates event-page content and publication; operational schedule edits remain dashboard-only. No separate event collection API/tool family exists.
+- The dashboard uses `src/services/events/eventPageService.ts`. Repeated occurrences may share the same product; public page slugs are occurrence-specific (title + date + time). Authenticated REST `POST/PATCH /api/schemas/:apiSlug/pages` and MCP `specy_pages_schemas_create_page` / `specy_pages_schemas_update_page` dispatch event-classified schemas to the same event aggregate service. Pages PATCH updates event-page content and publication; operational schedule edits remain dashboard-only. No separate event collection API/tool family exists.
 
 A registered event schema can be edited in the existing Schema Editor. The event page itself uses the existing schema-driven PageBuilder, not generic page CRUD. Generic page create/update tools remain disallowed for classified schemas.
 
@@ -57,7 +57,7 @@ Only published pages that resolve to a same-tenant event with a valid timezone a
 - `?include=product` adds a product's UUID, name, slug, and `schema_api_slug` only when the selected product is active and its page belongs to a registered service-product schema and is published.
 - Includes can be combined, for example `?include=entity,event,product`.
 
-Public delivery never returns company/customer data, Teams/meeting URLs, internal event status, staff/account IDs, staff assignments, request/approval arrays, compensation, or private notes. Event scheduling state does not implicitly publish or unpublish a page.
+Public delivery never returns company/customer data, Teams/meeting URLs, internal event status, staff/account IDs, staff assignments, request/approval arrays, compensation, or private notes. With no `include` query, the allow-listed operational schedule is returned as `relations.event` by default so frontends can sort and render occurrences without copying schedule facts into page content. An explicit `include` query returns only its requested relations. Event scheduling state does not implicitly publish or unpublish a page.
 
 The public Worker uses a privileged read client only for this narrow, published, allow-listed projection. Anonymous callers cannot read drafts or perform writes.
 

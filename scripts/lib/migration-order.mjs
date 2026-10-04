@@ -123,6 +123,7 @@ export const MIGRATION_ORDER_CORE = [
   '202610020004_product_content_validation.sql',
   '202610020005_product_sequence_permissions.sql',
   '202610030001_event_page_aggregates.sql',
+  '202610040001_legacy_string_array_schema_support.sql',
 ];
 
 /**

@@ -26,11 +26,12 @@ import { getSchemaSpecBundle } from '../lib/specRegistry';
 import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { buildFrontendIntegrationManifest } from '../lib/frontendManifest';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
-import { parseSchemaDefinitionPatch } from '../lib/schemaDefinition';
+import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schemaDefinition';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaContent } from '../lib/schemaContentValidation';
 import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import {
+  applyDefaultPublicEventInclude,
   parsePublicEntityIncludes,
   projectPublicEventRelations,
   projectPublicProductRelations,
@@ -214,6 +215,14 @@ function buildSpecSections(
     '  - updated_at',
     '',
   );
+  if (schema.entity_kind === 'event') {
+    lines.push(
+      'Event pages also include relations.event by default with allow-listed date, time, end_time, duration_minutes, mode, and timezone fields.',
+      'Use ?include=entity,event,product to request the event entity identity and an eligible published product relation.',
+      'Operational date/time facts are not copied into page content; private company, meeting, staff, and scheduling fields are never public.',
+      '',
+    );
+  }
 
   lines.push(
     '--- SCHEMA DEFINITION ---',
@@ -775,90 +784,8 @@ schemas.patch('/:slug/definition', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
   const client = await createSupabaseClient(c.env, auth.token);
-  const { data: current, error: readError } = await client
-    .from('page_schemas')
-    .select('id, api_slug, tenant_id, content_scope, entity_kind, definition_revision')
-    .eq('api_slug', c.req.param('slug'))
-    .maybeSingle();
-  if (readError) return c.json({ error: readError.message }, 500);
-  if (!current) return c.json({ error: 'Schema not found.' }, 404);
-
-  if (parsed.patch.expected_revision !== current.definition_revision) {
-    return c.json({
-      error: 'Schema definition changed since it was loaded. Reload it before saving.',
-      code: 'definition_revision_conflict',
-      expected_revision: parsed.patch.expected_revision,
-      current_revision: current.definition_revision,
-    }, 409);
-  }
-
-  const entityKindChanges = parsed.patch.entity_kind !== undefined
-    && parsed.patch.entity_kind !== current.entity_kind;
-  const tenantChanges = parsed.patch.tenant_id !== undefined
-    && parsed.patch.tenant_id !== current.tenant_id;
-  const nextEntityKind = parsed.patch.entity_kind ?? current.entity_kind;
-  const nextTenantId = parsed.patch.tenant_id !== undefined ? parsed.patch.tenant_id : current.tenant_id;
-  const requestedScope = parsed.patch.integration_requirements?.content_scope;
-  if (requestedScope !== undefined && requestedScope !== 'page-collection' && requestedScope !== 'single-page') {
-    return c.json({ error: 'integration_requirements.content_scope must be page-collection or single-page.' }, 400);
-  }
-  const nextContentScope = requestedScope ?? current.content_scope;
-  if (nextEntityKind !== 'page' && nextTenantId == null) {
-    return c.json({ error: 'Product and event schemas must belong to a workspace.' }, 400);
-  }
-  if (nextEntityKind !== 'page' && nextContentScope !== 'page-collection') {
-    return c.json({ error: 'Product and event schemas must use page-collection content scope.' }, 400);
-  }
-  if (parsed.patch.slug) {
-    let slugQuery = client.from('page_schemas').select('id').eq('slug', parsed.patch.slug).neq('id', current.id).limit(1);
-    slugQuery = nextTenantId ? slugQuery.eq('tenant_id', nextTenantId) : slugQuery.is('tenant_id', null);
-    const { data: slugMatches, error: slugError } = await slugQuery;
-    if (slugError) return c.json({ error: slugError.message }, 500);
-    if (slugMatches?.length) return c.json({ error: 'That schema slug is already used in this workspace.', code: 'schema_slug_conflict' }, 409);
-  }
-
-  if (tenantChanges && current.entity_kind !== 'page') {
-    return c.json({ error: 'Product/event schemas cannot be moved between workspaces until an explicit aggregate migration is available.', code: 'schema_tenant_migration_required' }, 409);
-  }
-  if (entityKindChanges || tenantChanges) {
-    const { count, error: countError } = await client
-      .from('pages')
-      .select('id', { count: 'exact', head: true })
-      .eq('schema_id', current.id);
-    if (countError) return c.json({ error: countError.message }, 500);
-    if ((count ?? 0) > 0) {
-      return c.json({
-        error: entityKindChanges
-          ? 'Schemas with existing pages cannot be reclassified until an explicit conversion workflow is available.'
-          : 'Schemas with existing pages cannot be moved to another workspace until an explicit migration workflow is available.',
-        code: entityKindChanges ? 'schema_conversion_required' : 'schema_tenant_migration_required',
-        affected_pages: count,
-      }, 409);
-    }
-  }
-
-  const { expected_revision: _expectedRevision, ...update } = parsed.patch;
-  const updateData: Record<string, unknown> = { ...update };
-  if (requestedScope !== undefined) updateData.content_scope = requestedScope;
-  if (parsed.patch.integration_requirements && Object.prototype.hasOwnProperty.call(parsed.patch.integration_requirements, 'page_target')) {
-    updateData.page_target = parsed.patch.integration_requirements.page_target ?? null;
-  }
-  const { data: schema, error: updateError } = await client
-    .from('page_schemas')
-    .update(updateData)
-    .eq('id', current.id)
-    .eq('definition_revision', parsed.patch.expected_revision)
-    .select('id, slug, api_slug, tenant_id, name, schema, entity_kind, definition_revision, editor_config, content_scope, page_target, updated_at')
-    .maybeSingle();
-  if (updateError) {
-    if (updateError.code === '23505') return c.json({ error: 'That schema slug is already in use.', code: 'schema_slug_conflict' }, 409);
-    return c.json({ error: updateError.message }, 500);
-  }
-  if (!schema) {
-    return c.json({ error: 'Schema definition changed during save. Reload it and retry.', code: 'definition_revision_conflict' }, 409);
-  }
-
-  return c.json({ success: true, schema, changed_fields: Object.keys(updateData) });
+  const result = await updateSchemaDefinition(client, c.req.param('slug'), parsed.patch);
+  return c.json(result.body, result.status as ContentfulStatusCode);
 });
 
 // GET /api/schemas/:slug/spec.txt — LLM-ready plaintext schema specification
@@ -1074,8 +1001,12 @@ schemas.get('/:slug/pages', async (c) => {
     return c.json({ error: `Schema "${slug}" is not publicly registered` }, 404);
   }
   const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
-  const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
+  const includeQuery = c.req.query('include');
+  const includeResult = parsePublicEntityIncludes(includeQuery, entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
+  const publicIncludes = entityKind === 'event'
+    ? applyDefaultPublicEventInclude(includeResult.includes, includeQuery)
+    : includeResult.includes;
 
   let pageQuery = supabase
     .from('pages')
@@ -1099,7 +1030,7 @@ schemas.get('/:slug/pages', async (c) => {
     const productRefs = (productsData ?? []).filter((product): product is { id: string; page_id: string } => Boolean(product.page_id));
     const activePageIds = new Set(productRefs.map((product) => product.page_id));
     publicPages = publicPages.filter((page) => activePageIds.has(page.id));
-    if (includeResult.includes.includeEntity) publicPages = projectPublicProductRelations(publicPages, productRefs);
+    if (publicIncludes.includeEntity) publicPages = projectPublicProductRelations(publicPages, productRefs);
   } else if (entityKind === 'event') {
     if (!schema.tenant_id) return c.json({ error: 'Event schema is not assigned to a workspace.' }, 404);
     const pageIds = publicPages.map((page) => page.id);
@@ -1112,7 +1043,7 @@ schemas.get('/:slug/pages', async (c) => {
     if (eventError) return c.json({ error: eventError.message }, 500);
     const eventRefs = (eventRows ?? []) as PublicEventReference[];
     let eventProducts: PublicEventProduct[] = [];
-    if (includeResult.includes.includeProduct) {
+    if (publicIncludes.includeProduct) {
       const productIds = [...new Set(eventRefs.map((event) => event.product_id).filter((id): id is number => typeof id === 'number'))];
       if (productIds.length) {
         const { data: productRows, error: productError } = await supabase.from('mentorbooking_products')
@@ -1145,7 +1076,7 @@ schemas.get('/:slug/pages', async (c) => {
         });
       }
     }
-    publicPages = projectPublicEventRelations(publicPages, eventRefs, eventProducts, includeResult.includes);
+    publicPages = projectPublicEventRelations(publicPages, eventRefs, eventProducts, publicIncludes);
   }
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, undefined, { publicRead: true });
@@ -1280,8 +1211,12 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     return c.json({ error: `Schema "${slug}" not found` }, 404);
   }
   const entityKind = (schema.entity_kind || 'page') as 'page' | 'service-product' | 'event';
-  const includeResult = parsePublicEntityIncludes(c.req.query('include'), entityKind);
+  const includeQuery = c.req.query('include');
+  const includeResult = parsePublicEntityIncludes(includeQuery, entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
+  const publicIncludes = entityKind === 'event'
+    ? applyDefaultPublicEventInclude(includeResult.includes, includeQuery)
+    : includeResult.includes;
 
   let pageQuery = supabase
     .from('pages')
@@ -1306,7 +1241,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
       .maybeSingle();
     if (productError) return c.json({ error: productError.message }, 500);
     if (!product) return c.json({ error: 'Published product not found' }, 404);
-    if (includeResult.includes.includeEntity) {
+    if (publicIncludes.includeEntity) {
       deliveredPage = { ...page, relations: { entity: { kind: 'service-product', id: product.id } } };
     }
   } else if (entityKind === 'event') {
@@ -1318,10 +1253,10 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
       .maybeSingle();
     if (eventError) return c.json({ error: eventError.message }, 500);
     if (!event || !event.timezone) return c.json({ error: 'Published event not found' }, 404);
-    const [projected] = projectPublicEventRelations([page as PublicPageRecord], [event as PublicEventReference], [], includeResult.includes);
+    const [projected] = projectPublicEventRelations([page as PublicPageRecord], [event as PublicEventReference], [], publicIncludes);
     if (!projected) return c.json({ error: 'Published event not found' }, 404);
     deliveredPage = projected as unknown as Record<string, unknown>;
-    if (includeResult.includes.includeProduct && event.product_id !== null) {
+    if (publicIncludes.includeProduct && event.product_id !== null) {
       const { data: product, error: productError } = await supabase.from('mentorbooking_products')
         .select('id, integration_id, name, product_page_id')
         .eq('id', event.product_id)

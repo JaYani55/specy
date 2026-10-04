@@ -74,6 +74,7 @@ export function validateSchemaContent(schema: unknown, content: unknown): Schema
         return;
       }
       case 'array':
+      case 'string[]':
       case 'ContentBlock[]':
       case 'CodeBlock[]': {
         if (!Array.isArray(value)) { addError(`${path} must be an array.`); return; }
@@ -84,6 +85,10 @@ export function validateSchemaContent(schema: unknown, content: unknown): Schema
           value.forEach((block, index) => {
             if (!isRecord(block) || typeof block.type !== 'string' || !block.type) addError(`${path}[${index}] must be an object with a block type.`);
             else if (Object.keys(block).some(unsafeKey)) addError(`${path}[${index}] contains an unsafe object key.`);
+          });
+        } else if (type === 'string[]') {
+          value.forEach((item, index) => {
+            if (typeof item !== 'string') addError(`${path}[${index}] must be a string.`);
           });
         } else if (definition.items !== undefined) {
           value.forEach((item, index) => visit(definition.items, item, `${path}[${index}]`, depth + 1));

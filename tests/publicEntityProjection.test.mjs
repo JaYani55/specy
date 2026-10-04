@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePublicEntityIncludes, projectPublicEventRelations, projectPublicProductRelations } from '../api/lib/publicEntityProjection.ts';
+import { applyDefaultPublicEventInclude, parsePublicEntityIncludes, projectPublicEventRelations, projectPublicProductRelations } from '../api/lib/publicEntityProjection.ts';
 
 describe('published service-product page projection', () => {
   it('allows only the named entity include for a product schema', () => {
@@ -44,6 +44,15 @@ describe('published event page projection', () => {
     assert.equal(parsed.ok, true);
     assert.equal(parsePublicEntityIncludes('company', 'event').ok, false);
     assert.equal(parsePublicEntityIncludes('entity,entity', 'event').ok, false);
+  });
+
+  it('includes operational event facts by default but honors explicit include selection', () => {
+    const parsed = parsePublicEntityIncludes(undefined, 'event');
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(applyDefaultPublicEventInclude(parsed.includes, undefined).includeEvent, true);
+    assert.equal(applyDefaultPublicEventInclude(parsed.includes, '').includeEvent, true);
+    assert.equal(applyDefaultPublicEventInclude(parsed.includes, 'entity').includeEvent, false);
   });
 
   it('projects only allow-listed event facts and a published product reference', () => {

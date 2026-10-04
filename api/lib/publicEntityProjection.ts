@@ -46,6 +46,12 @@ export type PublicIncludesResult =
   | { ok: true; includes: PublicIncludes }
   | { ok: false; error: string };
 
+export function applyDefaultPublicEventInclude(includes: PublicIncludes, includeQuery: string | undefined): PublicIncludes {
+  return includeQuery === undefined || includeQuery.trim() === ''
+    ? { ...includes, includeEvent: true }
+    : includes;
+}
+
 export function parsePublicEntityIncludes(value: string | undefined, entityKind: PublicEntityKind): PublicIncludesResult {
   const includes = value
     ? value.split(',').map((part) => part.trim()).filter(Boolean)

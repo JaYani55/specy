@@ -51,13 +51,13 @@ The schema-driven page editor now:
 - displays incompatible field values without coercing or overwriting them; and
 - imports unknown keys and custom block types without silently stripping or synthesizing IDs.
 
-Unknown or malformed content blocks are shown as retained JSON instead of being forced through a built-in block editor. Known text/image/video/audio/form blocks continue to preserve extension fields when edited.
+Unknown or malformed content blocks are shown as retained JSON instead of being forced through a built-in block editor. Known text/image/video/audio/form blocks continue to preserve extension fields when edited. Legacy schema fields using `type: "string[]"` remain accepted and are validated as arrays of strings; new schemas should use `type: "array", items: { "type": "string" }`.
 
 ## Entity write and public-delivery boundary
 
 Generic page create/update tools reject schemas classified as `service-product` or `event`. The generic dashboard `savePage` path rejects those entity kinds and validates the routed page/schema/workspace tuple. Product pages use the service-product aggregate API. Event pages are created from Create Event and saved/published through the event-page aggregate RPC; event schema pages are not created through generic page CRUD.
 
-The current public `GET /api/schemas/:apiSlug/pages` and detail endpoint serve registered ordinary `page`, `service-product`, and `event` schemas. Product entries are filtered to published pages with a non-retired product row; `?include=entity` adds only `{ kind, id }` under a separate `relations` envelope. Event pages are filtered to published pages with a linked same-tenant event and a valid timezone. `?include=entity,event,product` adds allow-listed occurrence facts and, only when its product page is registered and published, a product UUID reference. Private event/company/staff fields are not returned. Stored content remains unchanged.
+The current public `GET /api/schemas/:apiSlug/pages` and detail endpoint serve registered ordinary `page`, `service-product`, and `event` schemas. Product entries are filtered to published pages with a non-retired product row; `?include=entity` adds only `{ kind, id }` under a separate `relations` envelope. Event pages are filtered to published pages with a linked same-tenant event and a valid timezone. Without an `include` query, `relations.event` includes allow-listed occurrence facts by default; an explicit `?include=entity,event,product` adds the requested event/entity relations and, only when its product page is registered and published, a product UUID reference. Private event/company/staff fields are not returned. Stored content remains unchanged.
 
 ## Routing capability honesty
 

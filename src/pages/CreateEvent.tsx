@@ -15,6 +15,7 @@ import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { createPublicEventPage } from '@/services/events/eventPageService';
 import { getSchema } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { normalizeEventPageSlug } from '@/utils/eventPage';
 
 const CreateEvent = () => {
   const { user, loading } = useAuth();
@@ -25,24 +26,12 @@ const CreateEvent = () => {
   const { refetchEvents } = useData();
   const { activeTenantId, loading: workspaceLoading } = useActiveWorkspace();
   
-  // Debug the component lifecycle - only in development
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      console.log("🔄 CreateEvent component mounted or updated");
-      console.log("👤 Current user:", user);
-      console.log("⏳ Auth loading state:", loading);
-    }
-  }, [user, loading]);
-
   // Use centralized permission instead of role checks
   const canShowForm = !loading && user && permissions.canCreateEvents;
   
   // Redirect non-authorized users once auth is loaded
   useEffect(() => {
     if (!loading && user && !permissions.canCreateEvents) {
-      if (import.meta.env.DEV) {
-        console.log("👋 User cannot create events, redirecting");
-      }
       navigate('/events');
     }
   }, [user, loading, navigate, permissions.canCreateEvents]);
@@ -96,6 +85,7 @@ const CreateEvent = () => {
             timezone: values.timezone ?? '',
           },
           page_name: values.event_page_name ?? '',
+          page_slug: normalizeEventPageSlug(`${values.event_page_name}-${values.date}-${values.time.replace(':', '-')}`),
         });
         createdRecord = { id: result.event_id, tenant_id: result.tenant_id };
         publicPage = { page_id: result.page_id, editor_path: `${getSchemaConsolePath(schema)}/edit/${result.page_id}` };
@@ -129,6 +119,9 @@ const CreateEvent = () => {
         if (error) throw error;
         createdRecord = createdRecords?.[0] ?? null;
       }
+      if (!createdRecord?.id) throw new Error(language === 'en'
+        ? 'The event was not returned after saving. Please check the event list before trying again.'
+        : 'Nach dem Speichern wurde keine Veranstaltung zurückgegeben. Bitte prüfe die Veranstaltungsliste, bevor du es erneut versuchst.');
 
       // Trigger afterCreate hook for KB auto sync
       if (createdRecord?.id) {
@@ -152,7 +145,11 @@ const CreateEvent = () => {
         }
       }
       
-      await refetchEvents();
+      try {
+        await refetchEvents();
+      } catch (refreshError) {
+        console.error('Event was created, but the event list could not be refreshed:', refreshError);
+      }
       
       toast.success(
         language === 'en' 
@@ -201,9 +198,16 @@ const CreateEvent = () => {
           <ArrowLeft className="h-4 w-4 mr-2" />
           {language === "en" ? "Back" : "Zurück"}
         </Button>
-        <h1 className="text-xl font-semibold">
-          {language === "en" ? "Create New Event" : "Neue Veranstaltung erstellen"}
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold">
+            {language === "en" ? "Create New Event" : "Neue Veranstaltung erstellen"}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {language === 'en'
+              ? 'Schedule another occurrence for a product, then optionally create its public event page.'
+              : 'Plane einen weiteren Termin für ein Produkt und erstelle bei Bedarf eine öffentliche Veranstaltungsseite.'}
+          </p>
+        </div>
       </div>
     
       <EventForm
