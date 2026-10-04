@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 
 export type TenantCustomFieldEntity = 'product' | 'event';
-export type TenantCustomFieldType = 'string' | 'number' | 'boolean' | 'date' | 'url' | 'email' | 'json';
+export type TenantCustomFieldType = 'string' | 'number' | 'boolean' | 'date' | 'url' | 'email' | 'json' | 'price';
 
 export interface TenantCustomFieldDefinition {
   label: string;
@@ -14,7 +14,7 @@ export interface TenantCustomFieldDefinition {
 export type TenantCustomFieldDefinitions = Record<string, TenantCustomFieldDefinition>;
 
 const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
-const FIELD_TYPES = new Set<TenantCustomFieldType>(['string', 'number', 'boolean', 'date', 'url', 'email', 'json']);
+const FIELD_TYPES = new Set<TenantCustomFieldType>(['string', 'number', 'boolean', 'date', 'url', 'email', 'json', 'price']);
 
 export function validateTenantCustomFieldDefinitions(definitions: TenantCustomFieldDefinitions): string | null {
   const labels = new Set<string>();

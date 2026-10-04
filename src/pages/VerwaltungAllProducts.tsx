@@ -19,7 +19,6 @@ import { DeleteProductDialog } from "@/components/events/DeleteProductDialog";
 import { Badge } from "@/components/ui/badge";
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { toast } from 'sonner';
-import { TenantCustomFieldsDialog } from '@/components/products/TenantCustomFieldsDialog';
 
 const VerwaltungManageProducts = () => {
   const { language, theme } = useTheme();
@@ -546,7 +545,6 @@ const VerwaltungManageProducts = () => {
               <Boxes className="mr-2 h-4 w-4" />
               {language === 'en' ? 'Edit schemas' : 'Schemata bearbeiten'}
             </Button>
-            <TenantCustomFieldsDialog />
             {/* View toggle buttons */}
             <ToggleGroup 
               type="single" 

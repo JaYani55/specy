@@ -1,5 +1,6 @@
 import { createSupabaseClient } from './supabase';
 import { validateSchemaContent } from './schemaContentValidation';
+import { validateCustomFieldValues } from './customFields';
 import type { CreateServiceProductInput, UpdateServiceProductInput } from './productAggregates';
 
 type UserClient = Awaited<ReturnType<typeof createSupabaseClient>>;
@@ -29,7 +30,7 @@ function throwDatabaseError(error: { message: string; code?: string; details?: s
 export async function listProductAggregates(client: UserClient, tenantId: string) {
   const { data: products, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields, custom_field_schema')
     .eq('tenant_id', tenantId)
     .is('retired_at', null)
     .order('updated_at', { ascending: false });
@@ -47,7 +48,7 @@ export async function listProductAggregates(client: UserClient, tenantId: string
 export async function getProductAggregate(client: UserClient, id: string, tenantId: string) {
   const { data: product, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields, custom_field_schema')
     .eq('tenant_id', tenantId)
     .eq('id', id)
     .maybeSingle();
@@ -67,7 +68,7 @@ export async function getProductAggregate(client: UserClient, id: string, tenant
 export async function getProductAggregateByPage(client: UserClient, pageId: string, tenantId: string) {
   const { data, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields, custom_field_schema')
     .eq('tenant_id', tenantId)
     .eq('page_id', pageId)
     .is('retired_at', null)
@@ -121,7 +122,7 @@ async function loadProductSchema(client: UserClient, tenantId: string, pageSchem
 export async function updateProductAggregate(client: UserClient, id: string, input: UpdateServiceProductInput) {
   const { data: product, error: productError } = await client
     .from('service_products')
-    .select('name, page_id, version, custom_fields')
+    .select('name, page_id, version, custom_fields, custom_field_schema')
     .eq('tenant_id', input.tenant_id)
     .eq('id', id)
     .maybeSingle();
@@ -140,6 +141,14 @@ export async function updateProductAggregate(client: UserClient, id: string, inp
     throw new ProductAggregateError('Schema definition revision conflict.', 409, '40001');
   }
   const content = input.content ?? page.content;
+  const customFields = input.custom_fields ?? product.custom_fields ?? {};
+  const customFieldErrors = validateCustomFieldValues(
+    (product.custom_field_schema as { product?: unknown } | null)?.product ?? {},
+    customFields,
+  );
+  if (customFieldErrors.length) {
+    throw new ProductAggregateError('Product values do not satisfy their field definitions.', 400, '22023', customFieldErrors.join('\\n'));
+  }
   if (input.content !== undefined) {
     const validation = validateSchemaContent(schema.schema, content);
     if (!validation.ok) throw new ProductAggregateError('Product content does not satisfy its schema.', 400, '22023', validation.errors.join('\n'));
@@ -152,7 +161,7 @@ export async function updateProductAggregate(client: UserClient, id: string, inp
     target_name: input.name ?? product.name,
     target_slug: input.slug ?? page.slug,
     target_page_content: content,
-    target_custom_fields: input.custom_fields ?? product.custom_fields ?? {},
+    target_custom_fields: customFields,
   });
   if (error) throwDatabaseError(error);
   return data;

@@ -21,6 +21,8 @@ export function isCustomFieldValueValid(definition: TenantCustomFieldDefinition,
     case 'boolean': return typeof value === 'boolean';
     case 'json':
       try { JSON.stringify(value); return true; } catch { return false; }
+    case 'price':
+      return isPublicMoneyValue(value);
     case 'string':
     case 'date':
     case 'url':
@@ -28,6 +30,15 @@ export function isCustomFieldValueValid(definition: TenantCustomFieldDefinition,
       return typeof value === 'string';
     default: return false;
   }
+}
+
+export function isPublicMoneyValue(value: unknown): value is { amount: string; currency: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const money = value as Record<string, unknown>;
+  return typeof money.amount === 'string'
+    && /^(0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(money.amount)
+    && typeof money.currency === 'string'
+    && /^[A-Z]{3}$/.test(money.currency);
 }
 
 export function publicTenantCustomFields(

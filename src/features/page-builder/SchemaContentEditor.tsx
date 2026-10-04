@@ -42,8 +42,9 @@ import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
-import { savePage, triggerRevalidation } from '@/services/pageService';
+import { getSchema, savePage, triggerRevalidation } from '@/services/pageService';
 import { setServiceProductPublication, updateServiceProduct, type ServiceProduct } from '@/services/productService';
 import { setEventPagePublication, updateEventPage } from '@/services/events/eventPageService';
 import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeBlockItem } from '@/types/pagebuilder';
@@ -53,7 +54,10 @@ import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
 import { PageContentTemplateControls } from './PageContentTemplateControls';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
-import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import { ProductEventsPanel } from '@/components/products/ProductEventsPanel';
+import { ProductCustomFieldSchemaDialog } from '@/components/products/ProductCustomFieldSchemaDialog';
+import type { TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import type { ProductCustomFieldSchema } from '@/services/productCustomFieldSchemaService';
 import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import type { RevalidationResult } from '@/services/pageService';
@@ -775,7 +779,9 @@ interface SchemaContentEditorProps {
   productAggregateId?: string;
   productVersion?: number;
   initialProductCustomFields?: Record<string, unknown>;
+  initialProductCustomFieldSchema?: ProductCustomFieldSchema;
   eventAggregateId?: string;
+  eventProductId?: number;
   initialPageUpdatedAt?: string;
 }
 
@@ -790,7 +796,9 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   productAggregateId,
   productVersion: initialProductVersion,
   initialProductCustomFields,
+  initialProductCustomFieldSchema,
   eventAggregateId,
+  eventProductId,
   initialPageUpdatedAt,
 }) => {
   const { language } = useTheme();
@@ -826,7 +834,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const [savedSlug, setSavedSlug]               = useState<string | null>(null);
   const [aggregateVersion, setAggregateVersion] = useState(initialProductVersion);
   const [productCustomFields, setProductCustomFields] = useState<Record<string, unknown>>(() => initialProductCustomFields ?? {});
-  const [productCustomFieldDefinitions, setProductCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [productCustomFieldDefinitions, setProductCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>(() => initialProductCustomFieldSchema?.product ?? {});
   const [customFieldsValid, setCustomFieldsValid] = useState(true);
   const [pageUpdatedAt, setPageUpdatedAt] = useState(initialPageUpdatedAt);
   const [publicationStatus, setPublicationStatus] = useState(initialStatus ?? 'draft');
@@ -876,21 +884,17 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const inactiveOptionalCount = inactiveOptionalGroups.reduce((total, group) => total + group.fields.length, 0);
   const isServiceProduct = schema.entity_kind === 'service-product';
   const isEventPage = schema.entity_kind === 'event';
+  const currentPageContent = buildSchemaContent(baseContent, formData, fields, activeOptional, removedOptional);
+  const hasUnsavedChanges = pageName !== (initialName || '')
+    || pageSlug !== (initialSlug || (initialName ? generateSlug(initialName) : ''))
+    || JSON.stringify(currentPageContent) !== JSON.stringify(initialData ?? {})
+    || JSON.stringify(productCustomFields) !== JSON.stringify(initialProductCustomFields ?? {})
+    || !customFieldsValid;
 
   useEffect(() => {
-    let cancelled = false;
-    if (!isServiceProduct || !schema.tenant_id) {
-      setProductCustomFieldDefinitions({});
-      setCustomFieldsValid(true);
-      return;
-    }
-    void getTenantCustomFieldDefinitions(schema.tenant_id, 'product')
-      .then((definitions) => { if (!cancelled) setProductCustomFieldDefinitions(definitions); })
-      .catch((error) => {
-        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Could not load product custom fields.');
-      });
-    return () => { cancelled = true; };
-  }, [isServiceProduct, schema.tenant_id]);
+    setProductCustomFieldDefinitions(isServiceProduct ? initialProductCustomFieldSchema?.product ?? {} : {});
+    setCustomFieldsValid(true);
+  }, [isServiceProduct, productAggregateId, initialProductCustomFieldSchema]);
 
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
@@ -1023,14 +1027,40 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
         && (publicationStatus === 'published' || statusAfterSave === 'published')
         && result.slug) {
         try {
-          const rev = await triggerRevalidation(schemaSlug, result.slug);
-          setRevalResult(rev);
-          if (rev.success) {
-            toast.success(language === 'en' ? 'Frontend updated.' : 'Frontend wurde aktualisiert.');
+          const pageResults = [await triggerRevalidation(schemaSlug, result.slug)];
+          if (isEventPage && eventProductId && schema.tenant_id) {
+            const { data: product, error: productError } = await supabase.from('mentorbooking_products')
+              .select('product_page_id')
+              .eq('id', eventProductId)
+              .eq('tenant_id', schema.tenant_id)
+              .maybeSingle();
+            if (productError) throw productError;
+            if (product?.product_page_id) {
+              const { data: productPage, error: productPageError } = await supabase.from('pages')
+                .select('slug, schema_id, status')
+                .eq('id', product.product_page_id)
+                .eq('tenant_id', schema.tenant_id)
+                .eq('status', 'published')
+                .maybeSingle();
+              if (productPageError) throw productPageError;
+              if (productPage) {
+                const productSchema = await getSchema(productPage.schema_id);
+                if (productSchema.tenant_id === schema.tenant_id
+                  && productSchema.entity_kind === 'service-product'
+                  && productSchema.registration_status === 'registered') {
+                  pageResults.push(await triggerRevalidation(productSchema.api_slug, productPage.slug));
+                }
+              }
+            }
+          }
+          const failedResult = pageResults.find((item) => !item.success);
+          setRevalResult(failedResult ?? pageResults[0]);
+          if (!failedResult) {
+            toast.success(language === 'en' ? 'Website pages updated.' : 'Website-Seiten wurden aktualisiert.');
           } else {
             toast.warning(language === 'en'
-              ? 'Page saved, but the frontend could not be updated.'
-              : 'Seite gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
+              ? 'Page saved, but one or more website pages could not be refreshed.'
+              : 'Seite gespeichert, aber eine oder mehrere Website-Seiten konnten nicht aktualisiert werden.');
           }
         } catch (error) {
           const diagnostic = error instanceof Error ? error.message : 'Unknown revalidation error.';
@@ -1040,8 +1070,8 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             diagnostics: { error: diagnostic },
           });
           toast.warning(language === 'en'
-            ? 'Page saved, but the frontend could not be updated.'
-            : 'Seite gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
+            ? 'Page saved, but one or more website pages could not be refreshed.'
+            : 'Seite gespeichert, aber eine oder mehrere Website-Seiten konnten nicht aktualisiert werden.');
         }
       } else {
         setRevalResult(null);
@@ -1294,12 +1324,37 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
         </Card>
       )}
 
+      {isServiceProduct && schema.tenant_id && productAggregateId && (
+        <ProductEventsPanel
+          tenantId={schema.tenant_id}
+          serviceProductId={productAggregateId}
+          onBeforeCreateEvent={() => !hasUnsavedChanges || window.confirm('Du hast nicht gespeicherte Änderungen am Produkt. Möchtest du die Seite verlassen und die Änderungen verwerfen?')}
+        />
+      )}
+
+      {isServiceProduct && schema.tenant_id && productAggregateId && (
+        <div className="flex justify-end">
+          <ProductCustomFieldSchemaDialog
+            productId={productAggregateId}
+            tenantId={schema.tenant_id}
+            version={aggregateVersion ?? initialProductVersion ?? 1}
+            productName={pageName}
+            onSaved={(fieldSchema, version) => {
+              setProductCustomFieldDefinitions(fieldSchema.product);
+              setAggregateVersion(version);
+            }}
+          />
+        </div>
+      )}
+
       {isServiceProduct && Object.keys(productCustomFieldDefinitions).length > 0 && (
         <TenantCustomFieldsEditor
           key={`${schema.id}-${productAggregateId ?? 'new-product'}`}
           definitions={productCustomFieldDefinitions}
           values={productCustomFields}
           language={language}
+          title="Weitere Produktangaben"
+          description="Zusätzliche Angaben zu diesem Produkt."
           onChange={setProductCustomFields}
           onValidityChange={setCustomFieldsValid}
         />

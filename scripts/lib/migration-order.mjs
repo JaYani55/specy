@@ -126,6 +126,8 @@ export const MIGRATION_ORDER_CORE = [
   '202610040001_legacy_string_array_schema_support.sql',
   '202610040002_page_content_templates.sql',
   '202610040003_product_event_custom_fields.sql',
+  '202610040004_product_scoped_fields_and_object_sources.sql',
+  '202610040005_product_object_projection.sql',
 ];
 
 /**

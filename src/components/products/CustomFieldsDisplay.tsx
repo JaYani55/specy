@@ -26,9 +26,11 @@ export function CustomFieldsDisplay({
       <CardContent className="grid gap-4 p-0 sm:grid-cols-2">
         {entries.map(([key, definition]) => {
           const value = values?.[key];
-          const text = value !== null && typeof value === 'object'
-            ? JSON.stringify(value, null, 2)
-            : value === null ? 'null' : String(value);
+          const text = definition.type === 'price' && value && typeof value === 'object' && !Array.isArray(value)
+            ? `${String((value as { amount?: unknown }).amount ?? '')} ${(value as { currency?: unknown }).currency ?? ''}`.trim()
+            : value !== null && typeof value === 'object'
+              ? JSON.stringify(value, null, 2)
+              : value === null ? 'null' : String(value);
           return (
             <div key={key} className="min-w-0 space-y-1">
               <p className="text-sm font-medium">{definition.label || key}</p>

@@ -4,6 +4,9 @@ import { getOptionalAuthSession, parseBearerToken, requireAppRole } from '../lib
 
 const objects = new Hono<{ Bindings: Env }>();
 
+const OBJECT_API_COLUMNS = 'id, name, slug, description, agent_description, object_type, schema, data, status, requires_auth, api_enabled, share_enabled, share_slug, tenant_id, created_at, updated_at';
+const OBJECT_PUBLIC_COLUMNS = 'id, name, slug, description, agent_description, object_type, schema, data, status, requires_auth, api_enabled, share_enabled, share_slug, created_at, updated_at';
+
 interface ObjectRow {
   id: string;
   name: string;
@@ -19,6 +22,7 @@ interface ObjectRow {
   share_enabled: boolean;
   share_slug: string | null;
   tenant_id?: string | null;
+  source_product_id?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,7 +129,7 @@ objects.get('/', async (c) => {
 
       let objectQuery = supabase
         .from('objects')
-        .select('id, name, slug, description, agent_description, object_type, status, requires_auth, api_enabled, share_enabled, share_slug, created_at, updated_at')
+        .select('id, name, slug, description, agent_description, object_type, status, requires_auth, api_enabled, share_enabled, share_slug, tenant_id, created_at, updated_at')
         .neq('status', 'archived')
         .order('updated_at', { ascending: false });
 
@@ -148,7 +152,16 @@ objects.get('/', async (c) => {
         return c.json({ error: 'Failed to load objects.' }, 500);
       }
 
-      return c.json({ objects: data ?? [] });
+      const visibleRows = data ?? [];
+      const rowIds = visibleRows.map((row) => row.id);
+      if (!rowIds.length) return c.json({ objects: [] });
+      const admin = await createSupabaseAdminClient(c.env);
+      const { data: sourceRows, error: sourceError } = await admin.from('objects')
+        .select('id, source_product_id')
+        .in('id', rowIds);
+      if (sourceError) return c.json({ error: 'Failed to load object sources.' }, 500);
+      const managedIds = new Set((sourceRows ?? []).filter((row) => row.source_product_id != null).map((row) => row.id));
+      return c.json({ objects: visibleRows.filter((row) => !managedIds.has(row.id)) });
     }
   }
 
@@ -255,6 +268,66 @@ objects.get('/o/:tenantName/:shareSlug', async (c) => {
   return c.json(serializeObject(obj));
 });
 
+// Authenticated UI handoff for generated Objects. It returns a safe editor path,
+// never the source Product's legacy database key.
+objects.get('/:id/source', async (c) => {
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+  if (!auth) return c.json({ error: 'Authentication required.' }, 401);
+  const id = c.req.param('id');
+  const caller = await createSupabaseClient(c.env, auth.token);
+  const { data: visible, error: visibleError } = await caller.from('objects').select('id').eq('id', id).maybeSingle();
+  if (visibleError) return c.json({ error: 'Could not load the requested Object.' }, 500);
+  if (!visible) return c.json({ error: 'Object not found.' }, 404);
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: source, error: sourceError } = await admin.from('objects').select('source_product_id').eq('id', id).maybeSingle();
+  if (sourceError) return c.json({ error: 'Could not load the Object source.' }, 500);
+  if (!source || source.source_product_id == null) return c.json({ managed: false });
+
+  const { data: product, error: productError } = await admin.from('mentorbooking_products')
+    .select('tenant_id, product_page_id')
+    .eq('id', source.source_product_id)
+    .maybeSingle();
+  if (productError) return c.json({ error: 'Could not load the Product source.' }, 500);
+  if (!product?.tenant_id) return c.json({ error: 'Object source not found.' }, 404);
+  if (!auth.roles.some((role) => role === 'admin' || role === 'super-admin')) {
+    const { data: membership, error: membershipError } = await caller.from('tenant_users')
+      .select('tenant_id')
+      .eq('tenant_id', product.tenant_id)
+      .eq('user_id', auth.userId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (membershipError) return c.json({ error: 'Could not verify workspace access.' }, 500);
+    if (!membership) return c.json({ error: 'Object not found.' }, 404);
+  }
+
+  if (product.product_page_id) {
+    const { data: page, error: pageError } = await admin.from('pages')
+      .select('id, schema_id, tenant_id')
+      .eq('id', product.product_page_id)
+      .eq('tenant_id', product.tenant_id)
+      .maybeSingle();
+    if (pageError) return c.json({ error: 'Could not load the Product page.' }, 500);
+    if (page) {
+      const { data: schema, error: schemaError } = await admin.from('page_schemas')
+        .select('slug, tenant_id, entity_kind')
+        .eq('id', page.schema_id)
+        .maybeSingle();
+      if (schemaError) return c.json({ error: 'Could not load the Product catalogue.' }, 500);
+      if (schema && schema.tenant_id === product.tenant_id && schema.entity_kind === 'service-product') {
+        const { data: tenant, error: tenantError } = await admin.from('tenants').select('slug').eq('id', product.tenant_id).maybeSingle();
+        if (tenantError) return c.json({ error: 'Could not load the Product workspace.' }, 500);
+        const editorPath = tenant?.slug
+          ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}/edit/${page.id}`
+          : `/pages/schema/${encodeURIComponent(schema.slug)}/edit/${page.id}`;
+        return c.json({ managed: true, editor_path: editorPath });
+      }
+    }
+  }
+  return c.json({ managed: true, editor_path: '/products/manage/legacy' });
+});
+
 // GET /api/objects/:idOrSlug
 // Retrieve a single object by ID or slug. Enforces requires_auth if set.
 // Returns the schema definition and full data payload.
@@ -269,7 +342,7 @@ objects.get('/:idOrSlug', async (c) => {
 
     const query = supabase
       .from('objects')
-      .select('*');
+      .select(OBJECT_API_COLUMNS);
 
     const { data: rows, error: dbError } = isUuid
       ? await query.eq('id', idOrSlug).limit(1)
@@ -290,7 +363,7 @@ objects.get('/:idOrSlug', async (c) => {
   const supabase = await createSupabaseClient(c.env);
   const query = supabase
     .from('objects')
-    .select('*')
+    .select(OBJECT_PUBLIC_COLUMNS)
     .eq('status', 'published')
     .eq('api_enabled', true)
     .eq('requires_auth', false);
@@ -351,7 +424,7 @@ objects.post('/', async (c) => {
       share_slug: share_enabled ? (typeof share_slug === 'string' && share_slug.trim() ? share_slug.trim() : slug.trim()) : null,
       tenant_id: typeof tenant_id === 'string' && tenant_id.trim() ? tenant_id.trim() : null,
     })
-    .select()
+    .select(OBJECT_API_COLUMNS)
     .single();
 
   if (error) {
@@ -402,11 +475,23 @@ objects.put('/:id', async (c) => {
   }
 
   const supabase = await createSupabaseClient(c.env, auth.token);
+  const { data: current, error: currentError } = await supabase
+    .from('objects')
+    .select('id')
+    .eq('id', id)
+    .maybeSingle();
+  if (currentError) return c.json({ error: 'Failed to load object.' }, 500);
+  if (!current) return c.json({ error: 'Object not found.' }, 404);
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: source, error: sourceError } = await admin.from('objects').select('source_product_id').eq('id', id).maybeSingle();
+  if (sourceError) return c.json({ error: 'Failed to load object source.' }, 500);
+  if (source?.source_product_id != null) return c.json({ error: 'This object is managed by its product and cannot be edited here.' }, 409);
+
   const { data: updated, error } = await supabase
     .from('objects')
     .update(patch)
     .eq('id', id)
-    .select()
+    .select(OBJECT_API_COLUMNS)
     .single();
 
   if (error) {
@@ -430,6 +515,18 @@ objects.delete('/:id', async (c) => {
 
   const id = c.req.param('id');
   const supabase = await createSupabaseClient(c.env, auth.token);
+
+  const { data: current, error: currentError } = await supabase
+    .from('objects')
+    .select('id')
+    .eq('id', id)
+    .maybeSingle();
+  if (currentError) return c.json({ error: 'Failed to load object.' }, 500);
+  if (!current) return c.json({ error: 'Object not found.' }, 404);
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: source, error: sourceError } = await admin.from('objects').select('source_product_id').eq('id', id).maybeSingle();
+  if (sourceError) return c.json({ error: 'Failed to load object source.' }, 500);
+  if (source?.source_product_id != null) return c.json({ error: 'This object is managed by its product and cannot be archived here.' }, 409);
 
   const { error } = await supabase
     .from('objects')

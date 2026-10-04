@@ -2,6 +2,11 @@ import { supabase } from '@/lib/supabase';
 import { API_URL } from '@/lib/apiUrl';
 import type { MarkdownObjectData, ObjectRecord, PublicObjectDefinition, ObjectType } from '@/types/objects';
 
+export type ObjectListRecord = Pick<ObjectRecord,
+  'id' | 'name' | 'slug' | 'description' | 'agent_description' | 'object_type' | 'status'
+  | 'requires_auth' | 'api_enabled' | 'share_enabled' | 'share_slug' | 'tenant_id' | 'created_at' | 'updated_at'
+>;
+
 const getAuthToken = async (): Promise<string | null> => {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
@@ -28,23 +33,20 @@ const generateSlug = (name: string): string =>
 
 export { generateSlug as generateObjectSlug };
 
-export const getObjects = async (tenantId?: string | null): Promise<ObjectRecord[]> => {
-  let query = supabase
-    .from('objects')
-    .select('*')
-    .neq('status', 'archived')
-    .order('updated_at', { ascending: false });
-  if (tenantId) query = query.eq('tenant_id', tenantId);
-  const { data, error } = await query;
-
-  if (error) throw new Error(error.message);
-  return (data ?? []) as ObjectRecord[];
+export const getObjects = async (tenantId?: string | null): Promise<ObjectListRecord[]> => {
+  if (!API_URL) throw new Error('API URL is not configured.');
+  const headers = await buildHeaders();
+  const search = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  const response = await fetch(`${API_URL}/api/objects${search}`, { headers });
+  const payload = await response.json().catch(() => ({})) as { error?: string; objects?: ObjectListRecord[] };
+  if (!response.ok) throw new Error(payload.error ?? 'Failed to load objects.');
+  return payload.objects ?? [];
 };
 
 export const getObject = async (id: string): Promise<ObjectRecord> => {
   const { data, error } = await supabase
     .from('objects')
-    .select('*')
+    .select('id, name, slug, description, agent_description, object_type, schema, data, status, requires_auth, api_enabled, share_enabled, share_slug, tenant_id, owner_user_id, created_at, updated_at')
     .eq('id', id)
     .single();
 
@@ -98,6 +100,15 @@ export const updateObject = async (id: string, input: Partial<CreateObjectInput>
   }
 
   return response.json() as Promise<ObjectRecord>;
+};
+
+export const getManagedObjectEditorPath = async (id: string): Promise<string | null> => {
+  if (!API_URL) throw new Error('API URL is not configured.');
+  const headers = await buildHeaders();
+  const response = await fetch(`${API_URL}/api/objects/${encodeURIComponent(id)}/source`, { headers });
+  const payload = await response.json().catch(() => ({})) as { error?: string; managed?: boolean; editor_path?: string | null };
+  if (!response.ok) throw new Error(payload.error ?? 'Could not resolve the object source.');
+  return payload.managed && typeof payload.editor_path === 'string' ? payload.editor_path : null;
 };
 
 export const deleteObject = async (id: string): Promise<void> => {

@@ -2,7 +2,7 @@
 
 ## Status
 
-Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). This is not the full Products × Pages plan: staff presentation/identity migration, CRM, dedicated event collection tools, external invoice handoff, durable outbox delivery, and legacy product/event backfill remain pending.
+Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). This is not the full Products × Pages plan: staff presentation/identity migration, CRM, dedicated event collection tools, external invoice handoff, durable outbox delivery, and conversion of historical records into schema-backed aggregates remain pending. Product Object mirror backfill is included in its migration but has not been applied to a live database here.
 
 ## Frontend-first setup
 
@@ -47,6 +47,10 @@ Default content is the exact stored JSONB payload. Only the optional named inclu
 ```
 
 No arbitrary table joins/includes are supported. Product delivery excludes retired products and non-published pages. No staff, CRM, internal compensation, approval arrays, account IDs, or customer fields are public.
+
+## Dynamic Product and Event data
+
+Each Product has one generated, read-only Object mirror. `GET /api/objects/{objectSlug}` is the canonical dynamic read and returns the normal Object `{ schema, data }` contract. The friendly `GET /api/products/:workspaceSlug/:productSlug` resolves the published Product page and returns the identical Object envelope. `data.product` contains page content and allow-listed descriptive/custom values; `data.events` contains linked published Event page content and operational schedule facts. Product and Event custom values appear only when the selected Product's corresponding field definition explicitly marks them public. Objects are synchronized transactionally and are never edited in ObjectEditor; users edit Product and Event source records in the dashboard.
 
 ## Contract and safety limits
 

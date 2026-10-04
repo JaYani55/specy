@@ -106,6 +106,7 @@ const EditEvent = () => {
   const [saveError, setSaveError] = useState<EventSaveError | null>(null);
   const [revalidationResult, setRevalidationResult] = useState<RevalidationResult | null>(null);
   const [eventPageInfo, setEventPageInfo] = useState<{ path: string; slug: string; schemaSlug: string; status: string; registered: boolean } | null>(null);
+  const [productRevalidationResults, setProductRevalidationResults] = useState<RevalidationResult[]>([]);
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -265,6 +266,7 @@ const EditEvent = () => {
     setIsLoading(true);
     setSaveError(null);
     setRevalidationResult(null);
+    setProductRevalidationResults([]);
     try {
       if (!id || !activeTenantId) throw new Error(language === 'en' ? 'Select a workspace before updating this event.' : 'Wähle vor dem Aktualisieren einen Workspace aus.');
       const staffMembers = values.staff_members && values.staff_members.length > 0
@@ -320,15 +322,59 @@ const EditEvent = () => {
         : 'Im ausgewählten Workspace wurde keine Veranstaltung aktualisiert. Prüfe deine Berechtigung und versuche es erneut.');
 
       let revalidationFailed = false;
-      if (eventPageInfo?.registered && eventPageInfo.status === 'published') {
-        const result = await triggerRevalidation(eventPageInfo.schemaSlug, eventPageInfo.slug);
-        setRevalidationResult(result);
-        if (!result.success) {
-          revalidationFailed = true;
-          toast.warning(language === 'en'
-            ? 'Event saved, but the frontend could not be updated.'
-            : 'Veranstaltung gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
+      const eventNeedsRevalidation = Boolean(eventPageInfo?.registered && eventPageInfo.status === 'published');
+      try {
+        const relatedProductIds = [...new Set([eventData?.product_id, values.product_id]
+          .filter((productId): productId is number => typeof productId === 'number'))];
+        const relatedProductPages = await Promise.all(relatedProductIds.map(async (productId) => {
+          const { data: product, error: productError } = await supabase.from('mentorbooking_products')
+            .select('product_page_id')
+            .eq('id', productId)
+            .eq('tenant_id', activeTenantId)
+            .maybeSingle();
+          if (productError) throw productError;
+          if (!product?.product_page_id) return null;
+          const { data: page, error: pageError } = await supabase.from('pages')
+            .select('slug, status, schema_id')
+            .eq('id', product.product_page_id)
+            .eq('tenant_id', activeTenantId)
+            .maybeSingle();
+          if (pageError) throw pageError;
+          if (!page || page.status !== 'published') return null;
+          const schema = await getSchema(page.schema_id);
+          return schema.tenant_id === activeTenantId && schema.entity_kind === 'service-product' && schema.registration_status === 'registered'
+            ? { slug: page.slug, schemaSlug: schema.api_slug }
+            : null;
+        }));
+      const registeredProductPages = relatedProductPages.filter((page): page is { slug: string; schemaSlug: string } => Boolean(page));
+      const revalidationJobs: Array<{ kind: 'event' | 'product'; run: Promise<RevalidationResult> }> = [];
+      if (eventNeedsRevalidation && eventPageInfo) {
+        revalidationJobs.push({ kind: 'event', run: triggerRevalidation(eventPageInfo.schemaSlug, eventPageInfo.slug) });
+      }
+      for (const page of registeredProductPages) {
+        revalidationJobs.push({ kind: 'product', run: triggerRevalidation(page.schemaSlug, page.slug) });
+      }
+        if (revalidationJobs.length) {
+          const results = await Promise.all(revalidationJobs.map((job) => job.run));
+          const eventResult = revalidationJobs.findIndex((job) => job.kind === 'event');
+          if (eventResult >= 0) setRevalidationResult(results[eventResult]);
+          const productResults = revalidationJobs.flatMap((job, index) => job.kind === 'product' ? [results[index]] : []);
+          setProductRevalidationResults(productResults);
+          revalidationFailed = results.some((result) => !result.success);
+          if (revalidationFailed) {
+            toast.warning(language === 'en'
+              ? 'Event saved, but one or more website pages could not be refreshed.'
+              : 'Veranstaltung gespeichert, aber eine oder mehrere Website-Seiten konnten nicht aktualisiert werden.');
+          }
         }
+      } catch (error) {
+        revalidationFailed = true;
+        setRevalidationResult({
+          success: false,
+          message: 'Veranstaltung gespeichert; die Website-Aktualisierung konnte nicht geprüft werden.',
+          diagnostics: { error: error instanceof Error ? error.message : 'Unbekannter Fehler.' },
+        });
+        toast.warning('Veranstaltung gespeichert, aber die Website konnte nicht aktualisiert werden.');
       }
 
       try {
@@ -424,14 +470,15 @@ const EditEvent = () => {
         </Alert>
       )}
 
-      {revalidationResult && !revalidationResult.success && (
+      {(revalidationResult && !revalidationResult.success) || productRevalidationResults.some((result) => !result.success) ? (
         <Alert className="border-amber-500 bg-amber-50 dark:bg-amber-950">
-          <AlertTitle>{language === 'en' ? 'Event saved; frontend update failed' : 'Veranstaltung gespeichert; Frontend-Aktualisierung fehlgeschlagen'}</AlertTitle>
-          <AlertDescription>
-            <RevalidationFeedback result={revalidationResult} language={language} />
+          <AlertTitle>{language === 'en' ? 'Event saved; website update failed' : 'Veranstaltung gespeichert; Website-Aktualisierung fehlgeschlagen'}</AlertTitle>
+          <AlertDescription className="space-y-3">
+            {revalidationResult && !revalidationResult.success && <RevalidationFeedback result={revalidationResult} language={language} />}
+            {productRevalidationResults.filter((result) => !result.success).map((result, index) => <RevalidationFeedback key={index} result={result} language={language} />)}
           </AlertDescription>
         </Alert>
-      )}
+      ) : null}
 
       <EventForm
         initialValues={eventData}

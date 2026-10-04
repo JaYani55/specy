@@ -41,12 +41,12 @@ const fieldsToDefinitions = (fields: DraftField[]): TenantCustomFieldDefinitions
 const definitionsToFields = (definitions: TenantCustomFieldDefinitions): DraftField[] =>
   Object.entries(definitions).map(([key, definition]) => ({ ...definition, key, draftId: crypto.randomUUID() }));
 
-export function TenantCustomFieldsDialog() {
+export function TenantCustomFieldsDialog({ legacyEventOnly = false }: { legacyEventOnly?: boolean }) {
   const { language } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
-  const english = language === 'en';
+  const english = !legacyEventOnly && language === 'en';
   const [open, setOpen] = useState(false);
-  const [activeType, setActiveType] = useState<TenantCustomFieldEntity>('product');
+  const [activeType, setActiveType] = useState<TenantCustomFieldEntity>(legacyEventOnly ? 'event' : 'product');
   const [fields, setFields] = useState<DraftFieldSets>({ product: [], event: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -140,6 +140,7 @@ export function TenantCustomFieldsDialog() {
                   <SelectItem value="url">URL</SelectItem>
                   <SelectItem value="email">E-Mail</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>
+                  <SelectItem value="price">Preis</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -178,11 +179,13 @@ export function TenantCustomFieldsDialog() {
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{english ? 'Workspace custom fields' : 'Eigene Workspace-Felder'}</DialogTitle>
+          <DialogTitle>{legacyEventOnly ? 'Zusatzangaben für Termine ohne Produkt' : english ? 'Workspace custom fields' : 'Eigene Workspace-Felder'}</DialogTitle>
           <DialogDescription>
-            {english
-              ? 'Define JSON fields for products and events. Public fields are included in the dynamic product API.'
-              : 'Definiere JSON-Felder für Produkte und Events. Öffentlich markierte Felder werden in der dynamischen Produkt-API ausgegeben.'}
+            {legacyEventOnly
+              ? 'Diese Felder gelten nur für bestehende Termine ohne zugeordnetes Produkt. Für neue Produktangaben verwaltest du die Felder direkt beim jeweiligen Produkt.'
+              : english
+                ? 'These older workspace fields can be imported into individual products. New product fields are managed on each product.'
+                : 'Bestehende Workspace-Felder können gezielt in einzelne Produkte übernommen werden. Neue Produktfelder werden direkt beim jeweiligen Produkt verwaltet.'}
           </DialogDescription>
         </DialogHeader>
         {isLoading ? (
@@ -190,10 +193,10 @@ export function TenantCustomFieldsDialog() {
         ) : (
           <Tabs value={activeType} onValueChange={(value) => setActiveType(value as TenantCustomFieldEntity)}>
             <TabsList>
-              <TabsTrigger value="product">{english ? 'Products' : 'Produkte'}</TabsTrigger>
-              <TabsTrigger value="event">Events</TabsTrigger>
+              {!legacyEventOnly && <TabsTrigger value="product">{english ? 'Products' : 'Produkte'}</TabsTrigger>}
+              <TabsTrigger value="event">{legacyEventOnly ? 'Termine ohne Produkt' : 'Events'}</TabsTrigger>
             </TabsList>
-            <TabsContent value="product">{renderFieldList('product')}</TabsContent>
+            {!legacyEventOnly && <TabsContent value="product">{renderFieldList('product')}</TabsContent>}
             <TabsContent value="event">{renderFieldList('event')}</TabsContent>
           </Tabs>
         )}

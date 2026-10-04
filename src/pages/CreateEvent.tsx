@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -17,11 +17,26 @@ import { getSchema } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { normalizeEventPageSlug } from '@/utils/eventPage';
 
+interface CreateEventNavigationState {
+  preselectedProductId?: unknown;
+  returnTo?: unknown;
+}
+
 const CreateEvent = () => {
   const { user, loading } = useAuth();
   const permissions = usePermissions();
   const { language } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navigationState = location.state as CreateEventNavigationState | null;
+  const preselectedProductId = Number.isSafeInteger(navigationState?.preselectedProductId)
+    ? navigationState?.preselectedProductId as number
+    : undefined;
+  const returnTo = typeof navigationState?.returnTo === 'string'
+    && navigationState.returnTo.startsWith('/')
+    && !navigationState.returnTo.startsWith('//')
+    ? navigationState.returnTo
+    : null;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { refetchEvents } = useData();
   const { activeTenantId, loading: workspaceLoading } = useActiveWorkspace();
@@ -162,7 +177,7 @@ const CreateEvent = () => {
       if (publicPage) {
         navigate(publicPage.editor_path);
       } else {
-        navigate('/events');
+        navigate(returnTo || '/events');
       }
     } catch (error: unknown) {
       console.error('Error creating event:', error);
@@ -226,7 +241,7 @@ const CreateEvent = () => {
           description: "",
           staff_members: user?.id ? [user.id] : [],
           teams_link: "",
-          product_id: undefined,
+          product_id: preselectedProductId,
           initial_selected_mentors: [],
           custom_fields: {},
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',

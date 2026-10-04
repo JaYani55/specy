@@ -53,7 +53,7 @@ A frontend that needs a product together with its scheduled occurrences can fetc
 GET /api/products/{workspaceSlug}/{productSlug}
 ```
 
-`workspaceSlug` is `public.tenants.slug`; `productSlug` is the published page slug in a registered service-product schema. The response is shaped as `{ product: { id, name, slug, content, custom_fields, events: [...] } }`. Nested events contain their published page content and allow-listed operational date, time, end time, duration, timezone, and mode. Custom fields are returned only when their workspace definition marks them public. Internal status, company/customer records, staff, meeting URLs, approvals, and compensation are excluded.
+`workspaceSlug` is `public.tenants.slug`; `productSlug` is the published page slug in a registered service-product schema. The friendly URL resolves the generated Product Object and returns the same Object envelope as `/api/objects/{objectSlug}`: Product and Event fields are under `data.product` and `data.events`. Nested Events contain published page content and allow-listed operational date, time, end time, duration, timezone, and mode. Custom fields are returned only when the selected Product's field definition marks them public. Internal status, company/customer records, staff, meeting URLs, approvals, and compensation are excluded. The Object is synchronized transactionally and does not depend on static-site revalidation for dynamic reads.
 
 ## Public API includes
 

@@ -24,6 +24,7 @@ import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import Me from "./pages/Me";
 import ProductDetail from "./pages/ProductDetail";
+import ProductCatalogue from "./pages/ProductCatalogue";
 import NotFound from "./pages/NotFound";
 import TestLoader from "./pages/TestLoader";
 import Info from "./pages/Info";
@@ -256,7 +257,8 @@ const AppContent = () => {
           <Route path="/pages" element={<ProtectedRoute requiredRole="user"><Pages /></ProtectedRoute>} />
           <Route path="/products" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage" replace /></ProtectedRoute>} />
           <Route path="/products/schemas" element={<ProtectedRoute requiredRole="user"><Products /></ProtectedRoute>} />
-          <Route path="/products/manage" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />
+          <Route path="/products/manage" element={<ProtectedRoute requiredRole="user"><ProductCatalogue /></ProtectedRoute>} />
+          <Route path="/products/manage/legacy" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />
           <Route path="/products/manage/new" element={<ProtectedRoute requiredRole="user"><VerwaltungCreateProduct /></ProtectedRoute>} />
           <Route path="/products/manage/:productId" element={<ProtectedRoute><ProductDetail /></ProtectedRoute>} />
           <Route path="/pages/schema/new" element={<ProtectedRoute requiredRole="user"><SchemaEditorPage /></ProtectedRoute>} />

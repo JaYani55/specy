@@ -34,7 +34,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
-import { createObject, generateObjectSlug, getObject, updateObject } from '@/services/objectService';
+import { createObject, generateObjectSlug, getManagedObjectEditorPath, getObject, updateObject } from '@/services/objectService';
 import { getTenantOptions, pickInitialTenantId, type TenantOption } from '@/services/tenantService';
 import type { ContentBlock } from '@/types/pagebuilder';
 import type { MarkdownObjectData, ObjectFieldDefinition, ObjectFieldType, ObjectRecord, ObjectType } from '@/types/objects';
@@ -66,6 +66,7 @@ const OBJECT_FIELD_TYPES: ObjectFieldType[] = [
   'email',
   'date',
   'price',
+  'json',
 ];
 
 // ----- Editor-internal field type (with stable editorId) -----
@@ -769,7 +770,7 @@ const getDefaultFieldValue = (type: ObjectFieldType): unknown => {
     case 'boolean': return false;
     case 'number': case 'price': return '';
     case 'array': return [];
-    case 'object': return {};
+    case 'object': case 'json': return {};
     default: return '';
   }
 };
@@ -786,6 +787,8 @@ interface FieldInputProps {
 
 const FieldInput: React.FC<FieldInputProps> = ({ field, value, onChange, compact = false, language = 'de' }) => {
   const cls = compact ? 'h-7 text-xs' : 'h-9 text-sm';
+  const [jsonDraft, setJsonDraft] = useState(() => JSON.stringify(value ?? {}, null, 2));
+  useEffect(() => setJsonDraft(JSON.stringify(value ?? {}, null, 2)), [value]);
 
   if (field.type === 'boolean') {
     return (
@@ -825,6 +828,21 @@ const FieldInput: React.FC<FieldInputProps> = ({ field, value, onChange, compact
           className={`${cls} ${symWidth}`}
         />
       </div>
+    );
+  }
+
+  if (field.type === 'json') {
+    return (
+      <Textarea
+        value={jsonDraft}
+        onChange={(event) => {
+          const raw = event.target.value;
+          setJsonDraft(raw);
+          try { onChange(JSON.parse(raw) as unknown); } catch { /* Keep the last valid value until JSON parses. */ }
+        }}
+        className={`font-mono ${compact ? 'min-h-16 text-xs' : 'min-h-28 text-sm'}`}
+        spellCheck={false}
+      />
     );
   }
 
@@ -1194,6 +1212,11 @@ const ObjectEditor: React.FC = () => {
     const load = async () => {
       try {
         const obj = await getObject(objectId);
+        const sourceEditorPath = await getManagedObjectEditorPath(obj.id);
+        if (sourceEditorPath) {
+          navigate(sourceEditorPath, { replace: true });
+          return;
+        }
         setExistingObject(obj);
         setName(obj.name);
         setSlug(obj.slug);

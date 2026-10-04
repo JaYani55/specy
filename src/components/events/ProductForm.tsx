@@ -26,8 +26,9 @@ import {
 } from '@/components/products';
 import { ProductFormMentorToggle } from '@/components/products/form/ProductFormMentorToggle';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
+import { ProductCustomFieldSchemaDialog } from '@/components/products/ProductCustomFieldSchemaDialog';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
-import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import type { TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
 import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 
 export function ProductForm({ 
@@ -75,19 +76,9 @@ export function ProductForm({
   const customFieldValues = form.watch('custom_fields') ?? {};
 
   useEffect(() => {
-    let cancelled = false;
-    setCustomFieldDefinitions({});
+    setCustomFieldDefinitions(editingProduct?.custom_field_schema?.product ?? {});
     setCustomFieldsValid(true);
-    if (!activeTenantId) {
-      return;
-    }
-    void getTenantCustomFieldDefinitions(activeTenantId, 'product')
-      .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
-      .catch((error) => {
-        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Eigene Produktfelder konnten nicht geladen werden.');
-      });
-    return () => { cancelled = true; };
-  }, [activeTenantId]);
+  }, [activeTenantId, editingProduct]);
 
   // Form initialization from editingProduct
   useEffect(() => {
@@ -190,12 +181,25 @@ export function ProductForm({
             <ProductFormCompensation form={form} />
           </div>
           
+          {editingProduct?.integration_id && activeTenantId && (
+            <div className="flex justify-end">
+              <ProductCustomFieldSchemaDialog
+                productId={editingProduct.integration_id}
+                tenantId={activeTenantId}
+                version={editingProduct.version ?? 1}
+                productName={editingProduct.name}
+                onSaved={(schema) => setCustomFieldDefinitions(schema.product)}
+              />
+            </div>
+          )}
           {Object.keys(customFieldDefinitions).length > 0 && (
             <TenantCustomFieldsEditor
               key={`${activeTenantId ?? 'no-workspace'}-${editingProduct?.id ?? 'new'}-${formKey}`}
               definitions={customFieldDefinitions}
               values={customFieldValues}
               language={language}
+              title="Weitere Produktangaben"
+              description="Zusätzliche Angaben zu diesem Produkt."
               onChange={(customFields) => form.setValue('custom_fields', customFields, { shouldDirty: true })}
               onValidityChange={setCustomFieldsValid}
             />

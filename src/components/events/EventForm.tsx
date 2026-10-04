@@ -157,6 +157,8 @@ export const EventForm: React.FC<EventFormProps> = ({
 
   const selectedMode = form.watch('mode');
   const showTeamsLink = selectedMode === 'online' || selectedMode === 'hybrid';
+  const watchedProductId = form.watch('product_id');
+  const customFieldValues = form.watch('custom_fields') ?? {};
 
   useEffect(() => {
     const warnUnsavedChanges = (e: BeforeUnloadEvent) => {
@@ -226,8 +228,6 @@ export const EventForm: React.FC<EventFormProps> = ({
     await onSubmit(values);
   };
 
-  const customFieldValues = form.watch('custom_fields') ?? {};
-  const watchedProductId = form.watch('product_id');
   const selectedEventSchemaId = form.watch('event_schema_id');
   const watchedTime = form.watch('time');
   const watchedDuration = form.watch('duration_minutes');
@@ -292,16 +292,24 @@ export const EventForm: React.FC<EventFormProps> = ({
     let cancelled = false;
     setCustomFieldDefinitions({});
     setCustomFieldsValid(true);
-    if (!activeTenantId) {
-      return;
-    }
-    void getTenantCustomFieldDefinitions(activeTenantId, 'event')
-      .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
-      .catch((error) => {
-        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Eigene Eventfelder konnten nicht geladen werden.');
-      });
+    if (!activeTenantId) return;
+    const loadEventFields = async () => {
+      try {
+        if (watchedProductId !== undefined) {
+          const product = await fetchProductById(watchedProductId, activeTenantId);
+          if (!cancelled) setCustomFieldDefinitions(product?.custom_field_schema?.event ?? {});
+        } else {
+          // Compatibility for private/legacy Events that have no Product association.
+          const definitions = await getTenantCustomFieldDefinitions(activeTenantId, 'event');
+          if (!cancelled) setCustomFieldDefinitions(definitions);
+        }
+      } catch (error) {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Eigene Veranstaltungsangaben konnten nicht geladen werden.');
+      }
+    };
+    void loadEventFields();
     return () => { cancelled = true; };
-  }, [activeTenantId]);
+  }, [activeTenantId, watchedProductId]);
 
   useEffect(() => {
     const fetchGroupNames = async () => {
@@ -479,10 +487,12 @@ export const EventForm: React.FC<EventFormProps> = ({
             </div>
             {Object.keys(customFieldDefinitions).length > 0 && (
               <TenantCustomFieldsEditor
-                key={`${activeTenantId ?? 'no-workspace'}-${initialValues?.id ?? 'new-event'}`}
+                key={`${activeTenantId ?? 'no-workspace'}-${initialValues?.id ?? 'new-event'}-${watchedProductId ?? 'no-product'}`}
                 definitions={customFieldDefinitions}
                 values={customFieldValues}
                 language={language}
+                title="Weitere Veranstaltungsangaben"
+                description="Zusätzliche Angaben zu dieser Veranstaltung."
                 onChange={(customFields) => form.setValue('custom_fields', customFields, { shouldDirty: true })}
                 onValidityChange={setCustomFieldsValid}
               />

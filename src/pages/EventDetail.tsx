@@ -114,24 +114,43 @@ const EventDetail = () => {
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [selectedMentorNames, setSelectedMentorNames] = useState<{name: string}[]>([]);
   const [eventPagePath, setEventPagePath] = useState<string | null>(null);
-  const [eventCustomFieldDefinitions, setEventCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
-  const [productCustomFieldDefinitions, setProductCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [productPagePath, setProductPagePath] = useState<string | null>(null);
+  const [legacyEventCustomFieldDefinitions, setLegacyEventCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
 
   useEffect(() => {
     let cancelled = false;
-    setProductCustomFieldDefinitions({});
-    setEventCustomFieldDefinitions({});
-    if (!activeTenantId) return;
-    void Promise.all([
-      getTenantCustomFieldDefinitions(activeTenantId, 'product'),
-      getTenantCustomFieldDefinitions(activeTenantId, 'event'),
-    ]).then(([productDefinitions, eventDefinitions]) => {
-      if (cancelled) return;
-      setProductCustomFieldDefinitions(productDefinitions);
-      setEventCustomFieldDefinitions(eventDefinitions);
-    }).catch((error) => console.error('Could not load custom field definitions:', error));
+    setProductPagePath(null);
+    const loadProductPage = async () => {
+      if (!activeTenantId || !productDetails?.product_page_id) return;
+      try {
+        const { data: page, error } = await supabase.from('pages')
+          .select('id, schema_id, tenant_id')
+          .eq('id', productDetails.product_page_id)
+          .eq('tenant_id', activeTenantId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!page) return;
+        const schema = await getSchema(page.schema_id);
+        if (!cancelled && schema.tenant_id === activeTenantId && schema.entity_kind === 'service-product') {
+          setProductPagePath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
+        }
+      } catch (error) {
+        console.error('Could not load product page link:', error);
+      }
+    };
+    void loadProductPage();
     return () => { cancelled = true; };
-  }, [activeTenantId]);
+  }, [activeTenantId, productDetails?.product_page_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLegacyEventCustomFieldDefinitions({});
+    if (!activeTenantId || event?.product_id) return;
+    void getTenantCustomFieldDefinitions(activeTenantId, 'event')
+      .then((definitions) => { if (!cancelled) setLegacyEventCustomFieldDefinitions(definitions); })
+      .catch((error) => console.error('Could not load legacy event field definitions:', error));
+    return () => { cancelled = true; };
+  }, [activeTenantId, event?.product_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,14 +326,26 @@ const EventDetail = () => {
         onDeleteClick={() => setShowDeleteDialog(true)}
         isPastEvent={isPastEvent}
       />
-      {eventPagePath && permissions.canEditEvents && (
-        <div className="mb-4 flex justify-end">
-          <Button variant="outline" onClick={() => navigate(eventPagePath)}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            {language === 'en' ? 'Edit public event page' : 'Öffentliche Veranstaltungsseite bearbeiten'}
-          </Button>
+      {(eventPagePath && permissions.canEditEvents) || (event.product_id && (permissions.canManageProducts || permissions.canViewAdminData)) ? (
+        <div className="mb-4 flex flex-wrap justify-end gap-2">
+          {event.product_id && (permissions.canManageProducts || permissions.canViewAdminData) && (
+            <Button variant="outline" onClick={() => navigate(`/products/manage/${event.product_id}`)}>
+              <Package className="mr-2 h-4 w-4" />Produkt öffnen
+            </Button>
+          )}
+          {productPagePath && permissions.canManageProducts && (
+            <Button variant="outline" onClick={() => navigate(productPagePath)}>
+              <ExternalLink className="mr-2 h-4 w-4" />Produktseite bearbeiten
+            </Button>
+          )}
+          {eventPagePath && permissions.canEditEvents && (
+            <Button variant="outline" onClick={() => navigate(eventPagePath)}>
+              <ExternalLink className="mr-2 h-4 w-4" />
+              {language === 'en' ? 'Edit public event page' : 'Öffentliche Veranstaltungsseite bearbeiten'}
+            </Button>
+          )}
         </div>
-      )}
+      ) : null}
 
       {isPastEvent && (
         <div className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
@@ -525,8 +556,8 @@ const EventDetail = () => {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <CustomFieldsDisplay definitions={eventCustomFieldDefinitions} values={event.custom_fields} language={language} />
-        <CustomFieldsDisplay definitions={productCustomFieldDefinitions} values={currentProduct?.custom_fields} language={language} />
+        <CustomFieldsDisplay definitions={productDetails?.custom_field_schema?.event ?? legacyEventCustomFieldDefinitions} values={event.custom_fields} language={language} />
+        <CustomFieldsDisplay definitions={productDetails?.custom_field_schema?.product ?? {}} values={currentProduct?.custom_fields} language={language} />
       </div>
 
       <DeleteEventDialog

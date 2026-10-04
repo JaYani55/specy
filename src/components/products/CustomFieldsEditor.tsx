@@ -11,6 +11,8 @@ interface TenantCustomFieldsEditorProps {
   definitions: TenantCustomFieldDefinitions;
   values: Record<string, unknown>;
   language: string;
+  title?: string;
+  description?: string;
   onChange: (values: Record<string, unknown>) => void;
   onValidityChange?: (valid: boolean) => void;
 }
@@ -21,6 +23,8 @@ export function TenantCustomFieldsEditor({
   definitions,
   values,
   language,
+  title,
+  description,
   onChange,
   onValidityChange,
 }: TenantCustomFieldsEditorProps) {
@@ -46,10 +50,10 @@ export function TenantCustomFieldsEditor({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-lg">
           <Braces className="h-5 w-5" />
-          {english ? 'Custom fields' : 'Eigene Felder'}
+          {title ?? (english ? 'Custom fields' : 'Eigene Felder')}
         </CardTitle>
         <CardDescription>
-          {english ? 'Additional workspace-defined product and event data.' : 'Zusätzliche, für diesen Workspace definierte Produkt- und Eventdaten.'}
+          {description ?? (english ? 'Additional workspace-defined product and event data.' : 'Zusätzliche, für diesen Workspace definierte Produkt- und Eventdaten.')}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -64,6 +68,40 @@ export function TenantCustomFieldsEditor({
                   {label}{definition.required && <span className="ml-1 text-destructive">*</span>}
                   {definition.description && <span className="mt-1 block text-xs font-normal text-muted-foreground">{definition.description}</span>}
                 </Label>
+              </div>
+            );
+          }
+
+          if (definition.type === 'price') {
+            const money = values[key] && typeof values[key] === 'object' && !Array.isArray(values[key])
+              ? values[key] as { amount?: unknown; currency?: unknown }
+              : {};
+            return (
+              <div key={key} className="space-y-2">
+                <Label htmlFor={`${id}-amount`}>{label}{definition.required && <span className="ml-1 text-destructive">*</span>}</Label>
+                {definition.description && <p className="text-xs text-muted-foreground">{definition.description}</p>}
+                <div className="grid grid-cols-[1fr_110px] gap-2">
+                  <Input
+                    id={`${id}-amount`}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={typeof money.amount === 'string' ? money.amount : ''}
+                    onChange={(event) => setValue(key, event.target.value === ''
+                      ? undefined
+                      : { amount: event.target.value, currency: typeof money.currency === 'string' ? money.currency : 'EUR' })}
+                  />
+                  <select
+                    aria-label={`${label} – Währung`}
+                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={typeof money.currency === 'string' ? money.currency : 'EUR'}
+                    onChange={(event) => setValue(key, money.amount === undefined
+                      ? undefined
+                      : { amount: String(money.amount), currency: event.target.value })}
+                  >
+                    {['EUR', 'USD', 'GBP', 'CHF', 'CAD', 'AUD'].map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                  </select>
+                </div>
               </div>
             );
           }

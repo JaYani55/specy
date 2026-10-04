@@ -19,4 +19,12 @@ describe('workspace custom field values', () => {
     assert.equal(validateTenantCustomFieldValues({ enabled: { label: 'Enabled', type: 'boolean', required: true } }, { enabled: false }), null);
     assert.equal(validateTenantCustomFieldValues({ min: { label: 'Minimum', type: 'number', required: true } }, { min: 0 }), null);
   });
+
+  it('validates public prices as decimal strings with an ISO currency code', () => {
+    const priceField = { sale_price: { label: 'Preis', type: 'price', required: true } };
+    assert.equal(validateTenantCustomFieldValues(priceField, { sale_price: { amount: '1250.00', currency: 'EUR' } }), null);
+    assert.match(validateTenantCustomFieldValues(priceField, { sale_price: { amount: 1250, currency: 'EUR' } }) ?? '', /ungültig|invalid/i);
+    assert.match(validateTenantCustomFieldValues(priceField, { sale_price: { amount: '12.999', currency: 'EUR' } }) ?? '', /ungültig|invalid/i);
+    assert.match(validateTenantCustomFieldValues(priceField, { sale_price: { amount: '12.50', currency: 'EURO' } }) ?? '', /ungültig|invalid/i);
+  });
 });

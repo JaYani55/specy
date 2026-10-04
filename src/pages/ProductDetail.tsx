@@ -11,11 +11,16 @@ import { Loader2, ArrowLeft, Pencil, CheckCircle2, ExternalLink } from 'lucide-r
 import { getIconByName } from '@/constants/pillaricons';
 import ProductManagementModal from '@/components/events/ProductManagementModal';
 import { CustomFieldsDisplay } from '@/components/products/CustomFieldsDisplay';
-import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import { ProductEventsPanel } from '@/components/products/ProductEventsPanel';
+import { ProductCustomFieldSchemaDialog } from '@/components/products/ProductCustomFieldSchemaDialog';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { API_URL } from '@/lib/apiUrl';
-import { getSchema } from '@/services/pageService';
+import { getSchema, triggerRevalidation, type RevalidationResult } from '@/services/pageService';
+import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 const ProductDetail = () => {
   const { productId } = useParams<{ productId: string }>();
@@ -31,7 +36,9 @@ const ProductDetail = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [showEditForm, setShowEditForm] = useState(false);
   const [publicDataUrl, setPublicDataUrl] = useState<string | null>(null);
-  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [productPageEditorPath, setProductPageEditorPath] = useState<string | null>(null);
+  const [revalidationResult, setRevalidationResult] = useState<RevalidationResult | null>(null);
+
 
   // Add permission check
   useEffect(() => {
@@ -43,14 +50,6 @@ const ProductDetail = () => {
   useEffect(() => {
     setProduct(null);
     setShowEditForm(false);
-    setCustomFieldDefinitions({});
-    let cancelled = false;
-    if (activeTenantId) {
-      void getTenantCustomFieldDefinitions(activeTenantId, 'product')
-        .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
-        .catch((error) => console.error('Could not load product custom field definitions:', error));
-    }
-    return () => { cancelled = true; };
   }, [activeTenantId]);
 
   useEffect(() => {
@@ -60,30 +59,31 @@ const ProductDetail = () => {
   useEffect(() => {
     let cancelled = false;
     setPublicDataUrl(null);
-    const resolvePublicUrl = async () => {
-      if (!product || !activeTenantId) return;
+    setProductPageEditorPath(null);
+    const resolvePageLinks = async () => {
+      if (!product || !activeTenantId || !product.product_page_id) return;
       try {
-        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('slug').eq('id', activeTenantId).maybeSingle();
-        if (tenantError) throw tenantError;
-        if (!tenant?.slug) return;
-        if (!product.product_page_id) return;
         const { data: page, error: pageError } = await supabase.from('pages')
-          .select('slug, schema_id, status')
+          .select('slug, schema_id, status, id')
           .eq('id', product.product_page_id)
           .eq('tenant_id', activeTenantId)
           .maybeSingle();
         if (pageError) throw pageError;
-        if (!page || page.status !== 'published') return;
+        if (!page) return;
         const schema = await getSchema(page.schema_id);
-        if (schema.entity_kind !== 'service-product' || schema.registration_status !== 'registered' || schema.tenant_id !== activeTenantId) return;
-        if (!cancelled) {
+        if (schema.entity_kind !== 'service-product' || schema.tenant_id !== activeTenantId) return;
+        if (!cancelled) setProductPageEditorPath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
+        if (page.status !== 'published' || schema.registration_status !== 'registered') return;
+        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('slug').eq('id', activeTenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (tenant?.slug && !cancelled) {
           setPublicDataUrl(`${API_URL}/api/products/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(page.slug)}`);
         }
       } catch (error) {
-        console.error('Could not resolve public product data URL:', error);
+        console.error('Could not resolve product page links:', error);
       }
     };
-    void resolvePublicUrl();
+    void resolvePageLinks();
     return () => { cancelled = true; };
   }, [activeTenantId, product]);
 
@@ -141,16 +141,43 @@ const ProductDetail = () => {
   };
 
   const handleProductsChange = () => {
-    // Reload product data when changes occur
+    setRevalidationResult(null);
     if (productId) {
       const loadProduct = async () => {
         const id = parseInt(productId, 10);
         const requestedTenantId = activeTenantId;
         if (!requestedTenantId) return;
         const updatedProduct = await fetchProductById(id, requestedTenantId);
-        if (activeTenantRef.current === requestedTenantId) setProduct(updatedProduct);
+        if (activeTenantRef.current !== requestedTenantId) return;
+        setProduct(updatedProduct);
+        try {
+          if (updatedProduct?.product_page_id) {
+            const { data: page, error: pageError } = await supabase.from('pages')
+              .select('slug, schema_id, status')
+              .eq('id', updatedProduct.product_page_id)
+              .eq('tenant_id', requestedTenantId)
+              .maybeSingle();
+            if (pageError) throw pageError;
+            if (page?.status === 'published') {
+              const schema = await getSchema(page.schema_id);
+              if (schema.tenant_id === requestedTenantId && schema.entity_kind === 'service-product' && schema.registration_status === 'registered') {
+                const result = await triggerRevalidation(schema.api_slug, page.slug);
+                setRevalidationResult(result);
+                if (!result.success) toast.warning('Produkt gespeichert, aber die Website konnte nicht aktualisiert werden.');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Product was saved, but website refresh could not be checked:', error);
+          setRevalidationResult({
+            success: false,
+            message: 'Produkt gespeichert; die Website-Aktualisierung konnte nicht geprüft werden.',
+            diagnostics: { error: error instanceof Error ? error.message : 'Unbekannter Fehler.' },
+          });
+          toast.warning('Produkt gespeichert, aber die Website konnte nicht aktualisiert werden.');
+        }
       };
-      loadProduct();
+      void loadProduct().catch((error) => toast.error(error instanceof Error ? error.message : 'Produkt konnte nicht geladen werden.'));
     }
     setShowEditForm(false);
   };
@@ -197,16 +224,28 @@ const ProductDetail = () => {
         </div>
         
         {/* Only show edit button if user can manage products */}
-        {permissions.canManageProducts && (
-          <Button 
-            onClick={() => setShowEditForm(true)}
-            size="lg"
-            className="text-base px-6"
-          >
-            <Pencil className="h-5 w-5 mr-2" />
-            {language === 'en' ? 'Edit Product' : 'Produkt bearbeiten'}
-          </Button>
-        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          {productPageEditorPath && permissions.canManageProducts && (
+            <Button variant="outline" onClick={() => navigate(productPageEditorPath)}>
+              <ExternalLink className="mr-2 h-4 w-4" />Seiteninhalt bearbeiten
+            </Button>
+          )}
+          {permissions.canManageProducts && product.integration_id && activeTenantId && (
+            <ProductCustomFieldSchemaDialog
+              productId={product.integration_id}
+              tenantId={activeTenantId}
+              version={product.version ?? 1}
+              productName={product.name}
+              onSaved={(schema, version) => setProduct((current) => current ? { ...current, custom_field_schema: schema, version } : current)}
+            />
+          )}
+          {permissions.canManageProducts && (
+            <Button onClick={() => setShowEditForm(true)} size="lg" className="text-base px-6">
+              <Pencil className="h-5 w-5 mr-2" />
+              {language === 'en' ? 'Edit Product' : 'Produkt bearbeiten'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {showEditForm ? (
@@ -220,7 +259,7 @@ const ProductDetail = () => {
         </div>
       ) : (
         <>
-          {publicDataUrl && (
+          {permissions.canManageAccounts && publicDataUrl && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium">{language === 'en' ? 'Dynamic product data' : 'Dynamische Produktdaten'}</p>
@@ -233,6 +272,12 @@ const ProductDetail = () => {
                 </a>
               </Button>
             </div>
+          )}
+          {revalidationResult && !revalidationResult.success && (
+            <Alert className="mb-5 border-amber-500 bg-amber-50 dark:bg-amber-950">
+              <AlertTitle>Produkt gespeichert; Website-Aktualisierung fehlgeschlagen</AlertTitle>
+              <AlertDescription><RevalidationFeedback result={revalidationResult} language={language} /></AlertDescription>
+            </Alert>
           )}
           {/* Page title */}
           <h1 className="text-3xl md:text-4xl font-bold mb-8">
@@ -364,8 +409,13 @@ const ProductDetail = () => {
             </Card>
           </div>
           <div className="mt-8">
-            <CustomFieldsDisplay definitions={customFieldDefinitions} values={product.custom_fields} language={language} />
+            <CustomFieldsDisplay definitions={product.custom_field_schema?.product ?? {}} values={product.custom_fields} language={language} />
           </div>
+          {activeTenantId && (
+            <div className="mt-8">
+              <ProductEventsPanel tenantId={activeTenantId} legacyProductId={product.id} />
+            </div>
+          )}
         </>
       )}
     </div>

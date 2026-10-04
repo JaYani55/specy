@@ -15,7 +15,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TenantCustomFieldsDialog } from '@/components/products/TenantCustomFieldsDialog';
 
 const Products: React.FC = () => {
   const navigate = useNavigate();
@@ -127,17 +126,16 @@ const Products: React.FC = () => {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-3">
           <Button variant="ghost" className="-ml-3" onClick={() => navigate('/products/manage')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />{language === 'en' ? 'Product management' : 'Produktverwaltung'}
+            <ArrowLeft className="mr-2 h-4 w-4" />Zur Produktübersicht
           </Button>
           <div>
-            <h1 className="text-3xl font-bold">{language === 'en' ? 'Product schemas' : 'Produktschemata'}</h1>
-            <p className="mt-1 text-muted-foreground">{language === 'en' ? 'Schema-based product catalogues and their content entries.' : 'Schema-basierte Produktkataloge und deren Inhaltseinträge.'}</p>
+            <h1 className="text-3xl font-bold">Website-Produkte</h1>
+            <p className="mt-1 text-muted-foreground">Produkte mit eigenen Website-Seiten und aktuellen Produktangaben.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <TenantCustomFieldsDialog />
           <Button onClick={openCreate} disabled={!activeTenantId || productSchemas.length === 0}>
-            <Plus className="mr-2 h-4 w-4" />{language === 'en' ? 'New product' : 'Neues Produkt'}
+            <Plus className="mr-2 h-4 w-4" />Neues Website-Produkt
           </Button>
         </div>
       </div>

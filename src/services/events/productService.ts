@@ -1,9 +1,12 @@
 import { supabase } from '../../lib/supabase';
 import { normalizeProductTenantId, requireProductTenantId } from '@/utils/productTenantScope';
+import type { ProductCustomFieldSchema } from '@/services/productCustomFieldSchemaService';
 
 // Ensure this is explicitly exported as an interface
 export interface Product {
   id: number;
+  integration_id?: string;
+  version?: number;
   product_page_id?: string | null;
   tenant_id?: string | null;
   name: string;
@@ -21,6 +24,7 @@ export interface Product {
   gradient?: string;
   is_mentor_product?: boolean; // Make sure this is included
   custom_fields?: Record<string, unknown>;
+  custom_field_schema?: ProductCustomFieldSchema;
 }
 
 // Type for Supabase query responses

@@ -1256,7 +1256,7 @@ async function createMcpServerWithTools(
 
       let query = supabase
         .from('objects')
-        .select('*')
+        .select('id, name, slug, description, schema, data, status, requires_auth, api_enabled, share_enabled, share_slug, updated_at')
         .neq('status', 'archived');
 
       if (!authToken) {

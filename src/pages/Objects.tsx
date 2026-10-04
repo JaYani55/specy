@@ -6,13 +6,12 @@ import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
-import { deleteObject, getObjects } from '@/services/objectService';
+import { deleteObject, getObjects, type ObjectListRecord } from '@/services/objectService';
 import { getVisibleTenantInfoMap } from '@/services/tenantService';
-import type { ObjectRecord } from '@/types/objects';
 import { buildObjectSharePath } from '@/utils/sharePaths';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 
-const statusVariant: Record<ObjectRecord['status'], 'default' | 'secondary' | 'destructive'> = {
+const statusVariant: Record<ObjectListRecord['status'], 'default' | 'secondary' | 'destructive'> = {
   published: 'default',
   archived: 'destructive',
 };
@@ -20,7 +19,7 @@ const statusVariant: Record<ObjectRecord['status'], 'default' | 'secondary' | 'd
 const Objects = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
-  const [items, setItems] = useState<ObjectRecord[]>([]);
+  const [items, setItems] = useState<ObjectListRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { activeTenantId } = useActiveWorkspace();
   const [tenantInfo, setTenantInfo] = useState<Record<string, { name: string; slug: string; organization_slug: string | null }>>({});

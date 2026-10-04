@@ -192,7 +192,9 @@ const PageBuilderPage: React.FC = () => {
           productAggregateId={productAggregate?.id}
           productVersion={productAggregate?.version}
           initialProductCustomFields={productAggregate?.custom_fields}
+          initialProductCustomFieldSchema={productAggregate?.custom_field_schema}
           eventAggregateId={eventAggregate?.id}
+          eventProductId={eventAggregate?.product_id ?? undefined}
           initialPageUpdatedAt={page?.updated_at}
           initialName={productName}
           initialSlug={page?.slug}

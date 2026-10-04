@@ -13,7 +13,8 @@ export type ObjectFieldType =
   | 'url'
   | 'email'
   | 'date'
-  | 'price';
+  | 'price'
+  | 'json';
 
 export interface ObjectFieldDefinition {
   editorId?: string;

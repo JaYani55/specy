@@ -1,5 +1,6 @@
 import { API_URL } from '@/lib/apiUrl';
 import { supabase } from '@/lib/supabase';
+import type { ProductCustomFieldSchema } from '@/services/productCustomFieldSchemaService';
 
 export interface ServiceProductPage {
   id: string;
@@ -26,6 +27,7 @@ export interface ServiceProduct {
   created_at: string;
   updated_at: string;
   custom_fields?: Record<string, unknown>;
+  custom_field_schema?: ProductCustomFieldSchema;
 }
 
 async function authenticatedHeaders(): Promise<Headers> {
