@@ -51,6 +51,9 @@ import { StandaloneContentBlockEditor } from '@/components/pagebuilder/Standalon
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
+import { PageContentTemplateControls } from './PageContentTemplateControls';
+import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
+import type { RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import {
   buildSchemaContent,
@@ -796,6 +799,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const [pageName, setPageName]           = useState(initialName || '');
   const [pageSlug, setPageSlug]           = useState(() => (initialSlug || (initialName ? generateSlug(initialName) : '')));
   const [slugEdited, setSlugEdited]       = useState(Boolean(initialSlug));
+  const [baseContent, setBaseContent]     = useState<Record<string, unknown>>(() => initialData ?? {});
   const [formData, setFormData]           = useState<Record<string, unknown>>(() =>
     initializeSchemaContent(buildInitialData(fields), initialData)
   );
@@ -818,7 +822,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const [aggregateVersion, setAggregateVersion] = useState(initialProductVersion);
   const [pageUpdatedAt, setPageUpdatedAt] = useState(initialPageUpdatedAt);
   const [publicationStatus, setPublicationStatus] = useState(initialStatus ?? 'draft');
-  const [revalResult, setRevalResult]           = useState<{ success: boolean; message: string } | null>(null);
+  const [revalResult, setRevalResult]           = useState<RevalidationResult | null>(null);
 
   // ── Helpers
   const updateField = useCallback((name: string, value: unknown) => {
@@ -878,7 +882,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
       for (const fieldName of Object.keys(data)) next.delete(fieldName);
       return next;
     });
-  }, [activeOptional, fields, optionalFields]);
+  }, [activeOptional, optionalFields]);
 
   // ── Save handler
   const handleSave = async (statusAfterSave?: 'draft' | 'published') => {
@@ -889,7 +893,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
     setIsSaving(true);
     setRevalResult(null);
     try {
-      const content = buildSchemaContent(initialData, formData, fields, activeOptional, removedOptional);
+      const content = buildSchemaContent(baseContent, formData, fields, activeOptional, removedOptional);
 
       let updatedProduct: ServiceProduct | null = null;
       let updatedEventPage: { updated_at: string } | null = null;
@@ -986,14 +990,22 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
           const rev = await triggerRevalidation(schemaSlug, result.slug);
           setRevalResult(rev);
           if (rev.success) {
-            toast.success(`ISR: /${result.slug} wurde revalidiert`);
+            toast.success(language === 'en' ? 'Frontend updated.' : 'Frontend wurde aktualisiert.');
           } else {
-            toast.warning(`ISR-Revalidierung fehlgeschlagen: ${rev.message}`);
+            toast.warning(language === 'en'
+              ? 'Page saved, but the frontend could not be updated.'
+              : 'Seite gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
           }
-        } catch {
-          const msg = 'Konnte Revalidierungs-Endpunkt nicht erreichen';
-          setRevalResult({ success: false, message: msg });
-          toast.warning(`Seite gespeichert — ISR-Fehler: ${msg}`);
+        } catch (error) {
+          const diagnostic = error instanceof Error ? error.message : 'Unknown revalidation error.';
+          setRevalResult({
+            success: false,
+            message: language === 'en' ? 'Could not reach the revalidation service.' : 'Der Aktualisierungsdienst war nicht erreichbar.',
+            diagnostics: { error: diagnostic },
+          });
+          toast.warning(language === 'en'
+            ? 'Page saved, but the frontend could not be updated.'
+            : 'Seite gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
         }
       } else {
         setRevalResult(null);
@@ -1017,6 +1029,22 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
 
       {/* PageBuilder is the content layer; schema design remains in SchemaEditor. */}
+      <PageContentTemplateControls
+        schemaId={schema.id}
+        tenantId={schema.tenant_id ?? null}
+        pageName={pageName}
+        content={buildSchemaContent(baseContent, formData, fields, activeOptional, removedOptional)}
+        language={language}
+        onApply={(templateContent) => {
+          setBaseContent(templateContent);
+          setFormData(initializeSchemaContent(buildInitialData(fields), templateContent));
+          setActiveOptional(new Set(optionalFields
+            .filter((field) => hasOwnKey(templateContent, field.name))
+            .map((field) => field.name)));
+          setRemovedOptional(new Set());
+        }}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1265,15 +1293,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
               )}
             </div>
             {schema.registration_status === 'registered' && revalResult && (
-              <p
-                className={`text-xs ${
-                  revalResult.success
-                    ? 'text-green-700 dark:text-green-400'
-                    : 'text-amber-700 dark:text-amber-400'
-                }`}
-              >
-                ISR: {revalResult.message}
-              </p>
+                <RevalidationFeedback result={revalResult} language={language} />
             )}
           </AlertDescription>
         </Alert>

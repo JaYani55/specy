@@ -13,7 +13,7 @@ This is not the broader event/staff/CRM rebuild. Existing scheduling events and 
 - With a schema selected, the dashboard asks for a public page title and event timezone. The timezone defaults to the browser's IANA timezone but is displayed for the operator to confirm/change; it is not silently treated as UTC.
 - The event and its canonical `pages` record are created atomically via `create_event_page_aggregate`. The new page is a draft and the dashboard opens it in the canonical PageBuilder route.
 - `pages.content` contains developer-defined presentation/editorial content. Operational date, time, duration, mode, product selection, and scheduling data stay on `mentorbooking_events`.
-- The PageBuilder edits page name, slug, and schema content through event-specific aggregate RPCs. Publication is explicit and independent of the event's operational scheduling status. Event edits retain the page link; public schedule data is resolved from the event row rather than copied into page JSON.
+- The PageBuilder edits page name, slug, and schema content through event-specific aggregate RPCs. Its top-level content-template controls can save a reusable template for this schema and load one onto another event page; templates copy page content only, never the event title, slug, publication state, or operational schedule. Publication is explicit and independent of the event's operational scheduling status. Event edits retain the page link; public schedule data is resolved from the event row rather than copied into page JSON.
 - Event detail/edit screens link back to the public page editor. Deleting an event removes its linked page in the same caller-scoped transaction; deleting a linked page directly is restricted.
 
 Event page creation currently happens when creating a new event. Converting/attaching a page to an existing legacy event is not included in this MVP.
@@ -63,15 +63,16 @@ The public Worker uses a privileged read client only for this narrow, published,
 
 ## Revalidation and deployment limits
 
-PageBuilder save/publication uses the existing frontend revalidation path. Editing schedule/product details in `EditEvent` triggers best-effort revalidation for a published event page. There is no durable invalidation outbox/retry guarantee in this slice. The frontend manifest continues to report `supports_new_routes: null`; registration does not prove a static frontend can create new detail routes without a rebuild.
+PageBuilder save/publication uses the existing frontend revalidation path. Editing schedule/product details in `EditEvent` triggers best-effort revalidation for a published event page. Failed requests show a concise status with target, HTTP status, path, and upstream response details behind a disclosure; event data remains saved if only revalidation fails. There is no durable invalidation outbox/retry guarantee in this slice. The frontend manifest continues to report `supports_new_routes: null`; registration does not prove a static frontend can create new detail routes without a rebuild.
 
 ## Implementation files
 
 - `src/pages/CreateEvent.tsx`, `src/pages/EditEvent.tsx`, `src/components/events/EventForm.tsx` — event creation/editing, optional event schema selection, time zone, and editor links.
 - `src/services/events/eventPageService.ts`, `src/utils/eventPage.ts` — caller-scoped RPC adapters and IANA timezone/slug helpers.
-- `src/features/page-builder/PageBuilderPage.tsx`, `SchemaContentEditor.tsx`, `src/pages/PagesSchemaDetail.tsx` — event page loading, editing, publication, and archive.
+- `src/features/page-builder/PageBuilderPage.tsx`, `SchemaContentEditor.tsx`, `PageContentTemplateControls.tsx`, `src/services/pageContentTemplateService.ts`, `src/pages/PagesSchemaDetail.tsx` — event page loading/editing/publication, schema-scoped page content templates, and collapsed revalidation diagnostics.
 - `api/lib/eventPageAggregates.ts`, `api/lib/publicEntityProjection.ts`, `api/routes/schemas.ts`, `api/routes/mcp.ts`, `api/lib/frontendManifest.ts`, `src/lib/apiCatalog.ts` — entity-aware Pages post/update REST/MCP operations, event/product allow-listed public projections, and discovery metadata.
 - `migrations/202610030001_event_page_aggregates.sql` — tenant link constraints, write guards, aggregate RPCs, timezone validation, and page lifecycle behavior.
+- `migrations/202610040002_page_content_templates.sql` — schema-scoped content-template storage, tenant/owner policies, schema ownership validation, and content limits.
 
 ## Rollout boundary
 

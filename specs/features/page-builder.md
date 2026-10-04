@@ -4,7 +4,7 @@
 
 The PageBuilder is the **content-editing layer** above a schema contract. Developers and technical administrators define field structure in a schema; content managers edit entry values through a simpler form derived from that schema.
 
-The PageBuilder does not edit `page_schemas.schema`, registration settings, frontend targets, or schema revisions. It edits `pages.name`, `pages.slug`, and `pages.content` through the appropriate ordinary-page, service-product, or event-page save adapter. The Schema Editor remains a separate technical feature; see [`schema-editor.md`](schema-editor.md).
+The PageBuilder does not edit `page_schemas.schema`, registration settings, frontend targets, or schema revisions. It edits `pages.name`, `pages.slug`, and `pages.content` through the appropriate ordinary-page, service-product, or event-page save adapter. Content managers can save `pages.content` as a reusable template scoped to that exact schema and load it into another page using the same schema. Templates never copy event scheduling fields, publication state, URL slug, or page title. The Schema Editor remains a separate technical feature; see [`schema-editor.md`](schema-editor.md).
 
 ## Routes
 
@@ -71,6 +71,8 @@ Example presentation metadata (kept outside both schema field JSON and entry con
 - `service-product` schemas save through `updateServiceProduct()` with the aggregate UUID/version and schema definition revision. Publication uses the product aggregate publish operation.
 - `event` schemas save through the event-page aggregate adapter with tenant, schema definition revision, and optimistic page `updated_at` checks. Publication uses the event-page operation; event scheduling status is separate. Generic page writes and the legacy editor cannot bypass these checks.
 - Raw JSON import and technical diagnostics are available only in the administrator-only developer-tools disclosure; they are not part of the default content-manager workflow.
+- Schema-scoped page content templates store only the page content JSON. Loading one replaces the editor content and activates optional fields present in the template, while leaving the page title, slug, publication state, and any event schedule unchanged.
+- Revalidation failures leave the saved content intact. The feedback displays a concise status and keeps endpoint, HTTP status, target path, and upstream error details collapsed until the operator opens the details disclosure.
 
 ## Legacy boundary
 

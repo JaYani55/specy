@@ -13,6 +13,28 @@ import {
 
 import { API_URL } from '@/lib/apiUrl';
 
+export interface RevalidationTargetDiagnostic {
+  target_key: string;
+  path: string;
+  endpoint: string;
+  status: number;
+  success: boolean;
+  message: string;
+}
+
+export interface RevalidationDiagnostics {
+  httpStatus?: number;
+  message?: string;
+  error?: string;
+  targets?: RevalidationTargetDiagnostic[];
+}
+
+export interface RevalidationResult {
+  success: boolean;
+  message: string;
+  diagnostics?: RevalidationDiagnostics;
+}
+
 export interface RevalidationSecretStatus {
   configured: boolean;
   secret_name: string | null;
@@ -704,12 +726,13 @@ export const checkDomainHealth = async (schemaSlug: string): Promise<{
   }
 };
 
-export const triggerRevalidation = async (schemaSlug: string, pageSlug: string): Promise<{
-  success: boolean;
-  message: string;
-}> => {
+export const triggerRevalidation = async (schemaSlug: string, pageSlug: string): Promise<RevalidationResult> => {
   if (!API_URL) {
-    return { success: false, message: 'API URL not configured' };
+    return {
+      success: false,
+      message: 'Could not reach the revalidation service.',
+      diagnostics: { error: 'API URL is not configured.' },
+    };
   }
 
   try {
@@ -717,30 +740,57 @@ export const triggerRevalidation = async (schemaSlug: string, pageSlug: string):
       'Content-Type': 'application/json',
       Accept: 'application/json',
     });
-    const response = await fetch(`${API_URL}/api/schemas/${schemaSlug}/revalidate`, {
+    const response = await fetch(`${API_URL}/api/schemas/${encodeURIComponent(schemaSlug)}/revalidate`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ page_slug: pageSlug }),
     });
-    const payload = await response.json().catch(() => null) as {
+    const responseBody = (await response.text().catch(() => '')).slice(0, 4096);
+    let payload: {
       success?: boolean;
       message?: string;
       error?: string;
-    } | null;
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: payload?.message || payload?.error || `Revalidation request failed (${response.status})`,
-      };
+      results?: unknown[];
+    } | null = null;
+    if (responseBody) {
+      try {
+        payload = JSON.parse(responseBody) as typeof payload;
+      } catch {
+        payload = { message: responseBody };
+      }
     }
-
+    const targets = (payload?.results ?? []).flatMap((value): RevalidationTargetDiagnostic[] => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const row = value as Record<string, unknown>;
+      if (typeof row.target_key !== 'string' || typeof row.path !== 'string'
+        || typeof row.endpoint !== 'string' || typeof row.status !== 'number'
+        || typeof row.success !== 'boolean' || typeof row.message !== 'string') return [];
+      return [{
+        target_key: row.target_key,
+        path: row.path,
+        endpoint: row.endpoint,
+        status: row.status,
+        success: row.success,
+        message: row.message,
+      }];
+    });
+    const success = response.ok && payload?.success === true;
     return {
-      success: payload?.success === true,
-      message: payload?.message || (payload?.success ? 'Revalidation triggered successfully' : 'Revalidation request failed'),
+      success,
+      message: success ? 'Frontend revalidation completed.' : 'Frontend revalidation failed.',
+      diagnostics: {
+        httpStatus: response.status,
+        ...(payload?.message ? { message: payload.message } : {}),
+        ...(payload?.error ? { error: payload.error } : {}),
+        ...(targets.length ? { targets } : {}),
+      },
     };
-  } catch {
-    return { success: false, message: 'Failed to reach API' };
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Could not reach the revalidation service.',
+      diagnostics: { error: error instanceof Error ? error.message : 'Unknown network error.' },
+    };
   }
 };
 

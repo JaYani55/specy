@@ -53,6 +53,8 @@ The schema-driven page editor now:
 
 Unknown or malformed content blocks are shown as retained JSON instead of being forced through a built-in block editor. Known text/image/video/audio/form blocks continue to preserve extension fields when edited. Legacy schema fields using `type: "string[]"` remain accepted and are validated as arrays of strings; new schemas should use `type: "array", items: { "type": "string" }`.
 
+Page content templates are distinct from `page_schema_templates`: the latter store reusable schema definitions, while `page_content_templates` stores a named `pages.content` snapshot for one `schema_id`. Templates are workspace-scoped, can only be loaded by pages using the same schema, and never include operational event dates, status, or other event record fields.
+
 ## Entity write and public-delivery boundary
 
 Generic page create/update tools reject schemas classified as `service-product` or `event`. The generic dashboard `savePage` path rejects those entity kinds and validates the routed page/schema/workspace tuple. Product pages use the service-product aggregate API. Event pages are created from Create Event and saved/published through the event-page aggregate RPC; event schema pages are not created through generic page CRUD.

@@ -29,6 +29,7 @@ import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schemaDefinition';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaContent } from '../lib/schemaContentValidation';
+import { sanitizeRevalidationDiagnostic } from '../lib/revalidationDiagnostics';
 import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import {
   applyDefaultPublicEventInclude,
@@ -1634,7 +1635,15 @@ schemas.post('/:slug/revalidate', async (c) => {
     resolvedSchema = await migrateLegacyRevalidationSecret(c.env, resolvedSchema);
   } catch (error) {
     if (!isManagedSecretUnavailableError(error)) {
-      throw error;
+      return c.json({
+        success: false,
+        status: 500,
+        message: 'Could not prepare the configured revalidation secret.',
+        error: sanitizeRevalidationDiagnostic(
+          error instanceof Error ? error.message : 'Unknown secret-store error',
+          resolvedSchema.revalidation_secret,
+        ),
+      }, 500);
     }
   }
 
@@ -1657,11 +1666,20 @@ schemas.post('/:slug/revalidate', async (c) => {
   }));
 
   let secretValue: string | null = null;
-  if (resolvedSchema.revalidation_secret_name) {
-    secretValue = await getManagedSecretValue(c.env, resolvedSchema.revalidation_secret_name);
-  } else if (resolvedSchema.revalidation_secret) {
-    // Legacy compatibility for schemas that still store a plaintext secret.
-    secretValue = resolvedSchema.revalidation_secret;
+  try {
+    if (resolvedSchema.revalidation_secret_name) {
+      secretValue = await getManagedSecretValue(c.env, resolvedSchema.revalidation_secret_name);
+    } else if (resolvedSchema.revalidation_secret) {
+      // Legacy compatibility for schemas that still store a plaintext secret.
+      secretValue = resolvedSchema.revalidation_secret;
+    }
+  } catch (error) {
+    return c.json({
+      success: false,
+      status: 500,
+      message: 'Could not access the configured revalidation secret.',
+      error: sanitizeRevalidationDiagnostic(error instanceof Error ? error.message : 'Unknown secret-store error', null),
+    }, 500);
   }
 
   if (!secretValue) {
@@ -1682,29 +1700,29 @@ schemas.post('/:slug/revalidate', async (c) => {
   };
 
   const parseUpstreamBody = async (response: Response): Promise<string | null> => {
-    const bodyText = await response.text().catch(() => '');
+    const bodyText = (await response.text().catch(() => '')).slice(0, 4096);
     if (!bodyText) return null;
 
     try {
       const parsed = JSON.parse(bodyText) as { error?: string; message?: string };
-      return parsed.error || parsed.message || bodyText;
+      return sanitizeRevalidationDiagnostic(parsed.error || parsed.message || bodyText, secretValue);
     } catch {
-      return bodyText;
+      return sanitizeRevalidationDiagnostic(bodyText, secretValue);
     }
   };
 
-  try {
-    const results = await Promise.all(routePaths.map(async (route) => {
-      const revalidateUrl = new URL(resolvedSchema.revalidation_endpoint as string, resolvedSchema.frontend_url as string);
-      revalidateUrl.searchParams.set('path', route.path);
-      revalidateUrl.searchParams.set('slug', body.page_slug);
+  const results = await Promise.all(routePaths.map(async (route) => {
+    const revalidateUrl = new URL(resolvedSchema.revalidation_endpoint as string, resolvedSchema.frontend_url as string);
+    revalidateUrl.searchParams.set('path', route.path);
+    revalidateUrl.searchParams.set('slug', body.page_slug);
+    const endpoint = `${revalidateUrl.origin}${revalidateUrl.pathname}`;
+    const request = async (url: URL) => fetch(url.toString(), {
+      method: 'POST',
+      headers: buildHeaders(secretValue),
+      signal: AbortSignal.timeout(10000),
+    });
 
-      const request = async (url: URL) => fetch(url.toString(), {
-        method: 'POST',
-        headers: buildHeaders(secretValue),
-        signal: AbortSignal.timeout(10000),
-      });
-
+    try {
       let response = await request(revalidateUrl);
       let upstreamMessage = await parseUpstreamBody(response);
 
@@ -1720,28 +1738,29 @@ schemas.post('/:slug/revalidate', async (c) => {
         path: route.path,
         status: response.status,
         success: response.ok,
-        endpoint: `${revalidateUrl.origin}${revalidateUrl.pathname}`,
-        message: response.ok
-          ? 'Revalidation triggered successfully'
-          : `Revalidation request failed${upstreamMessage ? `: ${upstreamMessage}` : ''}`,
+        endpoint,
+        message: response.ok ? 'Revalidation triggered successfully' : upstreamMessage || `Frontend returned HTTP ${response.status}`,
       };
-    }));
+    } catch (error) {
+      return {
+        target_key: route.target_key,
+        path: route.path,
+        status: 0,
+        success: false,
+        endpoint,
+        message: sanitizeRevalidationDiagnostic(error instanceof Error ? error.message : 'Unknown network error', secretValue),
+      };
+    }
+  }));
 
-    const success = results.every((result) => result.success);
-    return c.json({
-      success,
-      slug: body.page_slug,
-      targets: routePaths,
-      results,
-      message: success ? 'Revalidation triggered successfully' : 'One or more target revalidation requests failed',
-    });
-  } catch (err) {
-    return c.json({
-      success: false,
-      message: 'Failed to reach frontend revalidation endpoint',
-      error: err instanceof Error ? err.message : 'Unknown error',
-    });
-  }
+  const success = results.every((result) => result.success);
+  return c.json({
+    success,
+    slug: body.page_slug,
+    targets: routePaths,
+    results,
+    message: success ? 'Revalidation triggered successfully' : 'One or more target revalidation requests failed',
+  });
 });
 
 export default schemas;

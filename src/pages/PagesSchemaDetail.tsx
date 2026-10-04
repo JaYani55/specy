@@ -38,8 +38,11 @@ import {
   setRevalidationSecret,
   deleteRevalidationSecret,
   type RevalidationSecretStatus,
+  type RevalidationResult,
 } from '@/services/pageService';
 import { getSchemaSpecBundle } from '@/services/specService';
+import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { archiveServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
 import { getEventPageAggregateByPage, setEventPagePublication } from '@/services/events/eventPageService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
@@ -73,6 +76,7 @@ const PagesSchemaDetail: React.FC = () => {
   const [deletePageId, setDeletePageId] = useState<string | null>(null);
   const [isStartingRegistration, setIsStartingRegistration] = useState(false);
   const [revalidationSecretStatus, setRevalidationSecretStatus] = useState<RevalidationSecretStatus | null>(null);
+  const [revalidationNotice, setRevalidationNotice] = useState<{ pageSlug: string; result: RevalidationResult } | null>(null);
   const [revalidationSecretInput, setRevalidationSecretInput] = useState('');
   const [isSavingRevalidationSecret, setIsSavingRevalidationSecret] = useState(false);
   const [isDeletingRevalidationSecret, setIsDeletingRevalidationSecret] = useState(false);
@@ -180,20 +184,28 @@ const PagesSchemaDetail: React.FC = () => {
       if (currentPage?.slug && schema.registration_status === 'registered'
         && (status === 'published' || currentPage.status === 'published')) {
         try {
-        const rev = await triggerRevalidation(schema.api_slug, currentPage.slug);
-        if (rev.success) {
-          toast.success(language === 'en'
-            ? `ISR triggered for /${currentPage.slug}`
-            : `ISR für /${currentPage.slug} ausgelöst`);
-        } else {
+          const result = await triggerRevalidation(schema.api_slug, currentPage.slug);
+          if (result.success) {
+            setRevalidationNotice(null);
+            toast.success(language === 'en'
+              ? `Frontend updated for /${currentPage.slug}`
+              : `Frontend für /${currentPage.slug} aktualisiert`);
+          } else {
+            setRevalidationNotice({ pageSlug: currentPage.slug, result });
+            toast.warning(language === 'en'
+              ? 'Page status saved, but the frontend could not be updated.'
+              : 'Seitenstatus gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
+          }
+        } catch (error) {
+          const result: RevalidationResult = {
+            success: false,
+            message: language === 'en' ? 'Could not reach the revalidation service.' : 'Der Aktualisierungsdienst war nicht erreichbar.',
+            diagnostics: { error: error instanceof Error ? error.message : 'Unknown network error.' },
+          };
+          setRevalidationNotice({ pageSlug: currentPage.slug, result });
           toast.warning(language === 'en'
-            ? `ISR revalidation failed: ${rev.message || 'Unknown error'}`
-            : `ISR-Revalidierung fehlgeschlagen: ${rev.message || 'Unbekannter Fehler'}`);
-        }
-        } catch {
-          toast.warning(language === 'en'
-            ? 'Page published, but ISR endpoint could not be reached'
-            : 'Seite veröffentlicht, aber der ISR-Endpunkt konnte nicht erreicht werden');
+            ? 'Page status saved, but the frontend could not be updated.'
+            : 'Seitenstatus gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
         }
       }
     } catch {
@@ -319,6 +331,19 @@ const PagesSchemaDetail: React.FC = () => {
           )}
         </div>
       </div>
+
+      {revalidationNotice && (
+        <Alert className="border-amber-500 bg-amber-50 dark:bg-amber-950">
+          <AlertTitle>
+            {language === 'en'
+              ? `Page /${revalidationNotice.pageSlug} was saved, but the frontend update failed`
+              : `Seite /${revalidationNotice.pageSlug} gespeichert, aber das Frontend konnte nicht aktualisiert werden`}
+          </AlertTitle>
+          <AlertDescription>
+            <RevalidationFeedback result={revalidationNotice.result} language={language} />
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Registration CTA for pending schemas */}
       {schema.registration_status === 'pending' && (

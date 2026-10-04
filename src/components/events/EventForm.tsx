@@ -166,9 +166,9 @@ export const EventForm: React.FC<EventFormProps> = ({
   const [pendingSubmission, setPendingSubmission] = useState<EventFormValues | null>(null);
 
   const handleInvalidSubmit = () => {
-    toast.error(language === 'en'
-      ? 'Check the highlighted fields before creating the event.'
-      : 'Bitte prüfe die markierten Felder, bevor du die Veranstaltung erstellst.');
+    toast.error(mode === 'create'
+      ? language === 'en' ? 'Check the highlighted fields before creating the event.' : 'Bitte prüfe die markierten Felder, bevor du die Veranstaltung erstellst.'
+      : language === 'en' ? 'Check the highlighted fields before saving the event.' : 'Bitte prüfe die markierten Felder, bevor du die Veranstaltung speicherst.');
     formElementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 

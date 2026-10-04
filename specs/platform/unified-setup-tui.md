@@ -240,7 +240,7 @@ bypass RLS — no user-facing write policies).
 | `owner_kind` | `component` | `key` examples | written by |
 |---|---|---|---|
 | `core` | `worker` | `worker`, `core_commit` | deploy / cf-update after `wrangler deploy` |
-| `core` | `migrations` | `objects.sql`, `202609100001_deployment_state.sql`, `202610040001_legacy_string_array_schema_support.sql` | setup / cf-update / migrate |
+| `core` | `migrations` | `objects.sql`, `202609100001_deployment_state.sql`, `202610040001_legacy_string_array_schema_support.sql`, `202610040002_page_content_templates.sql` | setup / cf-update / migrate |
 | `core` | `edge_functions` | `send_email`, `deployed` | setup / cf-update |
 | `core` | `auth_hook` | `custom_access_token_hook` | migrate / cf-update (`registerAuthHook`) |
 | `plugin` | `code` | *(single row)* `code` | install / update |

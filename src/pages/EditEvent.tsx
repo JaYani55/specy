@@ -8,17 +8,39 @@ import { EventForm, EventFormValues } from '../components/events/EventForm';
 import { supabase } from '../lib/supabase';
 import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import { useData } from '../contexts/DataContext'; 
 import { calculateEndTime } from '@/utils/timeUtils';
 import { calculateEventStatus } from '../utils/eventUtils';
 import { EventStatus, EventMode } from '@/types/event';
 import { ensureCompanyRecord } from '@/services/company/companyService';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
-import { getSchema, triggerRevalidation } from '@/services/pageService';
+import { getSchema, triggerRevalidation, type RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
+
+interface EventSaveError {
+  message: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+}
+
+const toEventSaveError = (error: unknown): EventSaveError => {
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>;
+    return {
+      message: typeof value.message === 'string' ? value.message : 'The event could not be saved.',
+      ...(typeof value.code === 'string' ? { code: value.code } : {}),
+      ...(typeof value.details === 'string' ? { details: value.details } : {}),
+      ...(typeof value.hint === 'string' ? { hint: value.hint } : {}),
+    };
+  }
+  return { message: typeof error === 'string' ? error : 'The event could not be saved.' };
+};
 
 type SupabaseEventRow = {
   id: string;
@@ -79,7 +101,8 @@ const EditEvent = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingEvent, setIsLoadingEvent] = useState(true);
   const [eventData, setEventData] = useState<EventFormInitialValues | null>(null);
-  const [isSubmitSuccessful, setIsSubmitSuccessful] = useState(false);
+  const [saveError, setSaveError] = useState<EventSaveError | null>(null);
+  const [revalidationResult, setRevalidationResult] = useState<RevalidationResult | null>(null);
   const [eventPageInfo, setEventPageInfo] = useState<{ path: string; slug: string; schemaSlug: string; status: string; registered: boolean } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -236,6 +259,8 @@ const EditEvent = () => {
 
   const handleSubmit = async (values: EventFormValues) => {
     setIsLoading(true);
+    setSaveError(null);
+    setRevalidationResult(null);
     try {
       if (!id || !activeTenantId) throw new Error(language === 'en' ? 'Select a workspace before updating this event.' : 'Wähle vor dem Aktualisieren einen Workspace aus.');
       const staffMembers = values.staff_members && values.staff_members.length > 0
@@ -259,7 +284,7 @@ const EditEvent = () => {
               })
             : 'new');
 
-      const { error } = await supabase
+      const { data: updatedEvent, error } = await supabase
         .from('mentorbooking_events')
         .update({
           company_id: companyRecord.id,
@@ -280,44 +305,54 @@ const EditEvent = () => {
           ...(eventData?.page_id ? { timezone: values.timezone ?? null } : {}),
         })
         .eq('id', id)
-        .eq('tenant_id', activeTenantId);
+        .eq('tenant_id', activeTenantId)
+        .select('id')
+        .maybeSingle();
 
       if (error) throw error;
+      if (!updatedEvent) throw new Error(language === 'en'
+        ? 'No event was updated in the selected workspace. Check your access and try again.'
+        : 'Im ausgewählten Workspace wurde keine Veranstaltung aktualisiert. Prüfe deine Berechtigung und versuche es erneut.');
 
+      let revalidationFailed = false;
       if (eventPageInfo?.registered && eventPageInfo.status === 'published') {
-        try {
-          const result = await triggerRevalidation(eventPageInfo.schemaSlug, eventPageInfo.slug);
-          if (!result.success) toast.warning(language === 'en' ? 'Event saved, but frontend revalidation failed.' : 'Veranstaltung gespeichert, aber die Frontend-Aktualisierung ist fehlgeschlagen.');
-        } catch {
-          toast.warning(language === 'en' ? 'Event saved, but frontend revalidation could not be reached.' : 'Veranstaltung gespeichert, aber der Frontend-Aktualisierungsdienst war nicht erreichbar.');
+        const result = await triggerRevalidation(eventPageInfo.schemaSlug, eventPageInfo.slug);
+        setRevalidationResult(result);
+        if (!result.success) {
+          revalidationFailed = true;
+          toast.warning(language === 'en'
+            ? 'Event saved, but the frontend could not be updated.'
+            : 'Veranstaltung gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
         }
       }
 
-      // Mark submission as successful
-      setIsSubmitSuccessful(true);
-      
-      // Refresh the cache after successful update
-      await refetchEvents();
-      
+      try {
+        await refetchEvents();
+      } catch (refreshError) {
+        console.error('Event was saved, but the event list could not be refreshed:', refreshError);
+      }
+
       toast.success(
         language === 'en' 
           ? 'Event updated successfully' 
           : 'Veranstaltung erfolgreich aktualisiert'
       );
       
-      // Navigate with a slight delay to allow the toast to be seen
-      setTimeout(() => {
-        navigate(`/events/${id}`, { 
-          state: { from: sessionStorage.getItem('eventReferrer') } 
-        });
-      }, 500);
+      // Keep the editor open after a revalidation failure so the inline details remain visible.
+      if (!revalidationFailed) {
+        setTimeout(() => {
+          navigate(`/events/${id}`, {
+            state: { from: sessionStorage.getItem('eventReferrer') }
+          });
+        }, 500);
+      }
     } catch (error: unknown) {
       console.error("Error updating event:", error);
-      const message = error instanceof Error ? error.message : undefined;
+      const failure = toEventSaveError(error);
+      setSaveError(failure);
       toast.error(
-        language === 'en' 
-          ? message || 'Failed to update event' 
-          : 'Fehler beim Aktualisieren der Veranstaltung'
+        language === 'en' ? 'The event could not be saved.' : 'Die Veranstaltung konnte nicht gespeichert werden.',
+        { description: failure.message },
       );
     } finally {
       setIsLoading(false);
@@ -361,6 +396,36 @@ const EditEvent = () => {
           <ExternalLink className="mr-2 h-4 w-4" />
           {language === 'en' ? 'Edit public event page' : 'Öffentliche Veranstaltungsseite bearbeiten'}
         </Button>
+      )}
+
+      {saveError && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>{language === 'en' ? 'Event could not be saved' : 'Veranstaltung konnte nicht gespeichert werden'}</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{saveError.message}</p>
+            {(saveError.code || saveError.details || saveError.hint) && (
+              <details className="rounded-md border border-destructive/30 px-3 py-2">
+                <summary className="cursor-pointer font-medium">
+                  {language === 'en' ? 'Error details' : 'Fehlerdetails'}
+                </summary>
+                <div className="mt-2 space-y-1 break-words font-mono text-xs">
+                  {saveError.code && <p>Code: {saveError.code}</p>}
+                  {saveError.details && <p>{saveError.details}</p>}
+                  {saveError.hint && <p>Hint: {saveError.hint}</p>}
+                </div>
+              </details>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {revalidationResult && !revalidationResult.success && (
+        <Alert className="border-amber-500 bg-amber-50 dark:bg-amber-950">
+          <AlertTitle>{language === 'en' ? 'Event saved; frontend update failed' : 'Veranstaltung gespeichert; Frontend-Aktualisierung fehlgeschlagen'}</AlertTitle>
+          <AlertDescription>
+            <RevalidationFeedback result={revalidationResult} language={language} />
+          </AlertDescription>
+        </Alert>
       )}
 
       <EventForm
