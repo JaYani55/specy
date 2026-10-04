@@ -45,6 +45,16 @@ Content-Type: application/json
 
 The same fields are accepted by MCP `specy_pages_schemas_create_page` (or its `create_page` compatibility tool). `product_id`, when supplied, is the service-product UUID from the tenant-scoped product list, not the legacy integer event-FK value. Event page content/title/slug and publication use `specy_pages_schemas_update_page` with the tenant UUID, current schema `definition_revision`, and page `updated_at` returned by the latest page read. REST uses `PATCH /api/schemas/<event-api-slug>/pages/<page-uuid>` with those same concurrency fields. Updating operational schedule/product/company details through REST/MCP is not yet supported; use the dashboard event editor.
 
+## Public event and product data URL
+
+A frontend that needs a product together with its scheduled occurrences can fetch the tenant-safe dynamic read URL:
+
+```text
+GET /api/products/{workspaceSlug}/{productSlug}
+```
+
+`workspaceSlug` is `public.tenants.slug`; `productSlug` is the published page slug in a registered service-product schema. The response is shaped as `{ product: { id, name, slug, content, custom_fields, events: [...] } }`. Nested events contain their published page content and allow-listed operational date, time, end time, duration, timezone, and mode. Custom fields are returned only when their workspace definition marks them public. Internal status, company/customer records, staff, meeting URLs, approvals, and compensation are excluded.
+
 ## Public API includes
 
 ```text

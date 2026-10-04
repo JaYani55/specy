@@ -99,7 +99,8 @@ const ProductManagementModal: React.FC<ProductManagementModalProps> = ({
           ? values.approved 
           : (values.approved ? [values.approved] : []), // Ensure it's always an array
         gradient: values.gradient,
-        is_mentor_product: values.is_mentor_product || false
+        is_mentor_product: values.is_mentor_product || false,
+        custom_fields: values.custom_fields ?? {},
       };
       
       console.log("Calling createOrUpdateProduct with:", ProductData);

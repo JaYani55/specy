@@ -120,6 +120,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           product_id: event.product_id,
           teams_link: event.teams_link || '',
           initial_selected_mentors: event.initial_selected_mentors || [],
+          custom_fields: event.custom_fields && typeof event.custom_fields === 'object' ? event.custom_fields : {},
         };
       });
     return transformedEvents;

@@ -96,8 +96,11 @@ All core tables live in the `public` schema. Grouped by concern:
 | `public.tenant_storage_objects`, `public.tenant_storage_allocations` | File catalog & quotas (see [`r2-file-storage.md`](r2-file-storage.md)) |
 
 Legacy domain tables from earlier product history (e.g. `mentorbooking_*`,
-`employers`, `companies`) still exist but are not part of the CMS contract surface —
-do not build on them.
+`employers`, `companies`) remain compatibility backing tables. The `mentorbooking_products.custom_fields`
+and `mentorbooking_events.custom_fields` JSON objects hold workspace-defined values; field contracts and
+public visibility are in `public.tenant_custom_field_definitions` (`entity_type = product | event`). The dynamic
+public product read is exposed as `GET /api/products/:workspaceSlug/:productSlug`. These remain core-owned
+compatibility tables; plugin authors must use documented APIs rather than query or extend them directly.
 
 ### Shared helpers & conventions
 

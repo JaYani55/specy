@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -52,6 +52,9 @@ import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
 import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
 import { PageContentTemplateControls } from './PageContentTemplateControls';
+import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
+import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import type { RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
@@ -771,6 +774,7 @@ interface SchemaContentEditorProps {
   initialStatus?: PageRecord['status'];
   productAggregateId?: string;
   productVersion?: number;
+  initialProductCustomFields?: Record<string, unknown>;
   eventAggregateId?: string;
   initialPageUpdatedAt?: string;
 }
@@ -785,6 +789,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   initialStatus,
   productAggregateId,
   productVersion: initialProductVersion,
+  initialProductCustomFields,
   eventAggregateId,
   initialPageUpdatedAt,
 }) => {
@@ -820,6 +825,9 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const [isSaving, setIsSaving]                 = useState(false);
   const [savedSlug, setSavedSlug]               = useState<string | null>(null);
   const [aggregateVersion, setAggregateVersion] = useState(initialProductVersion);
+  const [productCustomFields, setProductCustomFields] = useState<Record<string, unknown>>(() => initialProductCustomFields ?? {});
+  const [productCustomFieldDefinitions, setProductCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [customFieldsValid, setCustomFieldsValid] = useState(true);
   const [pageUpdatedAt, setPageUpdatedAt] = useState(initialPageUpdatedAt);
   const [publicationStatus, setPublicationStatus] = useState(initialStatus ?? 'draft');
   const [revalResult, setRevalResult]           = useState<RevalidationResult | null>(null);
@@ -869,6 +877,21 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const isServiceProduct = schema.entity_kind === 'service-product';
   const isEventPage = schema.entity_kind === 'event';
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!isServiceProduct || !schema.tenant_id) {
+      setProductCustomFieldDefinitions({});
+      setCustomFieldsValid(true);
+      return;
+    }
+    void getTenantCustomFieldDefinitions(schema.tenant_id, 'product')
+      .then((definitions) => { if (!cancelled) setProductCustomFieldDefinitions(definitions); })
+      .catch((error) => {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Could not load product custom fields.');
+      });
+    return () => { cancelled = true; };
+  }, [isServiceProduct, schema.tenant_id]);
+
   // ── JSON import handler
   const handleJsonImport = useCallback((data: Record<string, unknown>) => {
     setFormData((prev) => mergeSchemaContent(prev, data));
@@ -887,8 +910,19 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   // ── Save handler
   const handleSave = async (statusAfterSave?: 'draft' | 'published') => {
     if (!pageName.trim()) {
-      toast.error('Seitenname ist erforderlich.');
+      toast.error(language === 'en' ? 'Page name is required.' : 'Seitenname ist erforderlich.');
       return;
+    }
+    if (isServiceProduct) {
+      if (!customFieldsValid) {
+        toast.error(language === 'en' ? 'Fix the invalid JSON custom fields.' : 'Bitte korrigiere die ungültigen JSON-Felder.');
+        return;
+      }
+      const customFieldError = validateTenantCustomFieldValues(productCustomFieldDefinitions, productCustomFields);
+      if (customFieldError) {
+        toast.error(customFieldError);
+        return;
+      }
     }
     setIsSaving(true);
     setRevalResult(null);
@@ -910,9 +944,11 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
               name: pageName,
               slug: pageSlug,
               content,
+              custom_fields: productCustomFields,
             });
             updatedProduct = product;
             setAggregateVersion(product.version);
+            setProductCustomFields(product.custom_fields ?? productCustomFields);
             return { id: product.page_id, slug: product.slug || pageSlug };
           })()
         : schema.entity_kind === 'event'
@@ -1256,6 +1292,17 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             ))}
           </CardContent>
         </Card>
+      )}
+
+      {isServiceProduct && Object.keys(productCustomFieldDefinitions).length > 0 && (
+        <TenantCustomFieldsEditor
+          key={`${schema.id}-${productAggregateId ?? 'new-product'}`}
+          definitions={productCustomFieldDefinitions}
+          values={productCustomFields}
+          language={language}
+          onChange={setProductCustomFields}
+          onValidityChange={setCustomFieldsValid}
+        />
       )}
 
       {/* ── Save Feedback ─────────────────────────────────── */}

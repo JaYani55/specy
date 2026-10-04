@@ -14,7 +14,7 @@ This is not the broader event/staff/CRM rebuild. Existing scheduling events and 
 - The event and its canonical `pages` record are created atomically via `create_event_page_aggregate`. The new page is a draft and the dashboard opens it in the canonical PageBuilder route.
 - `pages.content` contains developer-defined presentation/editorial content. Operational date, time, duration, mode, product selection, and scheduling data stay on `mentorbooking_events`.
 - The PageBuilder edits page name, slug, and schema content through event-specific aggregate RPCs. Its top-level content-template controls can save a reusable template for this schema and load one onto another event page; templates copy page content only, never the event title, slug, publication state, or operational schedule. Publication is explicit and independent of the event's operational scheduling status. Event edits retain the page link; public schedule data is resolved from the event row rather than copied into page JSON.
-- Event detail/edit screens link back to the public page editor. Deleting an event removes its linked page in the same caller-scoped transaction; deleting a linked page directly is restricted.
+- Event detail/edit screens link back to the public page editor. Workspace-defined event custom fields are edited under the standard event fields in Create/Edit Event and are stored in `mentorbooking_events.custom_fields`, separate from event page content. Their definitions are configured from Product Management → Eigene Felder. Deleting an event removes its linked page in the same caller-scoped transaction; deleting a linked page directly is restricted.
 
 Event page creation currently happens when creating a new event. Converting/attaching a page to an existing legacy event is not included in this MVP.
 
@@ -57,7 +57,7 @@ Only published pages that resolve to a same-tenant event with a valid timezone a
 - `?include=product` adds a product's UUID, name, slug, and `schema_api_slug` only when the selected product is active and its page belongs to a registered service-product schema and is published.
 - Includes can be combined, for example `?include=entity,event,product`.
 
-Public delivery never returns company/customer data, Teams/meeting URLs, internal event status, staff/account IDs, staff assignments, request/approval arrays, compensation, or private notes. With no `include` query, the allow-listed operational schedule is returned as `relations.event` by default so frontends can sort and render occurrences without copying schedule facts into page content. An explicit `include` query returns only its requested relations. Event scheduling state does not implicitly publish or unpublish a page.
+Public delivery never returns company/customer data, Teams/meeting URLs, internal event status, staff/account IDs, staff assignments, request/approval arrays, compensation, or private notes. The dynamic product endpoint `GET /api/products/:workspaceSlug/:productSlug` also returns published linked occurrences under `product.events[]`, with the allow-listed schedule facts and only event custom fields configured as public. Product-specific custom fields appear in `product.custom_fields`; neither projection exposes private or undefined custom fields. With no `include` query, the schema-scoped API's allow-listed operational schedule is returned as `relations.event` by default so frontends can sort and render occurrences without copying schedule facts into page content. An explicit `include` query returns only its requested relations. Event scheduling state does not implicitly publish or unpublish a page.
 
 The public Worker uses a privileged read client only for this narrow, published, allow-listed projection. Anonymous callers cannot read drafts or perform writes.
 
@@ -73,6 +73,8 @@ PageBuilder save/publication uses the existing frontend revalidation path. Editi
 - `api/lib/eventPageAggregates.ts`, `api/lib/publicEntityProjection.ts`, `api/routes/schemas.ts`, `api/routes/mcp.ts`, `api/lib/frontendManifest.ts`, `src/lib/apiCatalog.ts` — entity-aware Pages post/update REST/MCP operations, event/product allow-listed public projections, and discovery metadata.
 - `migrations/202610030001_event_page_aggregates.sql` — tenant link constraints, write guards, aggregate RPCs, timezone validation, and page lifecycle behavior.
 - `migrations/202610040002_page_content_templates.sql` — schema-scoped content-template storage, tenant/owner policies, schema ownership validation, and content limits.
+- `migrations/202610040003_product_event_custom_fields.sql` — workspace product/event field definitions, custom JSON values, tenant-scoped aggregate updates, and public projection support.
+- `migrations/202610040003_product_event_custom_fields.sql` — workspace field definitions, product/event JSONB values, dynamic public projection support, and tenant-safe aggregate update operations.
 
 ## Rollout boundary
 

@@ -19,6 +19,7 @@ export interface EventPageCreateInput {
     required_staff_count?: number;
     required_trait_id?: number | null;
     description?: string;
+    custom_fields?: Record<string, unknown>;
   };
 }
 
@@ -98,6 +99,7 @@ export function parseEventPageCreateInput(input: unknown):
     return { ok: false, error: 'event.required_trait_id must be a positive integer or null.' };
   }
   if (event.description !== undefined && typeof event.description !== 'string') return { ok: false, error: 'event.description must be a string.' };
+  if (event.custom_fields !== undefined && !validateContent(event.custom_fields)) return { ok: false, error: 'event.custom_fields must be a JSON object no larger than 1 MiB.' };
 
   const slug = typeof input.slug === 'string' && input.slug.trim() ? input.slug : input.name;
   return {
@@ -120,6 +122,7 @@ export function parseEventPageCreateInput(input: unknown):
         ...(typeof event.required_staff_count === 'number' ? { required_staff_count: event.required_staff_count } : {}),
         ...(typeof event.required_trait_id === 'number' || event.required_trait_id === null ? { required_trait_id: event.required_trait_id as number | null } : {}),
         ...(typeof event.description === 'string' ? { description: event.description } : {}),
+        ...(isRecord(event.custom_fields) ? { custom_fields: event.custom_fields } : {}),
       },
     },
   };
@@ -153,7 +156,7 @@ export async function createEventPageAggregate(
     legacyProductId = product.id as number;
   }
 
-  const { data, error } = await client.rpc('create_event_page_aggregate', {
+  const { data, error } = await client.rpc('create_event_page_aggregate_with_custom_fields', {
     target_tenant_id: input.tenant_id,
     target_schema_id: schema.id,
     expected_definition_revision: input.expected_definition_revision,
@@ -185,6 +188,7 @@ export async function createEventPageAggregate(
     target_page_name: input.name,
     target_page_slug: input.slug,
     target_page_content: input.content,
+    target_event_custom_fields: input.event.custom_fields ?? {},
   });
   if (error) {
     const status = error.code === 'P0002' ? 404

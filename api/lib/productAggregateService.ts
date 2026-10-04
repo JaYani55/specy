@@ -29,7 +29,7 @@ function throwDatabaseError(error: { message: string; code?: string; details?: s
 export async function listProductAggregates(client: UserClient, tenantId: string) {
   const { data: products, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
     .eq('tenant_id', tenantId)
     .is('retired_at', null)
     .order('updated_at', { ascending: false });
@@ -47,7 +47,7 @@ export async function listProductAggregates(client: UserClient, tenantId: string
 export async function getProductAggregate(client: UserClient, id: string, tenantId: string) {
   const { data: product, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
     .eq('tenant_id', tenantId)
     .eq('id', id)
     .maybeSingle();
@@ -67,7 +67,7 @@ export async function getProductAggregate(client: UserClient, id: string, tenant
 export async function getProductAggregateByPage(client: UserClient, pageId: string, tenantId: string) {
   const { data, error } = await client
     .from('service_products')
-    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at')
+    .select('id, tenant_id, name, page_id, retired_at, team_enabled, version, created_at, updated_at, custom_fields')
     .eq('tenant_id', tenantId)
     .eq('page_id', pageId)
     .is('retired_at', null)
@@ -121,7 +121,7 @@ async function loadProductSchema(client: UserClient, tenantId: string, pageSchem
 export async function updateProductAggregate(client: UserClient, id: string, input: UpdateServiceProductInput) {
   const { data: product, error: productError } = await client
     .from('service_products')
-    .select('name, page_id, version')
+    .select('name, page_id, version, custom_fields')
     .eq('tenant_id', input.tenant_id)
     .eq('id', id)
     .maybeSingle();
@@ -144,14 +144,15 @@ export async function updateProductAggregate(client: UserClient, id: string, inp
     const validation = validateSchemaContent(schema.schema, content);
     if (!validation.ok) throw new ProductAggregateError('Product content does not satisfy its schema.', 400, '22023', validation.errors.join('\n'));
   }
-  const { data, error } = await client.rpc('update_service_product_aggregate', {
+  const { data, error } = await client.rpc('update_service_product_aggregate_with_custom_fields', {
     target_product_id: id,
     expected_tenant_id: input.tenant_id,
     expected_version: input.expected_version,
     expected_definition_revision: input.expected_definition_revision,
     target_name: input.name ?? product.name,
     target_slug: input.slug ?? page.slug,
-    target_content: content,
+    target_page_content: content,
+    target_custom_fields: input.custom_fields ?? product.custom_fields ?? {},
   });
   if (error) throwDatabaseError(error);
   return data;

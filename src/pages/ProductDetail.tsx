@@ -7,10 +7,15 @@ import { fetchMentorGroups, MentorGroup } from '@/services/mentorGroupService'; 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, Pencil, CheckCircle2 } from 'lucide-react';
+import { Loader2, ArrowLeft, Pencil, CheckCircle2, ExternalLink } from 'lucide-react';
 import { getIconByName } from '@/constants/pillaricons';
 import ProductManagementModal from '@/components/events/ProductManagementModal';
+import { CustomFieldsDisplay } from '@/components/products/CustomFieldsDisplay';
+import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { API_URL } from '@/lib/apiUrl';
+import { getSchema } from '@/services/pageService';
+import { supabase } from '@/lib/supabase';
 
 const ProductDetail = () => {
   const { productId } = useParams<{ productId: string }>();
@@ -25,6 +30,8 @@ const ProductDetail = () => {
   const [mentorGroups, setMentorGroups] = useState<MentorGroup[]>([]); // Add this state
   const [isLoading, setIsLoading] = useState(true);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [publicDataUrl, setPublicDataUrl] = useState<string | null>(null);
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
 
   // Add permission check
   useEffect(() => {
@@ -36,11 +43,49 @@ const ProductDetail = () => {
   useEffect(() => {
     setProduct(null);
     setShowEditForm(false);
+    setCustomFieldDefinitions({});
+    let cancelled = false;
+    if (activeTenantId) {
+      void getTenantCustomFieldDefinitions(activeTenantId, 'product')
+        .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
+        .catch((error) => console.error('Could not load product custom field definitions:', error));
+    }
+    return () => { cancelled = true; };
   }, [activeTenantId]);
 
   useEffect(() => {
     document.title = product ? `${product.name} | Product Details` : 'Product Details';
   }, [product]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPublicDataUrl(null);
+    const resolvePublicUrl = async () => {
+      if (!product || !activeTenantId) return;
+      try {
+        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('slug').eq('id', activeTenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant?.slug) return;
+        if (!product.product_page_id) return;
+        const { data: page, error: pageError } = await supabase.from('pages')
+          .select('slug, schema_id, status')
+          .eq('id', product.product_page_id)
+          .eq('tenant_id', activeTenantId)
+          .maybeSingle();
+        if (pageError) throw pageError;
+        if (!page || page.status !== 'published') return;
+        const schema = await getSchema(page.schema_id);
+        if (schema.entity_kind !== 'service-product' || schema.registration_status !== 'registered' || schema.tenant_id !== activeTenantId) return;
+        if (!cancelled) {
+          setPublicDataUrl(`${API_URL}/api/products/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(page.slug)}`);
+        }
+      } catch (error) {
+        console.error('Could not resolve public product data URL:', error);
+      }
+    };
+    void resolvePublicUrl();
+    return () => { cancelled = true; };
+  }, [activeTenantId, product]);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +220,20 @@ const ProductDetail = () => {
         </div>
       ) : (
         <>
+          {publicDataUrl && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{language === 'en' ? 'Dynamic product data' : 'Dynamische Produktdaten'}</p>
+                <code className="block truncate text-xs text-muted-foreground">{publicDataUrl}</code>
+              </div>
+              <Button asChild size="sm" variant="outline">
+                <a href={publicDataUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {language === 'en' ? 'Open JSON' : 'JSON öffnen'}
+                </a>
+              </Button>
+            </div>
+          )}
           {/* Page title */}
           <h1 className="text-3xl md:text-4xl font-bold mb-8">
             {product.name}
@@ -303,6 +362,9 @@ const ProductDetail = () => {
                 )}
               </div>
             </Card>
+          </div>
+          <div className="mt-8">
+            <CustomFieldsDisplay definitions={customFieldDefinitions} values={product.custom_fields} language={language} />
           </div>
         </>
       )}

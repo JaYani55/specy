@@ -46,13 +46,13 @@ export function TimePicker({
     return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
   };
 
-  const handleTimeSelect = (hour: number, minute: number) => {
+  const handleTimeSelect = (hour: number, minute: number, closePicker = true) => {
     const timeString = formatTime(hour, minute);
     setSelectedHour(hour);
     setSelectedMinute(minute);
     setInputValue(timeString);
     onChange(timeString);
-    setIsOpen(false);
+    if (closePicker) setIsOpen(false);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -107,7 +107,8 @@ export function TimePicker({
       }
     }
 
-    handleTimeSelect(newHour, newMinute);
+    // Keep the picker open while the user adjusts multiple hour/minute steps.
+    handleTimeSelect(newHour, newMinute, false);
   };
 
   return (

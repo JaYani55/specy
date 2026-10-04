@@ -20,6 +20,7 @@ export interface Product {
   approved?: string[];
   gradient?: string;
   is_mentor_product?: boolean; // Make sure this is included
+  custom_fields?: Record<string, unknown>;
 }
 
 // Type for Supabase query responses
@@ -85,7 +86,10 @@ export const createProduct = async (Product: Omit<Product, 'id'>, tenantId: stri
       max_amount_mentors: typeof Product.max_amount_mentors === 'number' ? Product.max_amount_mentors : null,
       approved: Array.isArray(Product.approved) ? Product.approved : [],
       gradient: Product.gradient || null,
-      is_mentor_product: Boolean(Product.is_mentor_product)
+      is_mentor_product: Boolean(Product.is_mentor_product),
+      custom_fields: Product.custom_fields && typeof Product.custom_fields === 'object' && !Array.isArray(Product.custom_fields)
+        ? Product.custom_fields
+        : {},
       // DO NOT include id, created_at, or updated_at - let the database handle these
     };
     Object.assign(sanitizedProduct, { tenant_id: scopedTenantId });

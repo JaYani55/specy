@@ -33,6 +33,7 @@ export const ProductFormSchema = z.object({
   approved: z.array(z.string()).default([]),
   gradient: z.string().optional(),
   is_mentor_product: z.boolean().default(false),
+  custom_fields: z.record(z.string(), z.unknown()).default({}),
 });
 
 export type ProductFormValues = z.infer<typeof ProductFormSchema>;

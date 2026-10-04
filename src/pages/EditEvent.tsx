@@ -63,6 +63,7 @@ type SupabaseEventRow = {
   staff_members: string[] | null;
   teams_link: string | null;
   initial_selected_mentors: string[] | null;
+  custom_fields: Record<string, unknown> | null;
 };
 
 const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormInitialValues => ({
@@ -89,6 +90,7 @@ const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormIniti
   initial_selected_mentors: Array.isArray(input.initial_selected_mentors)
     ? input.initial_selected_mentors
     : [],
+  custom_fields: input.custom_fields ?? {},
 });
 
 const EditEvent = () => {
@@ -159,6 +161,7 @@ const EditEvent = () => {
             staff_members: cachedEvent.staff_members,
             teams_link: cachedEvent.teams_link,
             initial_selected_mentors: cachedEvent.initial_selected_mentors,
+            custom_fields: cachedEvent.custom_fields,
             page_id: cachedEvent.page_id,
             timezone: cachedEvent.timezone,
           });
@@ -198,6 +201,7 @@ const EditEvent = () => {
           initial_selected_mentors: Array.isArray(data.initial_selected_mentors)
             ? data.initial_selected_mentors
             : undefined,
+          custom_fields: data.custom_fields ?? {},
         });
 
         setEventData(normalizedFromDb);
@@ -302,6 +306,7 @@ const EditEvent = () => {
           required_trait_id: values.required_trait_id ?? null,
           product_id: values.product_id ?? null,
           teams_link: values.teams_link ?? "",
+          custom_fields: values.custom_fields ?? {},
           ...(eventData?.page_id ? { timezone: values.timezone ?? null } : {}),
         })
         .eq('id', id)

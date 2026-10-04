@@ -34,6 +34,7 @@ export interface Event {
   required_trait_id?: number | null;
   product_id?: number;
   initial_selected_mentors?: string[];
+  custom_fields?: Record<string, unknown>;
   companyInfo?: {
     id: string;
     name: string;
@@ -59,6 +60,7 @@ export interface EventFormData {
   teams_link: string;
   isLocked: boolean;
   timezone?: string | null;
+  custom_fields?: Record<string, unknown>;
 }
 
 export interface EventFormErrors {

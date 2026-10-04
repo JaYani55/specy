@@ -21,6 +21,7 @@ export interface EventPageAggregate {
   mode: 'live' | 'online' | 'hybrid' | null;
   product_id: number | null;
   timezone: string | null;
+  custom_fields?: Record<string, unknown>;
 }
 
 export interface CreatePublicEventPageInput {
@@ -48,6 +49,7 @@ export interface CreatePublicEventPageInput {
     teams_link?: string;
     initial_selected_mentors?: string[];
     timezone: string;
+    custom_fields?: Record<string, unknown>;
   };
   page_name: string;
   page_slug?: string;
@@ -66,7 +68,7 @@ export async function getEventPageAggregateByPage(pageId: string, tenantId: stri
   if (!tenantId) throw new Error('An active workspace is required to load an event page.');
   const { data, error } = await supabase
     .from('mentorbooking_events')
-    .select('id, page_id, tenant_id, date, time, end_time, duration_minutes, mode, product_id, timezone')
+    .select('id, page_id, tenant_id, date, time, end_time, duration_minutes, mode, product_id, timezone, custom_fields')
     .eq('page_id', pageId)
     .eq('tenant_id', tenantId)
     .maybeSingle();
@@ -78,7 +80,7 @@ export async function getEventPageAggregateByPage(pageId: string, tenantId: stri
 export async function createPublicEventPage(input: CreatePublicEventPageInput): Promise<PublicEventPageLink> {
   if (!input.tenant_id) throw new Error('An active workspace is required to create an event.');
   if (!isValidIanaTimezone(input.event.timezone)) throw new Error('Choose a valid event timezone.');
-  const { data, error } = await supabase.rpc('create_event_page_aggregate', {
+  const { data, error } = await supabase.rpc('create_event_page_aggregate_with_custom_fields', {
     target_tenant_id: input.tenant_id,
     target_schema_id: input.schema_id,
     expected_definition_revision: input.expected_definition_revision,
@@ -86,6 +88,7 @@ export async function createPublicEventPage(input: CreatePublicEventPageInput): 
     target_page_name: input.page_name.trim(),
     target_page_slug: normalizeEventPageSlug(input.page_slug || input.page_name),
     target_page_content: input.content ?? {},
+    target_event_custom_fields: input.event.custom_fields ?? {},
   });
   if (error) throw new Error(error.message);
   if (!data) throw new Error('Event page creation returned no result.');

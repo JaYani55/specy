@@ -54,6 +54,7 @@ const eventPageCreateDetailsSchema = z.object({
   required_staff_count: z.number().int().min(1).optional(),
   required_trait_id: z.number().int().positive().nullable().optional(),
   description: z.string().optional().describe('Operational description; it is not included in the public event projection.'),
+  custom_fields: z.record(z.string(), z.unknown()).optional().describe('Workspace-defined event fields, separate from page content. Public fields are returned by the dynamic product/event endpoint.'),
 });
 
 const BUILT_IN_MCP_TOOLS = [
@@ -324,11 +325,13 @@ async function createMcpServerWithTools(
         name: z.string().min(1).optional(),
         slug: z.string().min(1).optional(),
         content: z.record(z.string(), z.unknown()).optional(),
+        custom_fields: z.record(z.string(), z.unknown()).optional().describe('Workspace-defined product fields, stored separately from schema page content.'),
       },
-      async ({ id, tenant_id, expected_version, expected_definition_revision, name, slug, content }) => {
+      async ({ id, tenant_id, expected_version, expected_definition_revision, name, slug, content, custom_fields }) => {
         const parsed = parseUpdateServiceProductInput({
           tenant_id, expected_version, expected_definition_revision,
           ...(name !== undefined ? { name } : {}), ...(slug !== undefined ? { slug } : {}), ...(content !== undefined ? { content } : {}),
+          ...(custom_fields !== undefined ? { custom_fields } : {}),
         });
         if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
         return callProductOperation(() => updateProductAggregate(supabase, id, parsed.value));

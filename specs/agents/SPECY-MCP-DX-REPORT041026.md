@@ -63,7 +63,7 @@ Die operative Event-Erstellung speichert Datum, Uhrzeit, Dauer, Zeitzone und Mod
 
 **Auswirkung:** Eine über PageBuilder regulär angelegte Eventseite enthält möglicherweise keinen `content.date`-Wert und wird von der Startseite nicht als kommendes Event angezeigt. Die aktuelle Implementierung kann Eventdaten nicht allein aus dem operativen Event-Datensatz rendern.
 
-**Bitte klären/fixen:** Entweder die veröffentlichte Event-Pages-API um eine dokumentierte öffentliche Event-Projektion erweitern, zum Beispiel `event: { date, time, duration_minutes, timezone, mode, ... }`, oder diese display-relevanten Felder explizit im Event-Seitenschema anbieten. Wichtig wäre außerdem eine klare Festlegung, welche Datenquelle für die öffentliche Darstellung maßgeblich ist, damit zwei Datums-/Zeitkopien nicht auseinanderlaufen.
+**Bitte klären/fixen:** Die veröffentlichte Event-Pages-API um eine dokumentierte öffentliche Event-Projektion erweitern und festlegen, welche Datenquelle für die Darstellung maßgeblich ist. Erforderliche Anforderungen für eine dynamische Website-Anbindung stehen im Abschnitt **„Vertrag für dynamische Event-Daten“** weiter unten.
 
 ### P1 — `string[]`-Schemafeld wird beim Produkt-Publish abgelehnt
 
@@ -87,6 +87,58 @@ Bei `create_schema` wurde für das Event-Schema `required_slug_structure: "/vera
 Beim Erstellen des vorhandenen Slugs `themenwerkstatt_22102026` entstand `themenwerkstatt22102026`; der Unterstrich wurde nicht in einen Bindestrich umgewandelt. Das ist eine Änderung des erwarteten URL-Identifikators und kann bestehende Links brechen.
 
 **Bitte prüfen:** Dokumentierte Slug-Normalisierung (Unterstrich erhalten oder in `-` umwandeln) und gegebenenfalls Warnung/Redirect-Unterstützung bei URL-Migration.
+
+### P1 — Revalidierungs-POST wird mit leerem Body gesendet
+
+Ein Cloudflare-Worker-Log zeigte einen authentifizierten `POST` auf `/api/revalidate?path=...&slug=...` mit `content-length: 0`; die Anfrage erhielt HTTP 400. Der Handler erwartete zuvor unbedingt einen JSON-Body und gab bei `request.json()` auf leerem Inhalt `Invalid JSON payload` zurück.
+
+Die Eventseite war zu diesem Zeitpunkt bereits in `specy_pages_schemas_list_pages` vorhanden und als `published` markiert. Der Schreibvorgang war also erfolgreich; fehlgeschlagen ist der nachgelagerte Revalidierungs-Callback, den die Oberfläche offenbar als Fehler darstellt. Der Handler wurde lokal angepasst: leerer Body ist jetzt zulässig, `path` und `slug` werden aus der Query gelesen, JSON-Body bleibt weiterhin unterstützt. Build und `astro check` bestehen. Die Änderung muss noch auf den Worker deployed werden, bevor der Callback live mit HTTP 200 antwortet.
+
+**Zusätzlicher Konsistenzhinweis:** Die vom UI angelegte Seite hatte den Slug `themenwerkstatt-2026-10-04-09-00`, während der Seitentext das Datum 22.11.2026 und 18:00 Uhr ausweist. Da die verfügbaren MCP-Leseoperationen die operativen Event-Fakten nicht zurückgeben, ließ sich nicht klären, ob hier nur der generierte Slug oder auch die operativen Event-Daten abweichen. Das sollte im Event-Read-API sichtbar und überprüfbar sein.
+
+## Vertrag für dynamische Event-Daten
+
+Damit Website und CMS dieselben Daten zeigen, wird pro Event ein lesbarer öffentlicher Record benötigt, der Seitentexte und operative Fakten klar, aber ohne konkurrierende Duplikate verbindet. Gewünschte Form (Beispiel; Feldnamen können nach Specy-Konvention angepasst werden):
+
+```json
+{
+  "id": "page-uuid",
+  "slug": "themenwerkstatt-2026-11-22-18-00",
+  "name": "Themenwerkstatt",
+  "status": "published",
+  "content": {
+    "price": "89 €",
+    "priceLabel": "pro Teilnehmer",
+    "subtitle": "Mündliche Prüfung Handelsfachwirt (IHK)",
+    "teaser": "…",
+    "participantMin": 3,
+    "participantMax": 10
+  },
+  "event": {
+    "id": "event-uuid",
+    "product_id": "product-uuid",
+    "date": "2026-11-22",
+    "time": "18:00",
+    "duration_minutes": 150,
+    "timezone": "Europe/Berlin",
+    "mode": "online",
+    "registration_status": "open"
+  }
+}
+```
+
+### Mindestanforderungen
+
+1. `GET /api/schemas/{api_slug}/pages` muss veröffentlichte Eventseiten samt zugehörigem Event-Projektionsobjekt liefern; alternativ eine dokumentierte, tenant-sichere Event-Read-API mit denselben Join-Daten anbieten. Die bisherige Antwort enthielt nur `id`, `slug`, `name`, `status` und `content`.
+2. Operative Event-Fakten müssen aus dem verknüpften Eventobjekt kommen: ISO-Datum, lokale Uhrzeit, Dauer in Minuten, bestätigte IANA-Zeitzone, Modus und `product_id`. Website-Code kann daraus lesbare Werte formatieren; er sollte nicht auf manuell duplizierte `dateDisplay`-/`time`-Strings angewiesen sein.
+3. Ein Zustand wie „Anmeldung offen“ braucht ein explizites, dokumentiertes Feld. `page.status` bedeutet Draft/Published/Archived und ist nicht der Anmeldestatus. Der bisherige Text `content.status` ist ein freies Anzeige-Feld und ändert sich nicht automatisch, wenn sich operative Eventdaten oder Anmeldungen ändern.
+4. Teilnehmenden-Kapazität (Mindest-/Höchstzahl) ist nicht dasselbe wie `required_staff_count`. Entweder bleibt sie ausdrücklich im Seiteninhalt (`participantMin`/`participantMax`) oder das Eventmodell erhält eigene Kapazitätsfelder.
+5. Event-Lese- und Schreiboperationen sollten Event-Fakten über die MCP-Seiten-/Event-Tools sichtbar machen. Im Test konnten `get_page` und `list_pages` den Seiteninhalt zeigen, aber nicht die verknüpften operativen Fakten; dadurch ließ sich eine vom UI erzeugte Eventseite nicht vollständig prüfen.
+6. Route-Slug und Event-Datum müssen nachvollziehbar bleiben. Eine vom UI erzeugte Seite hatte den Slug `themenwerkstatt-2026-10-04-09-00`, während ihr Seiteninhalt den 22.11.2026 um 18:00 Uhr auswies. Wenn der Slug aus operativen Fakten abgeleitet wird, sollten dieselben Fakten über die Read-API prüfbar sein.
+
+### Aktueller Website-Fallback
+
+Bis dieser Vertrag verfügbar ist, liest die Website `date`, `dateDisplay`, `time`, `duration`, `groupSize` und `status` aus `page.content`. Diese Felder wurden dem Testtermin manuell hinzugefügt und sind derzeit nicht alle in der Event-Schema-Definition enthalten. Das ist ein Übergangs-Workaround, keine verlässliche Grundlage für das Erstellen künftiger Events allein über den visuellen Schema-Editor.
 
 ## Erfolgreicher End-to-End-Test
 

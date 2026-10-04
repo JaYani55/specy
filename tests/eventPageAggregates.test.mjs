@@ -18,6 +18,7 @@ const validInput = () => ({
     duration_minutes: 90,
     timezone: 'Europe/Berlin',
     mode: 'online',
+    custom_fields: { registration_status: 'open', participant_max: 10 },
   },
 });
 
@@ -29,6 +30,7 @@ describe('agent event-page create input', () => {
     assert.equal(result.value.slug, 'workshop-berlin');
     assert.equal(result.value.event.product_id, product);
     assert.equal(result.value.event.timezone, 'Europe/Berlin');
+    assert.deepEqual(result.value.event.custom_fields, { registration_status: 'open', participant_max: 10 });
     assert.deepEqual(result.value.content, { headline: 'Public title', sections: [] });
   });
 

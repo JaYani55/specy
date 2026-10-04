@@ -25,6 +25,10 @@ import {
   ProductFormFooter,
 } from '@/components/products';
 import { ProductFormMentorToggle } from '@/components/products/form/ProductFormMentorToggle';
+import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
+import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 
 export function ProductForm({ 
   editingProduct, 
@@ -34,7 +38,10 @@ export function ProductForm({
   getUsedIcons 
 }: ProductFormProps) {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [formKey, setFormKey] = useState(Date.now());
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [customFieldsValid, setCustomFieldsValid] = useState(true);
   
   // Use our custom hook to load form data
   const { 
@@ -59,11 +66,28 @@ export function ProductForm({
       max_amount_mentors: undefined,
       approved: [],
       is_mentor_product: false,
+      custom_fields: {},
     }
   });
 
   // Watch the is_mentor_product field to conditionally show mentor-related fields
   const isMentorProduct = form.watch('is_mentor_product');
+  const customFieldValues = form.watch('custom_fields') ?? {};
+
+  useEffect(() => {
+    let cancelled = false;
+    setCustomFieldDefinitions({});
+    setCustomFieldsValid(true);
+    if (!activeTenantId) {
+      return;
+    }
+    void getTenantCustomFieldDefinitions(activeTenantId, 'product')
+      .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
+      .catch((error) => {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Eigene Produktfelder konnten nicht geladen werden.');
+      });
+    return () => { cancelled = true; };
+  }, [activeTenantId]);
 
   // Form initialization from editingProduct
   useEffect(() => {
@@ -85,6 +109,7 @@ export function ProductForm({
       approved: Array.isArray(editingProduct.approved) ? editingProduct.approved : [],
       gradient: editingProduct.gradient || '',
       is_mentor_product: editingProduct.is_mentor_product || false,
+      custom_fields: editingProduct.custom_fields ?? {},
     };
     
     // Reset the form with the complete object
@@ -104,6 +129,9 @@ export function ProductForm({
       if (!values.description_de?.trim()) {
         throw new Error(language === 'en' ? 'Description is required' : 'Beschreibung ist erforderlich');
       }
+      if (!customFieldsValid) throw new Error(language === 'en' ? 'Fix the invalid JSON custom fields.' : 'Bitte korrigiere die ungültigen JSON-Felder.');
+      const customFieldError = validateTenantCustomFieldValues(customFieldDefinitions, values.custom_fields ?? {});
+      if (customFieldError) throw new Error(customFieldError);
       
       await onSubmit(values);
     } catch (error) {
@@ -162,6 +190,17 @@ export function ProductForm({
             <ProductFormCompensation form={form} />
           </div>
           
+          {Object.keys(customFieldDefinitions).length > 0 && (
+            <TenantCustomFieldsEditor
+              key={`${activeTenantId ?? 'no-workspace'}-${editingProduct?.id ?? 'new'}-${formKey}`}
+              definitions={customFieldDefinitions}
+              values={customFieldValues}
+              language={language}
+              onChange={(customFields) => form.setValue('custom_fields', customFields, { shouldDirty: true })}
+              onValidityChange={setCustomFieldsValid}
+            />
+          )}
+
           <ProductFormMentorToggle form={form} />
           
           {/* Only show mentor-related fields if is_mentor_product is true */}

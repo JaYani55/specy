@@ -16,6 +16,8 @@ The legacy and schema-backed experiences remain separate compatibility paths: ex
 
 Schema definition and frontend registration remain technical-administrator/developer responsibilities. Product content managers use the schema-backed workflow only after an eligible catalogue has been set up.
 
+Workspace-level **Custom fields / Eigene Felder** definitions are managed from Product Management (also available on the schema-backed Products page). Definitions can target products or events and provide a JSON key, label, value type (`string`, `number`, `boolean`, `date`, `url`, `email`, or arbitrary `json`), required flag, and public-API visibility (off by default). The legacy product editor and schema-backed product PageBuilder edit product custom values separately from page `content`; the event form edits event custom values separately from the page schema. Values are stored in `mentorbooking_products.custom_fields` or `mentorbooking_events.custom_fields`, and only fields marked public are included by the dynamic product API.
+
 The legacy product form remains the standard event-product overview. Its product-card/menu color is optional and purely presentational; omitting it uses the menu's default styling. The staffing requirement control is labelled for staff in both supported dashboard languages. Validation failures show an error toast as well as inline field feedback. These wording and styling changes do not alter the legacy data model.
 
 ## Schema eligibility
@@ -58,6 +60,10 @@ Every tool requires an explicit `tenant_id`; the browser's active workspace is n
 ## Public frontend delivery
 
 Registered service-product schemas use the schema-scoped published pages endpoints. Product pages appear only when `status = published`, a non-retired product aggregate owns the page in the same tenant, and the schema is registered. Product retirement atomically archives the page. The stored content is unchanged.
+
+The public dynamic product endpoint `GET /api/products/:workspaceSlug/:productSlug` returns `{ product: { ..., events: [...] } }`. The product slug is the published page slug in a registered `service-product` schema. The workspace segment is the tenant slug, not its display name; legacy products without an eligible published product page are not exposed by this endpoint. Each request reads current product/event records and page content from Supabase, so operational custom values are not copied into the static revalidation payload. The product record includes its JSON page content plus standard public descriptive fields; events are nested only when their event pages are published, linked, registered, same-tenant, and have a valid IANA timezone.
+
+The dynamic product endpoint also returns explicitly configured custom fields under `product.custom_fields` and each nested `event.custom_fields`. Only fields marked public in that workspace's product/event custom-field definitions are projected. It omits compensation, approval/mentor IDs, customer/company data, meeting links, staff IDs, and private or undefined custom fields.
 
 `?include=entity` is an allow-listed optional relation. It adds only:
 

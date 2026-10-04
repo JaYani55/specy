@@ -25,6 +25,7 @@ export interface ServiceProduct {
   version: number;
   created_at: string;
   updated_at: string;
+  custom_fields?: Record<string, unknown>;
 }
 
 async function authenticatedHeaders(): Promise<Headers> {
@@ -80,6 +81,7 @@ export async function updateServiceProduct(input: {
   name: string;
   slug: string;
   content: Record<string, unknown>;
+  custom_fields?: Record<string, unknown>;
 }): Promise<ServiceProduct> {
   const { id, ...body } = input;
   const result = await request<{ product: ServiceProduct }>(`/${encodeURIComponent(id)}`, {

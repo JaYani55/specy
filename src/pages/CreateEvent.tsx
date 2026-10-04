@@ -83,6 +83,7 @@ const CreateEvent = () => {
             teams_link: values.teams_link ?? '',
             initial_selected_mentors: values.initial_selected_mentors ?? [],
             timezone: values.timezone ?? '',
+            custom_fields: values.custom_fields ?? {},
           },
           page_name: values.event_page_name ?? '',
           page_slug: normalizeEventPageSlug(`${values.event_page_name}-${values.date}-${values.time.replace(':', '-')}`),
@@ -112,6 +113,7 @@ const CreateEvent = () => {
             product_id: values.product_id ?? null,
             teams_link: values.teams_link ?? '',
             initial_selected_mentors: values.initial_selected_mentors ?? [],
+            custom_fields: values.custom_fields ?? {},
             tenant_id: activeTenantId,
             owner_user_id: user?.id,
           })
@@ -226,6 +228,7 @@ const CreateEvent = () => {
           teams_link: "",
           product_id: undefined,
           initial_selected_mentors: [],
+          custom_fields: {},
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
           event_page_name: '',
           event_schema_id: undefined,

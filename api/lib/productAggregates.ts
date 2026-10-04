@@ -17,6 +17,7 @@ export interface UpdateServiceProductInput {
   name?: string;
   slug?: string;
   content?: Record<string, unknown>;
+  custom_fields?: Record<string, unknown>;
 }
 
 export type InputResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -66,7 +67,7 @@ export function parseUpdateServiceProductInput(input: unknown): InputResult<Upda
   if (!Number.isSafeInteger(input.expected_definition_revision) || Number(input.expected_definition_revision) < 1) {
     return { ok: false, error: 'expected_definition_revision must be a positive integer.' };
   }
-  if (input.name === undefined && input.slug === undefined && input.content === undefined) {
+  if (input.name === undefined && input.slug === undefined && input.content === undefined && input.custom_fields === undefined) {
     return { ok: false, error: 'Provide at least one product field to update.' };
   }
   if (input.name !== undefined && (typeof input.name !== 'string' || !input.name.trim())) {
@@ -78,6 +79,9 @@ export function parseUpdateServiceProductInput(input: unknown): InputResult<Upda
   if (input.content !== undefined && !isRecord(input.content)) {
     return { ok: false, error: 'content must be a JSON object.' };
   }
+  if (input.custom_fields !== undefined && !isRecord(input.custom_fields)) {
+    return { ok: false, error: 'custom_fields must be a JSON object.' };
+  }
   const value: UpdateServiceProductInput = {
     tenant_id: input.tenant_id,
     expected_version: Number(input.expected_version),
@@ -85,9 +89,13 @@ export function parseUpdateServiceProductInput(input: unknown): InputResult<Upda
     ...(typeof input.name === 'string' ? { name: input.name.trim() } : {}),
     ...(typeof input.slug === 'string' ? { slug: normalizeSchemaPageSlug(input.slug) } : {}),
     ...(isRecord(input.content) ? { content: input.content } : {}),
+    ...(isRecord(input.custom_fields) ? { custom_fields: input.custom_fields } : {}),
   };
   if (value.content && new TextEncoder().encode(JSON.stringify(value.content)).byteLength > 1048576) {
     return { ok: false, error: 'content exceeds the 1 MiB limit.' };
+  }
+  if (value.custom_fields && new TextEncoder().encode(JSON.stringify(value.custom_fields)).byteLength > 1048576) {
+    return { ok: false, error: 'custom_fields exceeds the 1 MiB limit.' };
   }
   return { ok: true, value };
 }

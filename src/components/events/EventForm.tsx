@@ -38,6 +38,9 @@ import { LockAndMentorCountSection } from "./EventFormSections/LockAndMentorCoun
 import { FooterSection } from "./EventFormSections/FooterSection";
 import { Users, Building2, CalendarDays, Info } from "lucide-react";
 import { toast } from 'sonner';
+import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
+import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
+import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 
 const formSchema = zod.object({
   company_id: zod.string().optional(),
@@ -57,6 +60,7 @@ const formSchema = zod.object({
   staff_members: zod.array(zod.string()).min(1, { message: "At least one staff member is required" }),
   teams_link: zod.string().optional(),
   initial_selected_mentors: zod.array(zod.string()).optional(),
+  custom_fields: zod.record(zod.string(), zod.unknown()).default({}),
   ProductInfo: zod.object({
     id: zod.number(),
     name: zod.string(),
@@ -99,6 +103,7 @@ interface EventFormProps {
     event_schema_id?: string;
     event_page_name?: string;
     timezone?: string;
+    custom_fields?: Record<string, unknown>;
   };
   onSubmit: (values: EventFormValues) => Promise<void>;
   isLoading: boolean;
@@ -116,6 +121,8 @@ export const EventForm: React.FC<EventFormProps> = ({
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [eventSchemas, setEventSchemas] = useState<PageSchema[]>([]);
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [customFieldsValid, setCustomFieldsValid] = useState(true);
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(formSchema),
@@ -138,6 +145,7 @@ export const EventForm: React.FC<EventFormProps> = ({
       staff_members: initialValues?.staff_members || [],
       teams_link: initialValues?.teams_link || "",
       initial_selected_mentors: initialValues?.initial_selected_mentors || [],
+      custom_fields: initialValues?.custom_fields || {},
     }
   });
 
@@ -174,6 +182,9 @@ export const EventForm: React.FC<EventFormProps> = ({
 
   const handleSubmit = async (values: EventFormValues) => {
     try {
+      if (!customFieldsValid) throw new Error(language === 'en' ? 'Fix the invalid JSON custom fields.' : 'Bitte korrigiere die ungültigen JSON-Felder.');
+      const customFieldError = validateTenantCustomFieldValues(customFieldDefinitions, values.custom_fields ?? {});
+      if (customFieldError) throw new Error(customFieldError);
       if (mode === 'create') {
         const selectedDate = new Date(values.date);
         const today = new Date();
@@ -190,6 +201,9 @@ export const EventForm: React.FC<EventFormProps> = ({
       await submitEvent(values);
     } catch (error) {
       console.error('Error submitting event form:', error);
+      toast.error(error instanceof Error
+        ? error.message
+        : language === 'en' ? 'Event form could not be submitted.' : 'Das Veranstaltungsformular konnte nicht gesendet werden.');
     }
   };
 
@@ -212,6 +226,7 @@ export const EventForm: React.FC<EventFormProps> = ({
     await onSubmit(values);
   };
 
+  const customFieldValues = form.watch('custom_fields') ?? {};
   const watchedProductId = form.watch('product_id');
   const selectedEventSchemaId = form.watch('event_schema_id');
   const watchedTime = form.watch('time');
@@ -272,6 +287,21 @@ export const EventForm: React.FC<EventFormProps> = ({
 
     void fetchSelectedProduct();
   }, [watchedProductId, form, mode, activeTenantId, workspaceLoading]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCustomFieldDefinitions({});
+    setCustomFieldsValid(true);
+    if (!activeTenantId) {
+      return;
+    }
+    void getTenantCustomFieldDefinitions(activeTenantId, 'event')
+      .then((definitions) => { if (!cancelled) setCustomFieldDefinitions(definitions); })
+      .catch((error) => {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : 'Eigene Eventfelder konnten nicht geladen werden.');
+      });
+    return () => { cancelled = true; };
+  }, [activeTenantId]);
 
   useEffect(() => {
     const fetchGroupNames = async () => {
@@ -447,6 +477,16 @@ export const EventForm: React.FC<EventFormProps> = ({
                 language={language}
               />
             </div>
+            {Object.keys(customFieldDefinitions).length > 0 && (
+              <TenantCustomFieldsEditor
+                key={`${activeTenantId ?? 'no-workspace'}-${initialValues?.id ?? 'new-event'}`}
+                definitions={customFieldDefinitions}
+                values={customFieldValues}
+                language={language}
+                onChange={(customFields) => form.setValue('custom_fields', customFields, { shouldDirty: true })}
+                onValidityChange={setCustomFieldsValid}
+              />
+            )}
             <FooterSection
               isLoading={isLoading}
               mode={mode}

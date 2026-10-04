@@ -24,6 +24,8 @@ import { EventDetailHeader } from '@/components/events/EventDetailHeader';
 import { EventInfoCard } from '@/components/events/EventInfoCard';
 import { DeleteEventDialog } from '@/components/events/DeleteEventDialog';
 import { EventStaffAssignment } from '@/components/events/EventStaffAssignment';
+import { CustomFieldsDisplay } from '@/components/products/CustomFieldsDisplay';
+import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
 
 type DisplayProduct = {
   id: number;
@@ -39,6 +41,7 @@ type DisplayProduct = {
   max_amount_mentors?: number;
   approved?: string[];
   is_mentor_product?: boolean;
+  custom_fields?: Record<string, unknown>;
 };
 
 const buildDisplayProduct = (
@@ -60,6 +63,7 @@ const buildDisplayProduct = (
       max_amount_mentors: product.max_amount_mentors,
       approved: product.approved,
       is_mentor_product: product.is_mentor_product,
+      custom_fields: product.custom_fields,
     };
   }
 
@@ -110,6 +114,24 @@ const EventDetail = () => {
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [selectedMentorNames, setSelectedMentorNames] = useState<{name: string}[]>([]);
   const [eventPagePath, setEventPagePath] = useState<string | null>(null);
+  const [eventCustomFieldDefinitions, setEventCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+  const [productCustomFieldDefinitions, setProductCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setProductCustomFieldDefinitions({});
+    setEventCustomFieldDefinitions({});
+    if (!activeTenantId) return;
+    void Promise.all([
+      getTenantCustomFieldDefinitions(activeTenantId, 'product'),
+      getTenantCustomFieldDefinitions(activeTenantId, 'event'),
+    ]).then(([productDefinitions, eventDefinitions]) => {
+      if (cancelled) return;
+      setProductCustomFieldDefinitions(productDefinitions);
+      setEventCustomFieldDefinitions(eventDefinitions);
+    }).catch((error) => console.error('Could not load custom field definitions:', error));
+    return () => { cancelled = true; };
+  }, [activeTenantId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -500,6 +522,11 @@ const EventDetail = () => {
             </div>
           </Card>
         </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <CustomFieldsDisplay definitions={eventCustomFieldDefinitions} values={event.custom_fields} language={language} />
+        <CustomFieldsDisplay definitions={productCustomFieldDefinitions} values={currentProduct?.custom_fields} language={language} />
       </div>
 
       <DeleteEventDialog

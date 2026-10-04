@@ -18,12 +18,14 @@ describe('service-product aggregate API input', () => {
     assert.equal(parseCreateServiceProductInput({ schema_id: schema, expected_definition_revision: 2, name: 'No tenant', content, idempotency_key: key }).ok, false);
   });
 
-  it('normalizes the page slug and enforces optimistic update versions', () => {
-    const result = parseUpdateServiceProductInput({ tenant_id: tenant, expected_version: 3, expected_definition_revision: 2, name: 'Neue Größe', slug: 'Neue Größe', content: {} });
+  it('normalizes the page slug and preserves separate custom JSON fields with optimistic versions', () => {
+    const customFields = { participant_min: 3, public: false };
+    const result = parseUpdateServiceProductInput({ tenant_id: tenant, expected_version: 3, expected_definition_revision: 2, name: 'Neue Größe', slug: 'Neue Größe', content: {}, custom_fields: customFields });
     assert.equal(result.ok, true);
     if (result.ok) {
       assert.equal(result.value.slug, 'neue-groesse');
       assert.equal(result.value.expected_version, 3);
+      assert.deepEqual(result.value.custom_fields, customFields);
     }
     assert.equal(parseUpdateServiceProductInput({ tenant_id: tenant, expected_version: 0, expected_definition_revision: 2, name: 'x' }).ok, false);
     assert.equal(parseUpdateServiceProductInput({ tenant_id: tenant, expected_version: 1, expected_definition_revision: 2 }).ok, false);
