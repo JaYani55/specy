@@ -7,6 +7,29 @@ export type ObjectListRecord = Pick<ObjectRecord,
   | 'requires_auth' | 'api_enabled' | 'share_enabled' | 'share_slug' | 'tenant_id' | 'created_at' | 'updated_at'
 >;
 
+export interface ObjectDatastreamRecord {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  object_type: ObjectType;
+  status: 'published' | 'archived';
+  requires_auth: boolean;
+  api_enabled: boolean;
+  publicly_readable: boolean;
+  share_enabled: boolean;
+  tenant_id: string | null;
+  updated_at: string;
+  endpoint_path: string;
+  source: { kind: 'object' } | { kind: 'product'; id: string; name: string };
+}
+
+export type ObjectDatastreamProbe =
+  | { kind: 'available'; httpStatus: 200 }
+  | { kind: 'not-found'; httpStatus: 404 }
+  | { kind: 'http-error'; httpStatus: number }
+  | { kind: 'network-error' };
+
 const getAuthToken = async (): Promise<string | null> => {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
@@ -32,6 +55,32 @@ const generateSlug = (name: string): string =>
     .replace(/^-|-$/g, '') || 'object';
 
 export { generateSlug as generateObjectSlug };
+
+export const getObjectDatastreams = async (tenantId?: string | null): Promise<ObjectDatastreamRecord[]> => {
+  if (!API_URL) throw new Error('API URL is not configured.');
+  const headers = await buildHeaders();
+  const search = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  const response = await fetch(`${API_URL}/api/objects/datastreams${search}`, { headers });
+  const payload = await response.json().catch(() => ({})) as { error?: string; datastreams?: ObjectDatastreamRecord[] };
+  if (!response.ok) throw new Error(payload.error ?? 'Failed to load Object datastreams.');
+  return payload.datastreams ?? [];
+};
+
+export const probePublicObjectDatastream = async (slug: string): Promise<ObjectDatastreamProbe> => {
+  if (!API_URL) return { kind: 'network-error' };
+  try {
+    // Deliberately omit the CMS bearer token: this probes the anonymous API contract.
+    const response = await fetch(`${API_URL}/api/objects/${encodeURIComponent(slug)}`, {
+      method: 'HEAD',
+      cache: 'no-store',
+    });
+    if (response.status === 200) return { kind: 'available', httpStatus: 200 };
+    if (response.status === 404) return { kind: 'not-found', httpStatus: 404 };
+    return { kind: 'http-error', httpStatus: response.status };
+  } catch {
+    return { kind: 'network-error' };
+  }
+};
 
 export const getObjects = async (tenantId?: string | null): Promise<ObjectListRecord[]> => {
   if (!API_URL) throw new Error('API URL is not configured.');

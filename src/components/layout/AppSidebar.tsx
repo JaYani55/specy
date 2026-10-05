@@ -1,4 +1,4 @@
-import { Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail, Package } from "lucide-react"
+import { Activity, Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail, Package } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -46,10 +46,14 @@ export function AppSidebar() {
   const navigate = useNavigate()
   const [openPluginKey, setOpenPluginKey] = useState<string | null>(null)
   const [isMcpOpen, setIsMcpOpen] = useState(location.pathname === '/mcp' || location.pathname.startsWith('/mcp/'))
+  const [isObjectsOpen, setIsObjectsOpen] = useState(location.pathname === '/objects' || location.pathname.startsWith('/objects/'))
 
   useEffect(() => {
     if (location.pathname === '/mcp' || location.pathname.startsWith('/mcp/')) {
       setIsMcpOpen(true)
+    }
+    if (location.pathname === '/objects' || location.pathname.startsWith('/objects/')) {
+      setIsObjectsOpen(true)
     }
   }, [location.pathname])
 
@@ -236,7 +240,37 @@ export function AppSidebar() {
           <SidebarGroupLabel>Application</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => item.url === '/mcp' ? (
+              {items.map((item) => item.url === '/objects' ? (
+                <SidebarMenuItem key={item.title}>
+                  <Collapsible open={isObjectsOpen} onOpenChange={setIsObjectsOpen} className="w-full">
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton
+                        isActive={location.pathname === '/objects' || location.pathname.startsWith('/objects/')}
+                        tooltip={item.title}
+                        onClick={() => navigate('/objects')}
+                      >
+                        <item.icon />
+                        <span>{item.title}</span>
+                        <ChevronDown className={`ml-auto transition-transform ${isObjectsOpen ? 'rotate-180' : ''}`} />
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/objects'}>
+                            <Link to="/objects"><Box /><span>{language === 'en' ? 'Object Editor' : 'Object-Editor'}</span></Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/objects/datastreams'}>
+                            <Link to="/objects/datastreams"><Activity /><span>Datastreams</span></Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </SidebarMenuItem>
+              ) : item.url === '/mcp' ? (
                 <SidebarMenuItem key={item.title}>
                   <Collapsible open={isMcpOpen} onOpenChange={setIsMcpOpen} className="w-full">
                     <CollapsibleTrigger asChild>

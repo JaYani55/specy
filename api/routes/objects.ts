@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 import { getOptionalAuthSession, parseBearerToken, requireAppRole } from '../lib/auth';
+import { isPublicObjectReadable } from '../lib/objectVisibility';
 
 const objects = new Hono<{ Bindings: Env }>();
 
@@ -326,6 +327,99 @@ objects.get('/:id/source', async (c) => {
     }
   }
   return c.json({ managed: true, editor_path: '/products/manage/legacy' });
+});
+
+// GET /api/objects/datastreams — all RLS-visible API Objects, including generated Product mirrors.
+objects.get('/datastreams', async (c) => {
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+  const caller = await createSupabaseClient(c.env, auth.token);
+  const requestedTenantId = c.req.query('tenantId');
+  if (requestedTenantId) {
+    const { data: membership, error: membershipError } = await caller.from('tenant_users')
+      .select('tenant_id')
+      .eq('tenant_id', requestedTenantId)
+      .eq('user_id', auth.userId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (membershipError) return c.json({ error: 'Could not verify workspace access.' }, 500);
+    if (!membership) return c.json({ error: 'You are not a member of this workspace.' }, 403);
+  }
+
+  let query = caller.from('objects')
+    .select('id, name, slug, description, object_type, status, requires_auth, api_enabled, share_enabled, tenant_id, updated_at')
+    .order('updated_at', { ascending: false });
+  if (requestedTenantId) query = query.eq('tenant_id', requestedTenantId);
+  const { data: visibleObjects, error } = await query;
+  if (error) return c.json({ error: 'Failed to load Object datastreams.' }, 500);
+  const rows = visibleObjects ?? [];
+  if (!rows.length) return c.json({ datastreams: [], total: 0 });
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const objectIds = rows.map((row) => row.id);
+  const { data: sourceRows, error: sourceError } = await admin.from('objects')
+    .select('id, source_product_id')
+    .in('id', objectIds);
+  if (sourceError) return c.json({ error: 'Failed to load Object datastream sources.' }, 500);
+  const sourceProductByObjectId = new Map((sourceRows ?? [])
+    .filter((row) => row.source_product_id !== null)
+    .map((row) => [row.id, row.source_product_id as number]));
+  const sourceProductIds = [...new Set(sourceProductByObjectId.values())];
+  const { data: products, error: productsError } = sourceProductIds.length
+    ? await admin.from('mentorbooking_products')
+      .select('id, integration_id, name, tenant_id')
+      .in('id', sourceProductIds)
+    : { data: [], error: null };
+  if (productsError) return c.json({ error: 'Failed to load Product datastream sources.' }, 500);
+  const productById = new Map((products ?? []).map((product) => [product.id, product]));
+
+  const datastreams = rows.map((row) => {
+    const sourceProductId = sourceProductByObjectId.get(row.id);
+    const product = sourceProductId === undefined ? undefined : productById.get(sourceProductId);
+    const sameTenantProduct = product && product.tenant_id === row.tenant_id ? product : undefined;
+    return {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      description: row.description,
+      object_type: row.object_type,
+      status: row.status,
+      requires_auth: row.requires_auth,
+      api_enabled: row.api_enabled,
+      publicly_readable: isPublicObjectReadable(row),
+      share_enabled: row.share_enabled,
+      tenant_id: row.tenant_id,
+      updated_at: row.updated_at,
+      endpoint_path: `/api/objects/${encodeURIComponent(row.slug)}`,
+      source: sameTenantProduct
+        ? { kind: 'product' as const, id: sameTenantProduct.integration_id, name: sameTenantProduct.name }
+        : { kind: 'object' as const },
+    };
+  });
+  return c.json({ datastreams, total: datastreams.length });
+});
+
+// HEAD /api/objects/:idOrSlug — lightweight anonymous API availability probe.
+objects.on('HEAD', '/:idOrSlug', async (c) => {
+  const idOrSlug = c.req.param('idOrSlug');
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+
+  if (auth && auth.roles.some((role) => ['user', 'staff', 'admin', 'super-admin'].includes(role))) {
+    const client = await createSupabaseClient(c.env, auth.token);
+    const query = client.from('objects').select('id').neq('status', 'archived');
+    const { data, error } = await (isUuid ? query.eq('id', idOrSlug) : query.eq('slug', idOrSlug)).limit(1);
+    if (error) return c.body(null, 500);
+    return c.body(null, data?.length ? 200 : 404);
+  }
+
+  const client = await createSupabaseClient(c.env);
+  const query = client.from('objects').select('id')
+    .eq('status', 'published').eq('api_enabled', true).eq('requires_auth', false);
+  const { data, error } = await (isUuid ? query.eq('id', idOrSlug) : query.eq('slug', idOrSlug)).limit(1);
+  if (error) return c.body(null, 500);
+  return c.body(null, data?.length ? 200 : 404);
 });
 
 // GET /api/objects/:idOrSlug

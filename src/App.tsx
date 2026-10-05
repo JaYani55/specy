@@ -39,6 +39,7 @@ import FormAnswers from "./pages/FormAnswers";
 import FormSharePage from "./pages/FormSharePage";
 import PollResultsPage from "./pages/PollResultsPage";
 import Objects from "./pages/Objects";
+import ObjectDatastreams from "./pages/ObjectDatastreams";
 import ObjectEditor from "./pages/ObjectEditor";
 import ObjectSharePage from "./pages/ObjectSharePage";
 import Specs from "./pages/Specs";
@@ -277,6 +278,7 @@ const AppContent = () => {
           <Route path="/forms/:formId/answers" element={<ProtectedRoute requiredRole="user"><FormAnswers /></ProtectedRoute>} />
 
           <Route path="/objects" element={<ProtectedRoute requiredRole="user"><Objects /></ProtectedRoute>} />
+          <Route path="/objects/datastreams" element={<ProtectedRoute requiredRole="user"><ObjectDatastreams /></ProtectedRoute>} />
           <Route path="/objects/new" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
           <Route path="/objects/:objectId" element={<ProtectedRoute requiredRole="user"><ObjectEditor /></ProtectedRoute>} />
           <Route path="/mcp" element={<ProtectedRoute requiredRole="user"><Specs /></ProtectedRoute>} />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, ExternalLink, FilePlus2, Loader2, Lock, Pencil, Trash2, Unlock } from 'lucide-react';
+import { Activity, Box, ExternalLink, FilePlus2, Loader2, Lock, Pencil, Trash2, Unlock } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
@@ -83,15 +84,23 @@ const Objects = () => {
       title={language === 'en' ? 'Objects' : 'Objekte'}
       description={
         language === 'en'
-          ? 'Define schema-validated data objects and serve them through the API endpoint.'
-          : 'Definiere schema-validierte Datenobjekte und stelle sie über den API-Endpunkt bereit.'
+          ? 'Edit manually authored Objects. The Datastreams view also includes generated Product Objects and reports API availability.'
+          : 'Bearbeite manuell gepflegte Objects. Die Datastreams-Ansicht umfasst auch generierte Produkt-Objects und zeigt die API-Verfügbarkeit.'
       }
       icon={Box}
       actions={(
-        <Button onClick={() => navigate('/objects/new')}>
-          <FilePlus2 className="mr-2 h-4 w-4" />
-          {language === 'en' ? 'New Object' : 'Neues Objekt'}
-        </Button>
+        <>
+          <Button variant="outline" asChild>
+            <Link to="/objects/datastreams">
+              <Activity className="mr-2 h-4 w-4" />
+              Datastreams
+            </Link>
+          </Button>
+          <Button onClick={() => navigate('/objects/new')}>
+            <FilePlus2 className="mr-2 h-4 w-4" />
+            {language === 'en' ? 'New Object' : 'Neues Objekt'}
+          </Button>
+        </>
       )}
     >
       {isLoading ? (
