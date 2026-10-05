@@ -20,7 +20,8 @@ const ObjectDatastreams = () => {
 
   const loadDatastreams = useCallback(async (refresh = false) => {
     try {
-      refresh ? setIsRefreshing(true) : setIsLoading(true);
+      if (refresh) setIsRefreshing(true);
+      else setIsLoading(true);
       const records = await getObjectDatastreams(activeTenantId);
       setDatastreams(records);
       setProbes(Object.fromEntries(records.map((record) => [record.id, { kind: 'checking' as const }])));
