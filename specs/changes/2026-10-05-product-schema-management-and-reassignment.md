@@ -13,7 +13,7 @@ Added a visible **Website-Schemata** path from `/products/manage`. Product schem
 ## Files Changed
 
 - `src/pages/ProductCatalogue.tsx` — add an obvious link to the Website schema overview.
-- `src/pages/Products.tsx` — add Product schema reassignment from the schema overview, with target-schema preview and a review-before-republish warning.
+- `src/pages/Products.tsx` — place an always-visible **Schema ändern** action next to the associated schema, with target-schema preview, empty-state guidance, and a review-before-republish warning.
 - `src/features/schema-editor/SchemaEditorPage.tsx` — make Page, Product, and Event purpose explicit; remove the integration-forced Event label and allow safe reclassification when no Pages exist.
 - `src/services/productService.ts`, `api/routes/products.ts`, `api/lib/productAggregateService.ts` — add authenticated Product schema reassignment service and REST route.
 - `scripts/lib/migration-order.mjs`, `specs/platform/unified-setup-tui.md` — register and classify the new migration.
