@@ -21,7 +21,7 @@ See [`page-builder.md`](page-builder.md) for the content editing feature.
 
 ## What the editor changes
 
-The technical form edits schema identity and field definitions, plus the existing workspace, entity classification, integration requirements, frontend targets, agent/MCP assignments, and registration-related settings. Field definitions include stable JSON keys, types, required/nullability, descriptions, placeholders, enums, and nested object/array definitions. The Schema JSON parser supports bulk technical authoring.
+The technical form edits schema identity and field definitions, plus the existing workspace, schema purpose (`page`, `service-product`, or `event`), integration requirements, frontend targets, agent/MCP assignments, and registration-related settings. Event purpose is a schema classification, not an implicit side effect of site integration; select **Produktschema** for reusable Product Pages and **Veranstaltungsschema** for public pages owned by scheduled Event records. A schema with existing Pages cannot change purpose through this editor; those records require an explicit conversion first. An unused Event schema can be changed to a Product schema. Field definitions include stable JSON keys, types, required/nullability, descriptions, placeholders, enums, and nested object/array definitions. The Schema JSON parser supports bulk technical authoring.
 
 Schema definition updates use the expected `definition_revision`; a stale revision conflicts instead of silently overwriting another developer's change. Product/event classification and tenant/scope constraints remain enforced by the schema/API contract.
 

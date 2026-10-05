@@ -134,7 +134,12 @@ export default function ProductCatalogue() {
                     <h2 className="text-xl font-semibold">Website-Produkte</h2>
                     <p className="text-sm text-muted-foreground">Produkte mit redaktionellen Seiten und aktuellen Angaben.</p>
                   </div>
-                  <Badge variant="secondary">{visibleServiceProducts.length}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{visibleServiceProducts.length}</Badge>
+                    <Button variant="outline" size="sm" onClick={() => navigate('/products/schemas')}>
+                      <ArrowUpRight className="mr-1.5 h-4 w-4" />Website-Schemata
+                    </Button>
+                  </div>
                 </div>
                 {visibleServiceProducts.length ? (
                   <div className="divide-y rounded-lg border">

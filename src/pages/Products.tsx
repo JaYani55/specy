@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Loader2, Package, Plus, Search } from 'lucide-react';
+import { Archive, ArrowLeft, Loader2, Package, Pencil, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getSchemas } from '@/services/pageService';
-import { archiveServiceProduct, createServiceProduct, listServiceProducts, type ServiceProduct } from '@/services/productService';
+import { archiveServiceProduct, changeServiceProductSchema, createServiceProduct, listServiceProducts, type ServiceProduct } from '@/services/productService';
 import type { PageSchema } from '@/types/pagebuilder';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { ProductSchemaPreview } from '@/components/products/ProductSchemaPreview';
@@ -32,9 +32,15 @@ const Products: React.FC = () => {
   const [selectedSchemaId, setSelectedSchemaId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [schemaChangeProduct, setSchemaChangeProduct] = useState<ServiceProduct | null>(null);
+  const [replacementSchemaId, setReplacementSchemaId] = useState('');
+  const [isChangingSchema, setIsChangingSchema] = useState(false);
 
   const productSchemas = useMemo(() => schemas.filter((schema) =>
     schema.entity_kind === 'service-product' && schema.tenant_id === activeTenantId && schema.content_scope === 'page-collection'
+  ), [schemas, activeTenantId]);
+  const eventSchemas = useMemo(() => schemas.filter((schema) =>
+    schema.entity_kind === 'event' && schema.tenant_id === activeTenantId && schema.content_scope === 'page-collection'
   ), [schemas, activeTenantId]);
   const selectedSchema = productSchemas.find((schema) => schema.id === selectedSchemaId) ?? null;
 
@@ -116,6 +122,35 @@ const Products: React.FC = () => {
     }
   };
 
+  const openSchemaChange = (product: ServiceProduct) => {
+    setSchemaChangeProduct(product);
+    setReplacementSchemaId('');
+  };
+
+  const changeProductSchema = async () => {
+    if (!activeTenantId || !schemaChangeProduct) return;
+    const targetSchema = productSchemas.find((schema) => schema.id === replacementSchemaId);
+    if (!targetSchema) return;
+    setIsChangingSchema(true);
+    try {
+      const updated = await changeServiceProductSchema({
+        id: schemaChangeProduct.id,
+        tenant_id: activeTenantId,
+        expected_version: schemaChangeProduct.version,
+        schema_id: targetSchema.id,
+        expected_definition_revision: targetSchema.definition_revision ?? 1,
+      });
+      setSchemaChangeProduct(null);
+      await load();
+      navigate(`${getSchemaConsolePath(targetSchema)}/edit/${updated.page_id}`);
+      toast.success(language === 'en' ? 'Product schema changed. Review the page content before publishing.' : 'Produktschema geändert. Prüfe den Seiteninhalt vor der Veröffentlichung.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (language === 'en' ? 'Product schema could not be changed.' : 'Produktschema konnte nicht geändert werden.'));
+    } finally {
+      setIsChangingSchema(false);
+    }
+  };
+
   const handleArchive = async (product: ServiceProduct) => {
     if (!activeTenantId) return;
     const confirmText = language === 'en'
@@ -162,7 +197,26 @@ const Products: React.FC = () => {
           <CardHeader><CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" />{language === 'en' ? 'No product catalogue yet' : 'Noch kein Produktkatalog vorhanden'}</CardTitle>
             <CardDescription>{language === 'en' ? 'Set up a page schema for service products to start your catalogue.' : 'Richte ein Seitenschema für Serviceprodukte ein, um deinen Katalog zu starten.'}</CardDescription>
           </CardHeader>
-          <CardContent><Button onClick={() => navigate('/pages/schema/new')}>{language === 'en' ? 'Set up catalogue' : 'Katalog einrichten'}</Button></CardContent>
+          <CardContent className="space-y-4">
+            <Button onClick={() => navigate('/pages/schema/new')}>{language === 'en' ? 'Set up catalogue' : 'Katalog einrichten'}</Button>
+            {eventSchemas.length > 0 && (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20">
+                <p className="text-sm font-medium">{language === 'en' ? 'Existing event schemas cannot be selected for products' : 'Vorhandene Veranstaltungsschemata sind nicht für Produkte auswählbar'}</p>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'en'
+                    ? 'If one of these schemas should define reusable product pages, review its purpose in the schema editor. A schema with existing pages must be explicitly migrated first.'
+                    : 'Soll eines dieser Schemata wiederverwendbare Produktseiten definieren, prüfe den Schema-Zweck im Schema-Editor. Schemata mit vorhandenen Seiten müssen zuerst ausdrücklich umgestellt werden.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {eventSchemas.map((schema) => (
+                    <Button key={schema.id} variant="outline" size="sm" onClick={() => navigate(`${getSchemaConsolePath(schema)}/settings`)}>
+                      {language === 'en' ? `Review ${schema.name}` : `${schema.name} prüfen`}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
         </Card>
       ) : (
         <>
@@ -190,7 +244,16 @@ const Products: React.FC = () => {
                       </td>
                       <td className="p-3"><Badge variant={status === 'published' ? 'default' : status === 'archived' ? 'destructive' : 'secondary'}>{status === 'published' ? (language === 'en' ? 'Published' : 'Veröffentlicht') : status === 'archived' ? (language === 'en' ? 'Archived' : 'Archiviert') : (language === 'en' ? 'Draft' : 'Entwurf')}</Badge></td>
                       <td className="p-3 text-muted-foreground">{new Date(product.updated_at).toLocaleDateString(language === 'en' ? 'en' : 'de')}</td>
-                      <td className="p-3 text-right"><Button variant="ghost" size="sm" disabled={archivingId === product.id} onClick={() => void handleArchive(product)}><Archive className="mr-1 h-4 w-4" />{language === 'en' ? 'Archive' : 'Archivieren'}</Button></td>
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-1">
+                          {productSchemas.some((entry) => entry.id !== (product.schema_id ?? product.page?.schema_id)) && (
+                            <Button variant="ghost" size="sm" onClick={() => openSchemaChange(product)}>
+                              <Pencil className="mr-1 h-4 w-4" />{language === 'en' ? 'Change schema' : 'Schema ändern'}
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" disabled={archivingId === product.id} onClick={() => void handleArchive(product)}><Archive className="mr-1 h-4 w-4" />{language === 'en' ? 'Archive' : 'Archivieren'}</Button>
+                        </div>
+                      </td>
                     </tr>;
                   })}
                 </tbody>
@@ -199,6 +262,57 @@ const Products: React.FC = () => {
           )}
         </>
       )}
+
+      <Dialog open={schemaChangeProduct !== null} onOpenChange={(open) => { if (!open) setSchemaChangeProduct(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{language === 'en' ? 'Change product schema' : 'Produktschema ändern'}</DialogTitle>
+            <DialogDescription>
+              {language === 'en'
+                ? 'The page content is preserved. A published page becomes a draft so you can review it against the new schema before publishing again.'
+                : 'Der Seiteninhalt bleibt erhalten. Eine veröffentlichte Seite wird zum Entwurf, damit du sie mit dem neuen Schema prüfen und anschließend erneut veröffentlichen kannst.'}
+            </DialogDescription>
+          </DialogHeader>
+          {schemaChangeProduct && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <span className="text-muted-foreground">{language === 'en' ? 'Current schema:' : 'Aktuelles Schema:'}</span>{' '}
+                <span className="font-medium">
+                  {productSchemas.find((schema) => schema.id === (schemaChangeProduct.schema_id ?? schemaChangeProduct.page?.schema_id))?.name ?? '—'}
+                </span>
+              </div>
+              <div className="space-y-2">
+                <Label>{language === 'en' ? 'New product page schema' : 'Neues Produktseiten-Schema'}</Label>
+                <Select value={replacementSchemaId} onValueChange={setReplacementSchemaId}>
+                  <SelectTrigger><SelectValue placeholder={language === 'en' ? 'Choose an existing schema' : 'Vorhandenes Schema auswählen'} /></SelectTrigger>
+                  <SelectContent>
+                    {productSchemas
+                      .filter((schema) => schema.id !== (schemaChangeProduct.schema_id ?? schemaChangeProduct.page?.schema_id))
+                      .map((schema) => (
+                        <SelectItem key={schema.id} value={schema.id}>
+                          {schema.name}{(schema.frontend_url || schema.integration_requirements?.canonical_frontend_url) ? ` — ${schema.frontend_url || schema.integration_requirements?.canonical_frontend_url}` : ''}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {replacementSchemaId && productSchemas.find((schema) => schema.id === replacementSchemaId) && (
+                  <ProductSchemaPreview
+                    schema={productSchemas.find((schema) => schema.id === replacementSchemaId)!}
+                    triggerLabel={language === 'en' ? 'Preview structure' : 'Aufbau ansehen'}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSchemaChangeProduct(null)}>{language === 'en' ? 'Cancel' : 'Abbrechen'}</Button>
+            <Button disabled={isChangingSchema || !replacementSchemaId} onClick={() => void changeProductSchema()}>
+              {isChangingSchema && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {language === 'en' ? 'Use this schema' : 'Schema zuordnen'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>

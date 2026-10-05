@@ -7,6 +7,7 @@ import { getPublicWorkerUrl } from '../lib/systemConfig';
 import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '../lib/productAggregates';
 import {
   archiveProductAggregate,
+  changeProductSchemaAggregate,
   createProductAggregate,
   deleteProductAggregate,
   getProductAggregate,
@@ -135,6 +136,32 @@ products.post('/', async (c) => {
       : `/pages/schema/${encodeURIComponent(schema?.api_slug ?? parsed.value.schema_id)}/edit/${product.page_id}`;
     const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
     return c.json({ product, editor_url: product.page_id ? `${baseUrl}${editorPath}` : null }, 201);
+  } catch (error) { return errorResponse(c, error); }
+});
+
+products.patch('/:id/schema', async (c) => {
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(c);
+  if (body instanceof Response) return body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Request body must be an object.' }, 400);
+  const input = body as Record<string, unknown>;
+  if (typeof input.tenant_id !== 'string' || !Number.isSafeInteger(input.expected_version)
+    || typeof input.schema_id !== 'string' || !Number.isSafeInteger(input.expected_definition_revision)
+    || Number(input.expected_version) < 1 || Number(input.expected_definition_revision) < 1) {
+    return c.json({ error: 'tenant_id, expected_version, schema_id and expected_definition_revision are required.' }, 400);
+  }
+  const client = await createSupabaseClient(c.env, auth.token);
+  try {
+    const product = await changeProductSchemaAggregate(
+      client,
+      c.req.param('id'),
+      input.tenant_id,
+      Number(input.expected_version),
+      input.schema_id,
+      Number(input.expected_definition_revision),
+    );
+    return c.json({ product });
   } catch (error) { return errorResponse(c, error); }
 });
 

@@ -108,6 +108,21 @@ export async function setServiceProductPublication(input: {
   return result.product;
 }
 
+export async function changeServiceProductSchema(input: {
+  id: string;
+  tenant_id: string;
+  expected_version: number;
+  schema_id: string;
+  expected_definition_revision: number;
+}): Promise<ServiceProduct> {
+  const { id, ...body } = input;
+  const result = await request<{ product: ServiceProduct }>(`/${encodeURIComponent(id)}/schema`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  return result.product;
+}
+
 export async function deleteServiceProduct(input: {
   id: string;
   tenant_id: string;

@@ -32,6 +32,8 @@ All operations require the authenticated caller's permissions and an explicit wo
 
 Schema definition `definition_revision` and product aggregate `version` are distinct concurrency tokens. Create, update, and publication check the schema revision; update/publication also check aggregate version. Idempotency protects aggregate creation; a repeated key with changed payload conflicts.
 
+The dashboard's `/products/schemas` overview supports changing an existing Product's page schema through authenticated `PATCH /api/products/:id/schema`, with `tenant_id`, `expected_version`, `schema_id`, and `expected_definition_revision`. It only accepts another eligible Product schema in the same workspace, preserves the page content, and returns a published page to draft for review. There is not yet a dedicated MCP schema-reassignment tool.
+
 Generic page writes remain disallowed for service-product schemas, which use `specy_products_*`. For event schemas, `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` dispatch to the event aggregate workflow when the caller supplies the required tenant, schema revision, event fields, and page revision. Ordinary page schemas continue using generic page operations.
 
 ## Public page relation

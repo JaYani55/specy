@@ -193,6 +193,26 @@ export async function publishProductAggregate(
   return data;
 }
 
+export async function changeProductSchemaAggregate(
+  client: UserClient,
+  id: string,
+  tenantId: string,
+  expectedVersion: number,
+  schemaId: string,
+  expectedDefinitionRevision: number,
+) {
+  const { data, error } = await client.rpc('change_service_product_schema_aggregate', {
+    target_product_id: id,
+    expected_tenant_id: tenantId,
+    expected_version: expectedVersion,
+    target_schema_id: schemaId,
+    expected_definition_revision: expectedDefinitionRevision,
+  });
+  if (error) throwDatabaseError(error);
+  if (!data) throw new ProductAggregateError('Product schema change returned no result.', 500);
+  return data;
+}
+
 export async function deleteProductAggregate(client: UserClient, id: string, tenantId: string, expectedVersion: number) {
   const { data, error } = await client.rpc('delete_service_product_with_events_aggregate', {
     target_product_id: id,
