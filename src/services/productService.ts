@@ -48,30 +48,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
-export async function listServiceProducts(tenantId: string): Promise<ServiceProduct[]> {
-  if (!tenantId) return [];
-  const result = await request<{ products: ServiceProduct[] }>(`?tenant_id=${encodeURIComponent(tenantId)}`);
-  return result.products;
-}
-
 export async function getServiceProductByPage(pageId: string, tenantId: string): Promise<ServiceProduct> {
   const result = await request<{ product: ServiceProduct }>(`/by-page/${encodeURIComponent(pageId)}?tenant_id=${encodeURIComponent(tenantId)}`);
-  return result.product;
-}
-
-export async function createServiceProduct(input: {
-  tenant_id: string;
-  schema_id: string;
-  expected_definition_revision: number;
-  name: string;
-  content?: Record<string, unknown>;
-  slug?: string;
-}): Promise<ServiceProduct> {
-  const idempotencyKey = crypto.randomUUID();
-  const result = await request<{ product: ServiceProduct }>('', {
-    method: 'POST',
-    body: JSON.stringify({ ...input, content: input.content ?? {}, idempotency_key: idempotencyKey }),
-  });
   return result.product;
 }
 
@@ -106,33 +84,6 @@ export async function setServiceProductPublication(input: {
     body: JSON.stringify(body),
   });
   return result.product;
-}
-
-export async function changeServiceProductSchema(input: {
-  id: string;
-  tenant_id: string;
-  expected_version: number;
-  schema_id: string;
-  expected_definition_revision: number;
-}): Promise<ServiceProduct> {
-  const { id, ...body } = input;
-  const result = await request<{ product: ServiceProduct }>(`/${encodeURIComponent(id)}/schema`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  });
-  return result.product;
-}
-
-export async function deleteServiceProduct(input: {
-  id: string;
-  tenant_id: string;
-  expected_version: number;
-}): Promise<{ deleted: true; product_id: string }> {
-  const { id, ...body } = input;
-  return request<{ deleted: true; product_id: string }>(`/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    body: JSON.stringify(body),
-  });
 }
 
 export async function archiveServiceProduct(input: {

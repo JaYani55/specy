@@ -29,10 +29,12 @@ describe('tenant-scoped Product deletion with event cascade', () => {
     assert.match(apiIndex, /'specy_products_delete'/);
   });
 
-  it('offers permanent deletion separately from reversible archive in the Product UI', () => {
-    assert.match(productUi, /deleteServiceProduct\(/);
+  it('offers permanent deletion in the simplified Product UI without Website-Produkte affordances', () => {
     assert.match(productUi, /deleteProduct\(product\.id, activeTenantId\)/);
     assert.match(productUi, /alle zugehörigen Veranstaltungen/);
+    assert.doesNotMatch(productUi, /deleteServiceProduct\(/);
+    assert.doesNotMatch(productUi, /Website-Produkt/);
+    assert.doesNotMatch(productUi, /\/products\/schemas/);
     const deleteGuard = legacyProductHook.match(/const checkProductUsageForDelete = useCallback\(async \(product: Product\) => \{[\s\S]*?\}, \[activeTenantId, language\]\)/)?.[0] ?? '';
     assert.ok(deleteGuard);
     assert.doesNotMatch(deleteGuard, /setProductInUseDialogOpen\(true\)/);

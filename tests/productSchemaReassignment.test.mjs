@@ -5,7 +5,7 @@ import { MIGRATION_ORDER_CORE } from '../scripts/lib/migration-order.mjs';
 
 const migration = await readFile('migrations/202610050004_product_schema_reassignment.sql', 'utf8');
 const route = await readFile('api/routes/products.ts', 'utf8');
-const catalogue = await readFile('src/pages/Products.tsx', 'utf8');
+const app = await readFile('src/App.tsx', 'utf8');
 const management = await readFile('src/pages/ProductCatalogue.tsx', 'utf8');
 const schemaEditor = await readFile('src/features/schema-editor/SchemaEditorPage.tsx', 'utf8');
 
@@ -21,12 +21,11 @@ test('Product schema reassignment is an ordered, tenant/version/revision-checked
   assert.match(migration, /grant execute on function public\.change_service_product_schema_aggregate[\s\S]*?to authenticated/i);
 });
 
-test('Products schema overview exposes reassignment and the main overview links to it', () => {
-  assert.match(route, /products\.patch\('\/:id\/schema'/);
-  assert.match(route, /expected_version, schema_id and expected_definition_revision are required/);
-  assert.match(catalogue, /Schema ändern/);
-  assert.match(catalogue, /changeServiceProductSchema/);
-  assert.match(management, /navigate\('\/products\/schemas'\)/);
+test('the Website-Produkte overview is retired and /products/schemas redirects to the product management', () => {
+  assert.doesNotMatch(app, /<Products \/>/);
+  assert.doesNotMatch(management, /\/products\/schemas/);
+  assert.doesNotMatch(management, /Website-Produkt/);
+  assert.match(app, /path="\/products\/schemas"[\s\S]{0,120}?to="\/products\/manage"/);
 });
 
 test('schema purpose is explicit and no longer described as integration-forced', () => {

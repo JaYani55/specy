@@ -164,9 +164,6 @@ const PageBuilderPage: React.FC = () => {
             <Button variant="outline" onClick={() => navigate('/products/manage')}>
               {language === 'en' ? 'Back to product management' : 'Zurück zur Produktverwaltung'}
             </Button>
-            <Button onClick={() => navigate('/products/schemas')}>
-              {language === 'en' ? 'Open product schemas' : 'Produktschemata öffnen'}
-            </Button>
           </CardContent>
         </Card>
       </div>

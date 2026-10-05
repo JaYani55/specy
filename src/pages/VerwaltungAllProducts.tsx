@@ -43,7 +43,7 @@ const VerwaltungManageProducts = () => {
   // Add permission check
   useEffect(() => {
     if (!permissions.canManageProducts) {
-      navigate('/products/schemas');
+      navigate('/products/manage');
     }
   }, [permissions.canManageProducts, navigate]);
 
@@ -541,7 +541,7 @@ const VerwaltungManageProducts = () => {
         // Only show the view toggle and new product button when NOT in form mode
         !showProductForm ? (
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={() => navigate('/products/schemas')}>
+            <Button variant="outline" onClick={() => navigate('/pages')}>
               <Boxes className="mr-2 h-4 w-4" />
               {language === 'en' ? 'Edit schemas' : 'Schemata bearbeiten'}
             </Button>

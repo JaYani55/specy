@@ -30,7 +30,6 @@ import TestLoader from "./pages/TestLoader";
 import Info from "./pages/Info";
 import PageBuilderPage from "./features/page-builder/PageBuilderPage";
 import Pages from "./pages/Pages";
-import Products from "./pages/Products";
 import PagesSchemaDetail from "./pages/PagesSchemaDetail";
 import SchemaEditorPage from "./features/schema-editor/SchemaEditorPage";
 import Forms from "./pages/Forms";
@@ -257,7 +256,7 @@ const AppContent = () => {
           {/* Pages Routes */}
           <Route path="/pages" element={<ProtectedRoute requiredRole="user"><Pages /></ProtectedRoute>} />
           <Route path="/products" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage" replace /></ProtectedRoute>} />
-          <Route path="/products/schemas" element={<ProtectedRoute requiredRole="user"><Products /></ProtectedRoute>} />
+          <Route path="/products/schemas" element={<ProtectedRoute requiredRole="user"><Navigate to="/products/manage" replace /></ProtectedRoute>} />
           <Route path="/products/manage" element={<ProtectedRoute requiredRole="user"><ProductCatalogue /></ProtectedRoute>} />
           <Route path="/products/manage/legacy" element={<ProtectedRoute requiredRole="user"><VerwaltungAllProducts /></ProtectedRoute>} />
           <Route path="/products/manage/new" element={<ProtectedRoute requiredRole="user"><VerwaltungCreateProduct /></ProtectedRoute>} />

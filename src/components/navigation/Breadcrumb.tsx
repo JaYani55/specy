@@ -45,10 +45,6 @@ const Breadcrumb: React.FC = () => {
       label: { en: 'New product', de: 'Neues Produkt' },
       parent: '/products/manage'
     },
-    '/products/schemas': {
-      label: { en: 'Product schemas', de: 'Produktschemata' },
-      parent: '/products'
-    },
     '/admin/trait': { 
       label: { en: 'Manage Traits', de: 'Eigenschaften verwalten' },
       parent: '/admin'

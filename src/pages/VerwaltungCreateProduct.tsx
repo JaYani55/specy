@@ -19,7 +19,7 @@ const VerwaltungCreateProduct = () => {
 
   React.useEffect(() => {
     if (!permissions.canManageProducts) {
-      navigate('/products/schemas');
+      navigate('/products/manage');
     }
   }, [permissions.canManageProducts, navigate]);
 
