@@ -13,6 +13,10 @@ export interface SchemaDefinitionPatch {
   integration_requirements?: Record<string, unknown>;
   tenant_id?: string | null;
   slug?: string;
+  /** Explicit acknowledgment required to reclassify a schema that already has pages. */
+  allow_reclassification?: boolean;
+  /** Caller-confirmed page count; must match the schema's actual page count for a reclassification. */
+  expected_page_count?: number;
 }
 
 export type SchemaDefinitionPatchResult =
@@ -76,11 +80,58 @@ export function parseSchemaDefinitionPatch(input: unknown): SchemaDefinitionPatc
     if (typeof input.slug !== 'string' || !input.slug.trim()) return { ok: false, error: 'slug must be a non-empty string.' };
     patch.slug = input.slug.trim();
   }
+  if (Object.prototype.hasOwnProperty.call(input, 'allow_reclassification')) {
+    if (input.allow_reclassification !== true) return { ok: false, error: 'allow_reclassification must be true when provided.' };
+    patch.allow_reclassification = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'expected_page_count')) {
+    const expectedPageCount = input.expected_page_count;
+    if (typeof expectedPageCount !== 'number' || !Number.isSafeInteger(expectedPageCount) || expectedPageCount < 0) {
+      return { ok: false, error: 'expected_page_count must be a non-negative safe integer.' };
+    }
+    patch.expected_page_count = expectedPageCount;
+  }
 
   if (Object.keys(patch).length === 1) {
     return { ok: false, error: 'Provide at least one schema definition or metadata field to update.' };
   }
   return { ok: true, patch };
+}
+
+/**
+ * Reclassification is only safe when every existing page keeps an aggregate that
+ * matches the new purpose: event pages need a linked event, product pages need a
+ * linked product. Returns an error message when the pages are incompatible.
+ */
+async function assertPagesCompatibleWithEntityKind(
+  client: Awaited<ReturnType<typeof createSupabaseClient>>,
+  schemaId: string,
+  targetKind: SchemaEntityKind,
+): Promise<string | null> {
+  if (targetKind === 'page') return null;
+  const table = targetKind === 'event' ? 'mentorbooking_events' : 'mentorbooking_products';
+  const linkColumn = targetKind === 'event' ? 'page_id' : 'product_page_id';
+  const aggregateLabel = targetKind === 'event' ? 'Veranstaltung' : 'Produkt';
+  const aggregateLabelEn = targetKind === 'event' ? 'event' : 'product';
+
+  const { data: pages, error: pagesError } = await client
+    .from('pages')
+    .select('id')
+    .eq('schema_id', schemaId);
+  if (pagesError) return pagesError.message;
+  const pageIds = (pages ?? []).map((page) => page.id as string);
+  if (!pageIds.length) return null;
+
+  let linkedQuery = client.from(table).select(linkColumn).in(linkColumn, pageIds);
+  if (targetKind === 'service-product') linkedQuery = linkedQuery.is('retired_at', null);
+  const { data: linked, error: linkedError } = await linkedQuery;
+  if (linkedError) return linkedError.message;
+  const linkedPageIds = new Set((linked ?? []).map((row) => String((row as Record<string, unknown>)[linkColumn])));
+  const unlinked = pageIds.filter((id) => !linkedPageIds.has(id));
+  if (unlinked.length) {
+    return `${unlinked.length} of ${pageIds.length} pages have no linked ${aggregateLabelEn} record. Reclassifying would leave them without a manageable aggregate; convert or delete these pages first.`;
+  }
+  return null;
 }
 
 /** Apply a revision-checked schema update without making an HTTP self-request. */
@@ -143,16 +194,38 @@ export async function updateSchemaDefinition(
       .eq('schema_id', current.id);
     if (countError) return { status: 500, body: { error: countError.message } };
     if ((count ?? 0) > 0) {
-      return {
-        status: 409,
-        body: {
-          error: entityKindChanges
-            ? 'Schemas with existing pages cannot be reclassified until an explicit conversion workflow is available.'
-            : 'Schemas with existing pages cannot be moved to another workspace until an explicit migration workflow is available.',
-          code: entityKindChanges ? 'schema_conversion_required' : 'schema_tenant_migration_required',
-          affected_pages: count,
-        },
-      };
+      if (entityKindChanges) {
+        if (patch.allow_reclassification !== true || patch.expected_page_count !== count) {
+          return {
+            status: 409,
+            body: {
+              error: 'Reclassifying a schema with existing pages requires the explicit allow_reclassification flag and the matching expected_page_count.',
+              code: 'schema_conversion_required',
+              affected_pages: count,
+            },
+          };
+        }
+        const compatibilityError = await assertPagesCompatibleWithEntityKind(client, current.id, patch.entity_kind as SchemaEntityKind);
+        if (compatibilityError) {
+          return {
+            status: 409,
+            body: {
+              error: compatibilityError,
+              code: 'schema_conversion_required',
+              affected_pages: count,
+            },
+          };
+        }
+      } else {
+        return {
+          status: 409,
+          body: {
+            error: 'Schemas with existing pages cannot be moved to another workspace until an explicit migration workflow is available.',
+            code: 'schema_tenant_migration_required',
+            affected_pages: count,
+          },
+        };
+      }
     }
   }
 

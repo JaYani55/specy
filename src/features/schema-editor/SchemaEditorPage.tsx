@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -42,6 +43,14 @@ import { normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentBlock[]', 'CodeBlock[]', 'media'] as const;
+
+type SchemaEntityKindValue = 'page' | 'service-product' | 'event';
+
+const entityKindLabel = (kind: SchemaEntityKindValue, language: string): string => {
+  if (kind === 'event') return language === 'en' ? 'Event schema' : 'Veranstaltungsschema';
+  if (kind === 'service-product') return language === 'en' ? 'Product schema' : 'Produktschema';
+  return language === 'en' ? 'Page schema' : 'Seitenschema';
+};
 const VALID_SCHEMA_TYPES = new Set<string>(FIELD_TYPES);
 
 const toStoredTemplateDefinition = (template: PageSchemaTemplate): SchemaTemplateDefinition => ({
@@ -658,6 +667,9 @@ const SchemaEditor: React.FC = () => {
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [tenantId, setTenantId] = useState('');
   const [entityKind, setEntityKind] = useState<'page' | 'service-product' | 'event'>('page');
+  const [conversionOpen, setConversionOpen] = useState(false);
+  const [conversionKind, setConversionKind] = useState<'page' | 'service-product' | 'event'>('page');
+  const [isConverting, setIsConverting] = useState(false);
   const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [tenantOptionsLoading, setTenantOptionsLoading] = useState(false);
   const [availableSpecs, setAvailableSpecs] = useState<SpecRecord[]>([]);
@@ -775,9 +787,15 @@ const SchemaEditor: React.FC = () => {
       toast.error(language === 'en' ? 'Product and event schemas need a workspace.' : 'Produkt- und Veranstaltungsschemata benötigen einen Workspace.');
       return;
     }
-    if (entityKind !== 'page' && normalizedIntegrationRequirements.content_scope === 'single-page') {
-      toast.error(language === 'en' ? 'Product and event schemas must use page-collection scope.' : 'Produkt- und Veranstaltungsschemata müssen den Sammlungsscope verwenden.');
-      return;
+    // Product and event catalogues always require the collection scope. Restore it
+    // automatically instead of blocking the save when a schema was misconfigured.
+    const effectiveIntegrationRequirements = entityKind !== 'page' && normalizedIntegrationRequirements.content_scope !== 'page-collection'
+      ? { ...normalizedIntegrationRequirements, content_scope: 'page-collection' as const }
+      : normalizedIntegrationRequirements;
+    if (effectiveIntegrationRequirements !== normalizedIntegrationRequirements) {
+      toast.info(language === 'en'
+        ? 'Page-collection scope was restored so this schema can be used as a catalogue.'
+        : 'Der Sammlungsscope wurde wiederhergestellt, damit dieses Schema als Katalog verwendet werden kann.');
     }
     if (normalizedIntegrationRequirements.required_slug_structure
       && normalizedIntegrationRequirements.required_slug_structure !== '/'
@@ -809,7 +827,7 @@ const SchemaEditor: React.FC = () => {
           description,
           schema: schemaJson,
           llm_instructions: llmInstructions,
-          integration_requirements: normalizedIntegrationRequirements,
+          integration_requirements: effectiveIntegrationRequirements,
           tenant_id: tenantId || null,
           entity_kind: entityKind,
         }, existingSchema.definition_revision ?? 1);
@@ -823,7 +841,7 @@ const SchemaEditor: React.FC = () => {
           description,
           schema: schemaJson,
           llm_instructions: llmInstructions,
-          integration_requirements: normalizedIntegrationRequirements,
+          integration_requirements: effectiveIntegrationRequirements,
           tenant_id: tenantId || null,
           entity_kind: entityKind,
         });
@@ -836,6 +854,32 @@ const SchemaEditor: React.FC = () => {
       toast.error(err instanceof Error ? err.message : 'Failed to save schema');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleConvertEntityKind = async () => {
+    if (!existingSchema || conversionKind === entityKind) return;
+    setIsConverting(true);
+    try {
+      const requirements = conversionKind !== 'page'
+        ? { ...integrationRequirements, content_scope: 'page-collection' as const }
+        : integrationRequirements;
+      const updated = await updateSchema(existingSchema.id, {
+        entity_kind: conversionKind,
+        integration_requirements: requirements,
+        allow_reclassification: true,
+        expected_page_count: existingSchema.page_count ?? 0,
+      }, existingSchema.definition_revision ?? 1);
+      setEntityKind(updated.entity_kind ?? conversionKind);
+      setIntegrationRequirements(normalizeSchemaIntegrationRequirements(updated.integration_requirements));
+      const refreshed = await getSchema(existingSchema.api_slug, existingSchema.tenant_slug ?? undefined);
+      setExistingSchema(refreshed);
+      setConversionOpen(false);
+      toast.success(language === 'en' ? 'Schema purpose changed.' : 'Schema-Zweck geändert.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (language === 'en' ? 'Schema purpose could not be changed.' : 'Schema-Zweck konnte nicht geändert werden.'));
+    } finally {
+      setIsConverting(false);
     }
   };
 
@@ -1103,11 +1147,16 @@ const SchemaEditor: React.FC = () => {
                     : 'Seitenschemata sind für normale redaktionelle Seiten.')}
             </p>
             {existingSchema?.page_count ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                {language === 'en'
-                  ? `This schema has ${existingSchema.page_count} pages. Its purpose cannot be changed until those pages are explicitly migrated.`
-                  : `Dieses Schema enthält ${existingSchema.page_count} Seiten. Der Zweck kann erst nach einer ausdrücklichen Umstellung geändert werden.`}
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {language === 'en'
+                    ? `This schema has ${existingSchema.page_count} pages. Changing its purpose requires an explicit, confirmed reclassification.`
+                    : `Dieses Schema enthält ${existingSchema.page_count} Seiten. Eine Zweckänderung erfordert eine ausdrückliche, bestätigte Umstellung.`}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => { setConversionKind(entityKind === 'page' ? 'event' : 'page'); setConversionOpen(true); }}>
+                  {language === 'en' ? 'Change purpose…' : 'Zweck ändern…'}
+                </Button>
+              </div>
             ) : null}
           </div>
         </CardContent>
@@ -1766,6 +1815,58 @@ const SchemaEditor: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      <Dialog open={conversionOpen} onOpenChange={setConversionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{language === 'en' ? 'Change schema purpose' : 'Schema-Zweck ändern'}</DialogTitle>
+            <DialogDescription>
+              {language === 'en'
+                ? `This schema has ${existingSchema?.page_count ?? 0} pages. The reclassification changes how these pages are treated. The system only allows it when every page keeps a matching record (event or product).`
+                : `Dieses Schema enthält ${existingSchema?.page_count ?? 0} Seiten. Die Umstellung ändert, wie diese Seiten behandelt werden. Das System erlaubt sie nur, wenn jede Seite einen passenden Datensatz behält (Veranstaltung oder Produkt).`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'Current purpose' : 'Aktueller Zweck'}</Label>
+              <p className="text-sm font-medium">{entityKindLabel(entityKind, language)}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'New purpose' : 'Neuer Zweck'}</Label>
+              <Select value={conversionKind} onValueChange={(value) => setConversionKind(value as 'page' | 'service-product' | 'event')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="page">{language === 'en' ? 'Page schema' : 'Seitenschema'}</SelectItem>
+                  <SelectItem value="service-product">{language === 'en' ? 'Product schema' : 'Produktschema'}</SelectItem>
+                  <SelectItem value="event">{language === 'en' ? 'Event schema' : 'Veranstaltungsschema'}</SelectItem>
+                </SelectContent>
+              </Select>
+              {conversionKind === 'event' && (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'en' ? 'Every existing page must already be linked to an event.' : 'Jede vorhandene Seite muss bereits mit einer Veranstaltung verknüpft sein.'}
+                </p>
+              )}
+              {conversionKind === 'service-product' && (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'en' ? 'Every existing page must already be linked to a product.' : 'Jede vorhandene Seite muss bereits mit einem Produkt verknüpft sein.'}
+                </p>
+              )}
+              {conversionKind === 'page' && (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'en' ? 'Existing event and product links stay in place, but the pages are afterwards treated as ordinary pages.' : 'Bestehende Veranstaltungs- und Produktverknüpfungen bleiben bestehen, aber die Seiten werden danach als normale Seiten behandelt.'}
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConversionOpen(false)}>{language === 'en' ? 'Cancel' : 'Abbrechen'}</Button>
+            <Button disabled={isConverting || conversionKind === entityKind} onClick={() => void handleConvertEntityKind()}>
+              {isConverting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {language === 'en' ? 'Confirm reclassification' : 'Umstellung bestätigen'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

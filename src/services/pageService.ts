@@ -412,6 +412,10 @@ export const updateSchema = async (
     tenant_id: string | null;
     entity_kind: SchemaEntityKind;
     editor_config: Record<string, unknown>;
+    /** Explicit acknowledgment required to reclassify a schema that already has pages. */
+    allow_reclassification?: boolean;
+    /** Caller-confirmed page count; must match the schema's actual page count for a reclassification. */
+    expected_page_count?: number;
   }>,
   expectedRevision?: number,
 ): Promise<PageSchema> => {

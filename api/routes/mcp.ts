@@ -853,6 +853,8 @@ async function createMcpServerWithTools(
         schema: z.record(z.string(), z.unknown()).optional(),
         editor_config: z.record(z.string(), z.unknown()).optional().describe('Non-executable editor hints.'),
         entity_kind: z.enum(['page', 'service-product', 'event']).optional(),
+        allow_reclassification: z.boolean().optional().describe('Must be true to reclassify a schema that already has pages; pages must keep matching aggregates.'),
+        expected_page_count: z.number().int().min(0).optional().describe('Caller-confirmed page count; must match the schema for a reclassification.'),
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
         llm_instructions: z.string().nullable().optional(),
@@ -860,12 +862,14 @@ async function createMcpServerWithTools(
         tenant_id: z.string().uuid().nullable().optional(),
         slug: z.string().min(1).optional(),
       },
-      async ({ schema_slug, expected_revision, schema, editor_config, entity_kind, name, description, llm_instructions, integration_requirements, tenant_id, slug }) => {
+      async ({ schema_slug, expected_revision, schema, editor_config, entity_kind, allow_reclassification, expected_page_count, name, description, llm_instructions, integration_requirements, tenant_id, slug }) => {
         const patch = {
           expected_revision,
           ...(schema !== undefined ? { schema } : {}),
           ...(editor_config !== undefined ? { editor_config } : {}),
           ...(entity_kind !== undefined ? { entity_kind } : {}),
+          ...(allow_reclassification !== undefined ? { allow_reclassification } : {}),
+          ...(expected_page_count !== undefined ? { expected_page_count } : {}),
           ...(name !== undefined ? { name } : {}),
           ...(description !== undefined ? { description } : {}),
           ...(llm_instructions !== undefined ? { llm_instructions } : {}),
