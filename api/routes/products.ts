@@ -8,6 +8,7 @@ import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '
 import {
   archiveProductAggregate,
   createProductAggregate,
+  deleteProductAggregate,
   getProductAggregate,
   getProductAggregateByPage,
   listProductAggregates,
@@ -174,6 +175,23 @@ products.post('/:id/publish', async (c) => {
       input.status as 'draft' | 'published',
     );
     return c.json({ product });
+  } catch (error) { return errorResponse(c, error); }
+});
+
+products.delete('/:id', async (c) => {
+  const auth = await requireAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(c);
+  if (body instanceof Response) return body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Request body must be an object.' }, 400);
+  const input = body as Record<string, unknown>;
+  if (typeof input.tenant_id !== 'string' || !Number.isSafeInteger(input.expected_version)) {
+    return c.json({ error: 'tenant_id and expected_version are required.' }, 400);
+  }
+  const client = await createSupabaseClient(c.env, auth.token);
+  try {
+    const result = await deleteProductAggregate(client, c.req.param('id'), input.tenant_id, Number(input.expected_version));
+    return c.json(result);
   } catch (error) { return errorResponse(c, error); }
 });
 

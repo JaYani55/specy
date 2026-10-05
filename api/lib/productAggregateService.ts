@@ -193,6 +193,16 @@ export async function publishProductAggregate(
   return data;
 }
 
+export async function deleteProductAggregate(client: UserClient, id: string, tenantId: string, expectedVersion: number) {
+  const { data, error } = await client.rpc('delete_service_product_with_events_aggregate', {
+    target_product_id: id,
+    expected_tenant_id: tenantId,
+    expected_version: expectedVersion,
+  });
+  if (error) throwDatabaseError(error);
+  return data as { deleted: true; product_id: string };
+}
+
 export async function archiveProductAggregate(client: UserClient, id: string, tenantId: string, expectedVersion: number) {
   const { data, error } = await client.rpc('archive_service_product_aggregate', {
     target_product_id: id,

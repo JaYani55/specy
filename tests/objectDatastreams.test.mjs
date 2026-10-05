@@ -10,6 +10,7 @@ const page = readFileSync(new URL('../src/pages/ObjectDatastreams.tsx', import.m
 const accessControls = readFileSync(new URL('../src/components/objects/ObjectApiAccessControls.tsx', import.meta.url), 'utf8');
 const objectEditor = readFileSync(new URL('../src/pages/ObjectEditor.tsx', import.meta.url), 'utf8');
 const accessMigration = readFileSync(new URL('../migrations/202610040007_product_object_api_access.sql', import.meta.url), 'utf8');
+const independentObjectApiMigration = readFileSync(new URL('../migrations/202610050003_product_object_api_independent_from_pages.sql', import.meta.url), 'utf8');
 
 describe('Object datastream inventory', () => {
   it('returns every RLS-visible Object, including generated Product mirrors and archived status', () => {
@@ -38,6 +39,8 @@ describe('Object datastream inventory', () => {
     assert.match(accessMigration, /object_api_enabled boolean not null default true/);
     assert.match(accessMigration, /object_requires_auth boolean not null default false/);
     assert.match(accessMigration, /api_eligibility and product\.object_api_enabled/);
+    assert.match(independentObjectApiMigration, /new\.status = 'published'[\s\S]*product\.retired_at is null[\s\S]*product\.object_api_enabled/);
+    assert.doesNotMatch(independentObjectApiMigration, /page_schemas|product_page_id/);
   });
 
   it('registers an Objects submenu and protected Datastreams dashboard route', () => {

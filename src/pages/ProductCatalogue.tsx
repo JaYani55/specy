@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, ArrowUpRight, Loader2, Package, Plus, Search } from 'lucide-react';
+import { Archive, ArrowUpRight, Loader2, Package, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { getSchemas } from '@/services/pageService';
-import { archiveServiceProduct, listServiceProducts, type ServiceProduct } from '@/services/productService';
-import { fetchProducts, type Product as LegacyProduct } from '@/services/events/productService';
+import { archiveServiceProduct, deleteServiceProduct, listServiceProducts, type ServiceProduct } from '@/services/productService';
+import { deleteProduct, fetchProducts, type Product as LegacyProduct } from '@/services/events/productService';
 import type { PageSchema } from '@/types/pagebuilder';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
@@ -60,6 +60,28 @@ export default function ProductCatalogue() {
   const visibleLegacyProducts = useMemo(() => legacyProducts.filter((product) =>
     product.name.toLocaleLowerCase('de').includes(normalizedQuery)), [legacyProducts, normalizedQuery]);
   const schemaById = useMemo(() => new Map(schemas.map((schema) => [schema.id, schema])), [schemas]);
+
+  const removeServiceProduct = async (product: ServiceProduct) => {
+    if (!activeTenantId || !window.confirm(`„${product.name}“ und alle zugehörigen Veranstaltungen, Veranstaltungsseiten und Archivdaten dauerhaft löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) return;
+    try {
+      await deleteServiceProduct({ id: product.id, tenant_id: activeTenantId, expected_version: product.version });
+      toast.success('Produkt und zugehörige Veranstaltungen wurden gelöscht.');
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Produkt konnte nicht gelöscht werden.');
+    }
+  };
+
+  const removeLegacyProduct = async (product: LegacyProduct) => {
+    if (!activeTenantId || !window.confirm(`„${product.name}“ und alle zugehörigen Veranstaltungen sowie Archivdaten dauerhaft löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) return;
+    try {
+      await deleteProduct(product.id, activeTenantId);
+      toast.success('Produkt und zugehörige Veranstaltungen wurden gelöscht.');
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Produkt konnte nicht gelöscht werden.');
+    }
+  };
 
   const archive = async (product: ServiceProduct) => {
     if (!activeTenantId || !window.confirm(`„${product.name}“ archivieren? Die öffentliche Seite wird zurückgezogen.`)) return;
@@ -126,9 +148,14 @@ export default function ProductCatalogue() {
                               <ArrowUpRight className="mr-1.5 h-4 w-4" />Bearbeiten
                             </Button>
                             {permissions.canManageProducts && (
-                              <Button variant="ghost" size="sm" onClick={() => void archive(product)} aria-label={`„${product.name}“ archivieren`}>
-                                <Archive className="h-4 w-4" />
-                              </Button>
+                              <>
+                                <Button variant="ghost" size="sm" onClick={() => void archive(product)} aria-label={`„${product.name}“ archivieren`}>
+                                  <Archive className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => void removeServiceProduct(product)} aria-label={`„${product.name}“ dauerhaft löschen`}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -161,10 +188,17 @@ export default function ProductCatalogue() {
                 {visibleLegacyProducts.length ? (
                   <div className="divide-y rounded-lg border">
                     {visibleLegacyProducts.map((product) => (
-                      <button key={product.id} type="button" className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-muted/40" onClick={() => navigate(`/products/manage/${product.id}`)}>
-                        <span className="min-w-0"><span className="block truncate font-medium">{product.name}</span><span className="block truncate text-sm text-muted-foreground">{product.description_de || 'Keine Kurzbeschreibung'}</span></span>
-                        <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
+                      <div key={product.id} className="flex items-center gap-3 p-4 hover:bg-muted/40">
+                        <button type="button" className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left" onClick={() => navigate(`/products/manage/${product.id}`)}>
+                          <span className="min-w-0"><span className="block truncate font-medium">{product.name}</span><span className="block truncate text-sm text-muted-foreground">{product.description_de || 'Keine Kurzbeschreibung'}</span></span>
+                          <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
+                        {permissions.canManageProducts && (
+                          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => void removeLegacyProduct(product)} aria-label={`„${product.name}“ dauerhaft löschen`}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 ) : (

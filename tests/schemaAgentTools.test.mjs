@@ -68,6 +68,7 @@ test('MCP page tools expose the specy-pages > schemas hierarchy and management a
     'specy_products_update',
     'specy_products_publish',
     'specy_products_archive',
+    'specy_products_delete',
   ]) {
     assert.match(mcpSource, new RegExp(`'${toolName}'`));
   }

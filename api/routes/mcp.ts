@@ -28,6 +28,7 @@ import { serializeMcpError } from '../lib/apiError';
 import {
   archiveProductAggregate,
   createProductAggregate,
+  deleteProductAggregate,
   getProductAggregate,
   listProductAggregates,
   ProductAggregateError,
@@ -94,6 +95,7 @@ const BUILT_IN_MCP_TOOLS = [
   'specy_products_update',
   'specy_products_publish',
   'specy_products_archive',
+  'specy_products_delete',
 ] as const;
 
 const AUTHENTICATED_MCP_TOOLS = new Set([
@@ -101,7 +103,7 @@ const AUTHENTICATED_MCP_TOOLS = new Set([
   'specy_pages_schemas_list', 'specy_pages_schemas_get', 'specy_pages_schemas_list_pages',
   'specy_pages_schemas_get_page', 'specy_pages_schemas_create_page', 'specy_pages_schemas_update_page',
   'specy_pages_schemas_update_system_data', 'specy_pages_schemas_update_definition', 'specy_pages_schemas_replace_frontend_targets',
-  'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive',
+  'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive', 'specy_products_delete',
 ]);
 
 function generateRegistrationCode(): string {
@@ -355,10 +357,23 @@ async function createMcpServerWithTools(
     );
     server.tool(
       'specy_products_archive',
-      '[specy-products] Retire a product and archive its canonical page atomically.',
+      '[specy-products] Retire a product and archive its canonical page atomically while preserving its history.',
       { id: z.string().uuid(), tenant_id: z.string().uuid(), expected_version: z.number().int().min(1) },
       async ({ id, tenant_id, expected_version }) => callProductOperation(
         () => archiveProductAggregate(supabase, id, tenant_id, expected_version),
+      ),
+    );
+    server.tool(
+      'specy_products_delete',
+      '[specy-products] Permanently delete a product, its canonical Page, every linked active Event and linked Event Page, plus archived Event history. This is irreversible; require explicit user confirmation and the current expected_version.',
+      {
+        id: z.string().uuid(),
+        tenant_id: z.string().uuid(),
+        expected_version: z.number().int().min(1),
+        confirm_delete: z.literal(true).describe('Set true only after the user explicitly confirms permanent deletion of the Product, Events, Pages and archived Event history.'),
+      },
+      async ({ id, tenant_id, expected_version }) => callProductOperation(
+        () => deleteProductAggregate(supabase, id, tenant_id, expected_version),
       ),
     );
 

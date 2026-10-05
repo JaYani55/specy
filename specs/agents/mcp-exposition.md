@@ -121,7 +121,7 @@ Built-in tools remain available:
 - `specy_pages_schemas_list_pages`, `specy_pages_schemas_get_page`
 - `specy_pages_schemas_create_page`, `specy_pages_schemas_update_page`
 - `specy_pages_schemas_update_definition`, `specy_pages_schemas_update_system_data`, `specy_pages_schemas_replace_frontend_targets`
-- `specy_products_list`, `specy_products_create`, `specy_products_get`, `specy_products_update`, `specy_products_publish`, `specy_products_archive`
+- `specy_products_list`, `specy_products_create`, `specy_products_get`, `specy_products_update`, `specy_products_publish`, `specy_products_archive`, `specy_products_delete`
 
 The `specy_products_*` tools form the **`specy-products`** aggregate workflow and require an explicit tenant UUID. They share REST aggregate operations and never use generic page CRUD for product schemas. Event schemas use the existing `specy_pages_schemas_create_page` / `specy_pages_schemas_update_page` tools with event-specific fields and tenant/revision checks; there is no separate event collection tool family.
 

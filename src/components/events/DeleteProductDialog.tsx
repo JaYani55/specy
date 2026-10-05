@@ -36,8 +36,8 @@ export const DeleteProductDialog = ({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {language === "en"
-              ? `Are you sure you want to delete "${ProductName}"? This action cannot be undone.`
-              : `Sind Sie sicher, dass Sie "${ProductName}" löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden.`}
+              ? `Delete "${ProductName}" permanently? All linked Events, their public Event Pages, and archived Event history will also be deleted. This cannot be undone.`
+              : `„${ProductName}“ dauerhaft löschen? Alle zugehörigen Veranstaltungen, öffentlichen Veranstaltungsseiten und archivierten Veranstaltungsdaten werden ebenfalls gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

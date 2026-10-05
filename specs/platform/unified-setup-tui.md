@@ -240,7 +240,7 @@ bypass RLS — no user-facing write policies).
 | `owner_kind` | `component` | `key` examples | written by |
 |---|---|---|---|
 | `core` | `worker` | `worker`, `core_commit` | deploy / cf-update after `wrangler deploy` |
-| `core` | `migrations` | `objects.sql`, `202609100001_deployment_state.sql`, `202610040001_legacy_string_array_schema_support.sql`, `202610040002_page_content_templates.sql`, `202610040003_product_event_custom_fields.sql`, `202610040004_product_scoped_fields_and_object_sources.sql`, `202610040005_product_object_projection.sql`, `202610040006_product_event_dynamic_data_contract.sql`, `202610040007_product_object_api_access.sql`, `202610050001_backfill_event_registration_capacity.sql` | setup / cf-update / migrate |
+| `core` | `migrations` | `objects.sql`, `202609100001_deployment_state.sql`, `202610040001_legacy_string_array_schema_support.sql`, `202610040002_page_content_templates.sql`, `202610040003_product_event_custom_fields.sql`, `202610040004_product_scoped_fields_and_object_sources.sql`, `202610040005_product_object_projection.sql`, `202610040006_product_event_dynamic_data_contract.sql`, `202610040007_product_object_api_access.sql`, `202610050001_backfill_event_registration_capacity.sql`, `202610050002_product_delete_with_events.sql`, `202610050003_product_object_api_independent_from_pages.sql` | setup / cf-update / migrate |
 | `core` | `edge_functions` | `send_email`, `deployed` | setup / cf-update |
 | `core` | `auth_hook` | `custom_access_token_hook` | migrate / cf-update (`registerAuthHook`) |
 | `plugin` | `code` | *(single row)* `code` | install / update |

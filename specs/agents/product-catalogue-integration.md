@@ -28,6 +28,7 @@ All operations require the authenticated caller's permissions and an explicit wo
 | `specy_products_update` | UUID `id`, `tenant_id`, `expected_version`, `expected_definition_revision`, and replacement fields |
 | `specy_products_publish` | UUID `id`, `tenant_id`, `expected_version`, `expected_definition_revision`, `status: draft | published` |
 | `specy_products_archive` | UUID `id`, `tenant_id`, `expected_version`; retirement/archive is atomic |
+| `specy_products_delete` | UUID `id`, `tenant_id`, `expected_version`; permanently deletes Product, related Events, Event Pages, archive history, canonical Product Page and generated Object in one transaction |
 
 Schema definition `definition_revision` and product aggregate `version` are distinct concurrency tokens. Create, update, and publication check the schema revision; update/publication also check aggregate version. Idempotency protects aggregate creation; a repeated key with changed payload conflicts.
 
@@ -50,14 +51,14 @@ No arbitrary table joins/includes are supported. Product delivery excludes retir
 
 ## Dynamic Product and Event data
 
-Each Product has one generated, read-only Object mirror. `GET /api/objects/{objectSlug}` is the canonical dynamic read and returns the normal Object `{ schema, data }` contract. The friendly `GET /api/products/:workspaceSlug/:productSlug` resolves the published Product page and returns the identical Object envelope. Pages own editorial content/publication and use the revalidation transport; the Object stream contains current Product/Event operational values and Page references, not copied `pages.content`. Event records include schedule, registration status, participant capacity, and only custom values explicitly marked public in the selected Product's field schema. Objects are synchronized transactionally and are never edited in ObjectEditor; users edit Page content in PageBuilder and Product/Event facts in their dedicated forms.
+Each Product has one generated, read-only Object mirror. `GET /api/objects/{objectSlug}` is the canonical dynamic read and returns the normal Object `{ schema, data }` contract. Its `api_enabled`/`requires_auth` policy is edited in the Objects Datastreams UI and is independent of Page publication/revalidation; Product retirement disables the stream. The friendly `GET /api/products/:workspaceSlug/:productSlug` remains a Page-oriented alias and resolves only a published Product page. Pages own editorial content/publication and use the revalidation transport; the Object stream contains current Product/Event operational values and Page references, not copied `pages.content`. Event records include schedule, registration status, participant capacity, and only custom values explicitly marked public in the selected Product's field schema. Objects are synchronized transactionally and are never edited in ObjectEditor; users edit Page content in PageBuilder and Product/Event facts in their dedicated forms.
 
 ## Contract and safety limits
 
 - Product creation requires a tenant-owned service-product page-collection schema.
 - Product/page/tenant creation, update, publication, and retirement use transaction-backed database RPCs under caller RLS.
 - Update/publish requests validate content against the current schema and return field-path errors; clients must read the new aggregate version after a successful write.
-- Generic page deletion cannot cascade-delete a linked product. Hard deletion also fails while active/archive event references remain; archive is the normal retirement path.
+- Generic page deletion cannot delete a linked product. Archive remains the reversible retirement path. Explicit Product deletion is tenant/version checked and permanently removes the Product, all linked active Events and Event Pages, archived Event history, its canonical Product Page, and generated Object atomically.
 - Public manifest `supports_new_routes` is `null` until the connected deployment proves route generation/purge capability.
 
 See [`../features/service-products.md`](../features/service-products.md) for the full current core contract and its migration limits.

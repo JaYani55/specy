@@ -132,97 +132,18 @@ export function useProductManagement(onProductsChange?: () => void) {
     }
   }, [activeTenantId, editingProduct, language, loadProducts, onProductsChange]);
 
-  // Check if Product is in use and prepare for deletion
+  // Prepare a confirmation; the database cascade removes linked Events atomically.
   const checkProductUsageForDelete = useCallback(async (product: Product) => {
     if (!activeTenantId || product.tenant_id !== activeTenantId) {
       toast.error(language === 'en' ? 'The product does not belong to the active workspace.' : 'Das Produkt gehört nicht zum aktiven Workspace.');
       return false;
     }
-    try {
-      // Confirm the known product reference in this workspace before deletion.
-      const { data: columnData, error: columnError } = await supabase
-        .from('mentorbooking_events')
-        .select('product_id')
-        .eq('tenant_id', activeTenantId)
-        .limit(1);
-      
-      if (columnError) {
-        console.error('Error fetching column names:', columnError);
-        // If we can't read the table, just allow the delete to proceed
-        console.warn('Could not check event relationships, proceeding with delete anyway');
-        setProductToDelete(product);
-        setDeleteProductDialogOpen(true);
-        return true;
-      }
-      
-      // Check what columns exist in the events table
-      const sampleRow = columnData?.[0] || {};
-      const columnNames = Object.keys(sampleRow);
-      console.log('Available columns in events table:', columnNames);
-      
-      // Find the correct product-related column
-      let productColumnName: string | undefined;
-      
-      // Try some common naming patterns
-      const possibleColumnNames = ['product_id', 'product_id', 'productid', 'ProductId', 'product_id', 'product_id'];
-      for (const column of columnNames) {
-        if (column.toLowerCase().includes('product') || possibleColumnNames.includes(column)) {
-          productColumnName = column;
-          break;
-        }
-      }
-      
-      if (!productColumnName) {
-        console.warn('No product-related column found in mentorbooking_events, proceeding with delete anyway');
-        setProductToDelete(product);
-        setDeleteProductDialogOpen(true);
-        return true;
-      }
-      
-      console.log(`Using column '${productColumnName}' to check product references`);
-      
-      // Now query in the active workspace only.
-      const { data: rawEvents, error: checkError } = await supabase
-        .from('mentorbooking_events')
-        .select('id, company')
-        .eq(productColumnName, product.id)
-        .eq('tenant_id', activeTenantId);
-
-      if (checkError) {
-        console.warn(`Error checking relationships: ${checkError.message}`);
-        setProductToDelete(product);
-        setDeleteProductDialogOpen(true);
-        return true;
-      }
-
-      const events = mapToEventSummaries(rawEvents);
-
-      setProductToDelete(product);
-      
-      if (events.length > 0) {
-        setEventsUsingProduct(events);
-        setProductInUseDialogOpen(true);
-        return false;
-      } else {
-        setDeleteProductDialogOpen(true);
-        return true;
-      }
-    } catch (error) {
-      console.error('Error checking Product usage:', error);
-      // In case of any error, allow deletion to proceed with warning
-      console.warn('Encountered error during relationship check, proceeding with delete dialog');
-      setProductToDelete(product);
-      setDeleteProductDialogOpen(true);
-      
-      toast.error(
-        language === 'en' 
-          ? `Warning: Could not verify product usage: ${error instanceof Error ? error.message : 'Unknown error'}`
-          : `Warnung: Produktnutzung konnte nicht überprüft werden: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`
-      );
-      
-      return true;
-    }
-  }, [language]);
+    setProductToDelete(product);
+    setEventsUsingProduct([]);
+    setProductInUseDialogOpen(false);
+    setDeleteProductDialogOpen(true);
+    return true;
+  }, [activeTenantId, language]);
 
   // Delete Product
   const deleteProductById = useCallback(async () => {

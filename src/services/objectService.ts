@@ -18,7 +18,7 @@ export interface ObjectDatastreamRecord {
   api_enabled: boolean;
   requested_api_enabled: boolean;
   api_gate_open: boolean;
-  api_gate_reason: 'product_retired' | 'product_page_missing' | 'product_page_unpublished' | 'product_schema_not_eligible' | 'product_schema_not_registered' | null;
+  api_gate_reason: 'product_retired' | 'projection_stale' | null;
   publicly_readable: boolean;
   share_enabled: boolean;
   tenant_id: string | null;

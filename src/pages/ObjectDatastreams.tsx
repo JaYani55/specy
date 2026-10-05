@@ -63,8 +63,8 @@ const ObjectDatastreams = () => {
 
   const configStatus = (stream: ObjectDatastreamRecord) => {
     if (stream.status === 'archived') return language === 'en' ? 'Archived' : 'Archiviert';
-    if (stream.source.kind === 'product' && stream.requested_api_enabled && stream.api_gate_reason) {
-      return language === 'en' ? 'Waiting for Product publication' : 'Produktfreigabe erforderlich';
+    if (stream.source.kind === 'product' && stream.api_gate_reason === 'projection_stale') {
+      return language === 'en' ? 'Access setting not synchronized' : 'Zugriffseinstellung nicht synchronisiert';
     }
     if (!stream.requested_api_enabled) return language === 'en' ? 'API disabled' : 'API deaktiviert';
     if (stream.requires_auth) return language === 'en' ? 'Authentication required' : 'Authentifizierung erforderlich';
@@ -72,21 +72,15 @@ const ObjectDatastreams = () => {
   };
 
   const apiGateMessage = (reason: ObjectDatastreamRecord['api_gate_reason']): string => {
-    const english: Record<NonNullable<ObjectDatastreamRecord['api_gate_reason']>, string> = {
-      product_retired: 'The source Product is retired.',
-      product_page_missing: 'The source Product has no linked Page.',
-      product_page_unpublished: 'Publish the Product Page to enable its API stream.',
-      product_schema_not_eligible: 'The Product Page must use a registered service-product schema.',
-      product_schema_not_registered: 'Register the Product schema with a frontend to enable its API stream.',
-    };
-    const german: Record<NonNullable<ObjectDatastreamRecord['api_gate_reason']>, string> = {
-      product_retired: 'Das Quellprodukt ist archiviert.',
-      product_page_missing: 'Dem Quellprodukt ist keine Seite zugeordnet.',
-      product_page_unpublished: 'Veröffentliche die Produktseite, um den API-Datenstrom freizuschalten.',
-      product_schema_not_eligible: 'Die Produktseite muss ein registriertes Service-Product-Schema verwenden.',
-      product_schema_not_registered: 'Registriere das Produktschema bei einem Frontend, um den API-Datenstrom freizuschalten.',
-    };
-    return reason ? (language === 'en' ? english[reason] : german[reason]) : '';
+    if (reason === 'product_retired') {
+      return language === 'en' ? 'The source Product has been retired; its datastream cannot be re-enabled.' : 'Das Quellprodukt wurde archiviert; sein Datastream kann nicht wieder aktiviert werden.';
+    }
+    if (reason === 'projection_stale') {
+      return language === 'en'
+        ? 'API access is enabled on the Product, but the generated Object is still disabled. Save these settings again or deploy the latest Product Object sync migration.'
+        : 'Der API-Zugriff ist am Produkt aktiviert, aber das generierte Object ist noch deaktiviert. Speichere die Einstellungen erneut oder rolle die aktuelle Product-Object-Synchronisierung aus.';
+    }
+    return '';
   };
 
   const openAccessSettings = (stream: ObjectDatastreamRecord) => {
@@ -249,14 +243,18 @@ const ObjectDatastreams = () => {
               requiresAuth={accessDraft.requires_auth}
               onApiEnabledChange={(api_enabled) => setAccessDraft((current) => ({ ...current, api_enabled }))}
               onRequiresAuthChange={(requires_auth) => setAccessDraft((current) => ({ ...current, requires_auth }))}
-              disabled={isSavingAccess}
+              disabled={isSavingAccess || accessTarget?.api_gate_reason === 'product_retired'}
               idPrefix="datastream-access"
             />
           </div>
-          {accessTarget?.source.kind === 'product' && accessTarget.api_gate_reason && accessDraft.api_enabled && (
+          {accessTarget?.source.kind === 'product' && accessTarget.api_gate_reason && (
             <Alert>
               <Activity className="h-4 w-4" />
-              <AlertTitle>{language === 'en' ? 'Product publication gate' : 'Produktfreigabe'}</AlertTitle>
+              <AlertTitle>
+                {accessTarget.api_gate_reason === 'product_retired'
+                  ? (language === 'en' ? 'Product is retired' : 'Produkt ist archiviert')
+                  : (language === 'en' ? 'Datastream needs synchronization' : 'Datastream muss synchronisiert werden')}
+              </AlertTitle>
               <AlertDescription>{apiGateMessage(accessTarget.api_gate_reason)}</AlertDescription>
             </Alert>
           )}
@@ -264,7 +262,7 @@ const ObjectDatastreams = () => {
             <Button variant="outline" onClick={() => setAccessTarget(null)} disabled={isSavingAccess}>
               {language === 'en' ? 'Cancel' : 'Abbrechen'}
             </Button>
-            <Button onClick={() => void saveAccessSettings()} disabled={isSavingAccess}>
+            <Button onClick={() => void saveAccessSettings()} disabled={isSavingAccess || accessTarget?.api_gate_reason === 'product_retired'}>
               {isSavingAccess && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {language === 'en' ? 'Save settings' : 'Einstellungen speichern'}
             </Button>

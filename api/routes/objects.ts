@@ -368,41 +368,21 @@ objects.get('/datastreams', async (c) => {
   const sourceProductIds = [...new Set(sourceProductByObjectId.values())];
   const { data: products, error: productsError } = sourceProductIds.length
     ? await admin.from('mentorbooking_products')
-      .select('id, integration_id, name, tenant_id, product_page_id, retired_at, object_api_enabled, object_requires_auth')
+      .select('id, integration_id, name, tenant_id, retired_at, object_api_enabled')
       .in('id', sourceProductIds)
     : { data: [], error: null };
   if (productsError) return c.json({ error: 'Failed to load Product datastream sources.' }, 500);
   const productById = new Map((products ?? []).map((product) => [product.id, product]));
-  const productPageIds = [...new Set((products ?? []).map((product) => product.product_page_id).filter((id): id is string => Boolean(id)))];
-  const { data: productPages, error: productPagesError } = productPageIds.length
-    ? await admin.from('pages').select('id, schema_id, tenant_id, status').in('id', productPageIds)
-    : { data: [], error: null };
-  if (productPagesError) return c.json({ error: 'Failed to load Product page visibility.' }, 500);
-  const productSchemaIds = [...new Set((productPages ?? []).map((page) => page.schema_id).filter((id): id is string => Boolean(id)))];
-  const { data: productSchemas, error: productSchemasError } = productSchemaIds.length
-    ? await admin.from('page_schemas').select('id, tenant_id, entity_kind, registration_status').in('id', productSchemaIds)
-    : { data: [], error: null };
-  if (productSchemasError) return c.json({ error: 'Failed to load Product schema visibility.' }, 500);
-  const pageById = new Map((productPages ?? []).map((page) => [page.id, page]));
-  const schemaById = new Map((productSchemas ?? []).map((schema) => [schema.id, schema]));
-
-  const getProductApiGateReason = (product: NonNullable<typeof products>[number]): string | null => {
-    if (product.retired_at) return 'product_retired';
-    if (!product.product_page_id) return 'product_page_missing';
-    const page = pageById.get(product.product_page_id);
-    if (!page || page.tenant_id !== product.tenant_id) return 'product_page_missing';
-    if (page.status !== 'published') return 'product_page_unpublished';
-    const schema = schemaById.get(page.schema_id);
-    if (!schema || schema.tenant_id !== product.tenant_id || schema.entity_kind !== 'service-product') return 'product_schema_not_eligible';
-    if (schema.registration_status !== 'registered') return 'product_schema_not_registered';
-    return null;
-  };
 
   const datastreams = rows.map((row) => {
     const sourceProductId = sourceProductByObjectId.get(row.id);
     const product = sourceProductId === undefined ? undefined : productById.get(sourceProductId);
     const sameTenantProduct = product && product.tenant_id === row.tenant_id ? product : undefined;
-    const apiGateReason = sameTenantProduct ? getProductApiGateReason(sameTenantProduct) : null;
+    const apiGateReason = sameTenantProduct?.retired_at
+      ? 'product_retired'
+      : sameTenantProduct?.object_api_enabled && !row.api_enabled
+        ? 'projection_stale'
+        : null;
     return {
       id: row.id,
       name: row.name,

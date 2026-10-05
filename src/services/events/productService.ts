@@ -161,7 +161,7 @@ export const updateProduct = async (id: number, Product: Partial<Product>, tenan
   }
 };
 
-// Delete a Product
+// Permanently delete a Product and its linked Events/Event Pages atomically.
 export const deleteProduct = async (id: number, tenantId: string): Promise<boolean> => {
   const scopedTenantId = requireProductTenantId(tenantId);
   const { error } = await supabase.rpc('delete_mentorbooking_product_aggregate', {
@@ -169,8 +169,7 @@ export const deleteProduct = async (id: number, tenantId: string): Promise<boole
     expected_tenant_id: scopedTenantId,
   });
   if (error) {
-    // The database performs both deletes in one transaction and refuses to
-    // remove products still referenced by active or archived events.
+    // The database cascade is tenant-scoped and removes linked Event and archive rows atomically.
     throw new Error(`Product could not be deleted: ${error.message}`);
   }
   return true;
