@@ -5,10 +5,13 @@ import { toast } from 'sonner';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ObjectApiAccessControls } from '@/components/objects/ObjectApiAccessControls';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { API_URL } from '@/lib/apiUrl';
-import { getObjectDatastreams, probePublicObjectDatastream, type ObjectDatastreamProbe, type ObjectDatastreamRecord } from '@/services/objectService';
+import { getObjectDatastreams, probePublicObjectDatastream, updateObjectApiAccess, type ObjectDatastreamProbe, type ObjectDatastreamRecord } from '@/services/objectService';
 
 const ObjectDatastreams = () => {
   const { language } = useTheme();
@@ -17,6 +20,9 @@ const ObjectDatastreams = () => {
   const [probes, setProbes] = useState<Record<string, ObjectDatastreamProbe | { kind: 'checking' }>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [accessTarget, setAccessTarget] = useState<ObjectDatastreamRecord | null>(null);
+  const [accessDraft, setAccessDraft] = useState({ api_enabled: false, requires_auth: false });
+  const [isSavingAccess, setIsSavingAccess] = useState(false);
 
   const loadDatastreams = useCallback(async (refresh = false) => {
     try {
@@ -57,9 +63,50 @@ const ObjectDatastreams = () => {
 
   const configStatus = (stream: ObjectDatastreamRecord) => {
     if (stream.status === 'archived') return language === 'en' ? 'Archived' : 'Archiviert';
-    if (!stream.api_enabled) return language === 'en' ? 'API disabled' : 'API deaktiviert';
+    if (stream.source.kind === 'product' && stream.requested_api_enabled && stream.api_gate_reason) {
+      return language === 'en' ? 'Waiting for Product publication' : 'Produktfreigabe erforderlich';
+    }
+    if (!stream.requested_api_enabled) return language === 'en' ? 'API disabled' : 'API deaktiviert';
     if (stream.requires_auth) return language === 'en' ? 'Authentication required' : 'Authentifizierung erforderlich';
     return language === 'en' ? 'Public API' : 'Öffentliche API';
+  };
+
+  const apiGateMessage = (reason: ObjectDatastreamRecord['api_gate_reason']): string => {
+    const english: Record<NonNullable<ObjectDatastreamRecord['api_gate_reason']>, string> = {
+      product_retired: 'The source Product is retired.',
+      product_page_missing: 'The source Product has no linked Page.',
+      product_page_unpublished: 'Publish the Product Page to enable its API stream.',
+      product_schema_not_eligible: 'The Product Page must use a registered service-product schema.',
+      product_schema_not_registered: 'Register the Product schema with a frontend to enable its API stream.',
+    };
+    const german: Record<NonNullable<ObjectDatastreamRecord['api_gate_reason']>, string> = {
+      product_retired: 'Das Quellprodukt ist archiviert.',
+      product_page_missing: 'Dem Quellprodukt ist keine Seite zugeordnet.',
+      product_page_unpublished: 'Veröffentliche die Produktseite, um den API-Datenstrom freizuschalten.',
+      product_schema_not_eligible: 'Die Produktseite muss ein registriertes Service-Product-Schema verwenden.',
+      product_schema_not_registered: 'Registriere das Produktschema bei einem Frontend, um den API-Datenstrom freizuschalten.',
+    };
+    return reason ? (language === 'en' ? english[reason] : german[reason]) : '';
+  };
+
+  const openAccessSettings = (stream: ObjectDatastreamRecord) => {
+    setAccessTarget(stream);
+    setAccessDraft({ api_enabled: stream.requested_api_enabled, requires_auth: stream.requires_auth });
+  };
+
+  const saveAccessSettings = async () => {
+    if (!accessTarget) return;
+    try {
+      setIsSavingAccess(true);
+      await updateObjectApiAccess(accessTarget.id, accessDraft);
+      toast.success(language === 'en' ? 'API access settings saved.' : 'API-Zugriffseinstellungen gespeichert.');
+      setAccessTarget(null);
+      await loadDatastreams(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'API-Zugriffseinstellungen konnten nicht gespeichert werden.');
+    } finally {
+      setIsSavingAccess(false);
+    }
   };
 
   const probeLabel = (stream: ObjectDatastreamRecord) => {
@@ -165,6 +212,9 @@ const ObjectDatastreams = () => {
                 </dl>
 
                 <div className="mt-4 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => openAccessSettings(stream)}>
+                    {language === 'en' ? 'API access settings' : 'API-Zugriff einstellen'}
+                  </Button>
                   {stream.publicly_readable && (
                     <Button variant="outline" size="sm" asChild>
                       <a href={apiUrl} target="_blank" rel="noopener noreferrer">
@@ -187,6 +237,40 @@ const ObjectDatastreams = () => {
           })}
         </div>
       )}
+      <Dialog open={accessTarget !== null} onOpenChange={(open) => { if (!open && !isSavingAccess) setAccessTarget(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{language === 'en' ? 'Object API access' : 'Object-API-Zugriff'}</DialogTitle>
+            <DialogDescription>{accessTarget?.name} · {accessTarget?.slug}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ObjectApiAccessControls
+              apiEnabled={accessDraft.api_enabled}
+              requiresAuth={accessDraft.requires_auth}
+              onApiEnabledChange={(api_enabled) => setAccessDraft((current) => ({ ...current, api_enabled }))}
+              onRequiresAuthChange={(requires_auth) => setAccessDraft((current) => ({ ...current, requires_auth }))}
+              disabled={isSavingAccess}
+              idPrefix="datastream-access"
+            />
+          </div>
+          {accessTarget?.source.kind === 'product' && accessTarget.api_gate_reason && accessDraft.api_enabled && (
+            <Alert>
+              <Activity className="h-4 w-4" />
+              <AlertTitle>{language === 'en' ? 'Product publication gate' : 'Produktfreigabe'}</AlertTitle>
+              <AlertDescription>{apiGateMessage(accessTarget.api_gate_reason)}</AlertDescription>
+            </Alert>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAccessTarget(null)} disabled={isSavingAccess}>
+              {language === 'en' ? 'Cancel' : 'Abbrechen'}
+            </Button>
+            <Button onClick={() => void saveAccessSettings()} disabled={isSavingAccess}>
+              {isSavingAccess && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {language === 'en' ? 'Save settings' : 'Einstellungen speichern'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AdminPageLayout>
   );
 };

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 import { getOptionalAuthSession, parseBearerToken, requireAppRole } from '../lib/auth';
 import { isPublicObjectReadable } from '../lib/objectVisibility';
@@ -367,16 +368,41 @@ objects.get('/datastreams', async (c) => {
   const sourceProductIds = [...new Set(sourceProductByObjectId.values())];
   const { data: products, error: productsError } = sourceProductIds.length
     ? await admin.from('mentorbooking_products')
-      .select('id, integration_id, name, tenant_id')
+      .select('id, integration_id, name, tenant_id, product_page_id, retired_at, object_api_enabled, object_requires_auth')
       .in('id', sourceProductIds)
     : { data: [], error: null };
   if (productsError) return c.json({ error: 'Failed to load Product datastream sources.' }, 500);
   const productById = new Map((products ?? []).map((product) => [product.id, product]));
+  const productPageIds = [...new Set((products ?? []).map((product) => product.product_page_id).filter((id): id is string => Boolean(id)))];
+  const { data: productPages, error: productPagesError } = productPageIds.length
+    ? await admin.from('pages').select('id, schema_id, tenant_id, status').in('id', productPageIds)
+    : { data: [], error: null };
+  if (productPagesError) return c.json({ error: 'Failed to load Product page visibility.' }, 500);
+  const productSchemaIds = [...new Set((productPages ?? []).map((page) => page.schema_id).filter((id): id is string => Boolean(id)))];
+  const { data: productSchemas, error: productSchemasError } = productSchemaIds.length
+    ? await admin.from('page_schemas').select('id, tenant_id, entity_kind, registration_status').in('id', productSchemaIds)
+    : { data: [], error: null };
+  if (productSchemasError) return c.json({ error: 'Failed to load Product schema visibility.' }, 500);
+  const pageById = new Map((productPages ?? []).map((page) => [page.id, page]));
+  const schemaById = new Map((productSchemas ?? []).map((schema) => [schema.id, schema]));
+
+  const getProductApiGateReason = (product: NonNullable<typeof products>[number]): string | null => {
+    if (product.retired_at) return 'product_retired';
+    if (!product.product_page_id) return 'product_page_missing';
+    const page = pageById.get(product.product_page_id);
+    if (!page || page.tenant_id !== product.tenant_id) return 'product_page_missing';
+    if (page.status !== 'published') return 'product_page_unpublished';
+    const schema = schemaById.get(page.schema_id);
+    if (!schema || schema.tenant_id !== product.tenant_id || schema.entity_kind !== 'service-product') return 'product_schema_not_eligible';
+    if (schema.registration_status !== 'registered') return 'product_schema_not_registered';
+    return null;
+  };
 
   const datastreams = rows.map((row) => {
     const sourceProductId = sourceProductByObjectId.get(row.id);
     const product = sourceProductId === undefined ? undefined : productById.get(sourceProductId);
     const sameTenantProduct = product && product.tenant_id === row.tenant_id ? product : undefined;
+    const apiGateReason = sameTenantProduct ? getProductApiGateReason(sameTenantProduct) : null;
     return {
       id: row.id,
       name: row.name,
@@ -386,6 +412,9 @@ objects.get('/datastreams', async (c) => {
       status: row.status,
       requires_auth: row.requires_auth,
       api_enabled: row.api_enabled,
+      requested_api_enabled: sameTenantProduct ? sameTenantProduct.object_api_enabled : row.api_enabled,
+      api_gate_open: apiGateReason === null,
+      api_gate_reason: apiGateReason,
       publicly_readable: isPublicObjectReadable(row),
       share_enabled: row.share_enabled,
       tenant_id: row.tenant_id,
@@ -420,6 +449,76 @@ objects.on('HEAD', '/:idOrSlug', async (c) => {
   const { data, error } = await (isUuid ? query.eq('id', idOrSlug) : query.eq('slug', idOrSlug)).limit(1);
   if (error) return c.body(null, 500);
   return c.body(null, data?.length ? 200 : 404);
+});
+
+// PATCH /api/objects/:id/access — update API visibility on manual Objects or the owning Product source.
+objects.patch('/:id/access', async (c) => {
+  const auth = await requireAppRole(c, 'user');
+  if (auth instanceof Response) return auth;
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Request body must be an object.' }, 400);
+  const input = body as Record<string, unknown>;
+  if (typeof input.api_enabled !== 'boolean' || typeof input.requires_auth !== 'boolean') {
+    return c.json({ error: 'api_enabled and requires_auth must be boolean values.' }, 400);
+  }
+
+  const objectId = c.req.param('id');
+  const caller = await createSupabaseClient(c.env, auth.token);
+  const { data: visibleObject, error: visibleError } = await caller.from('objects')
+    .select('id, status, tenant_id')
+    .eq('id', objectId)
+    .maybeSingle();
+  if (visibleError) return c.json({ error: 'Could not load the Object.' }, 500);
+  if (!visibleObject) return c.json({ error: 'Object not found.' }, 404);
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: source, error: sourceError } = await admin.from('objects')
+    .select('source_product_id')
+    .eq('id', objectId)
+    .maybeSingle();
+  if (sourceError) return c.json({ error: 'Could not load the Object source.' }, 500);
+
+  if (source?.source_product_id != null) {
+    const { data: product, error: productError } = await admin.from('mentorbooking_products')
+      .select('integration_id, tenant_id')
+      .eq('id', source.source_product_id)
+      .maybeSingle();
+    if (productError) return c.json({ error: 'Could not load Product access settings.' }, 500);
+    if (!product || product.tenant_id !== visibleObject.tenant_id) return c.json({ error: 'Object source not found.' }, 404);
+
+    const { error } = await caller.rpc('update_product_object_api_access', {
+      target_product_id: product.integration_id,
+      target_tenant_id: product.tenant_id,
+      target_api_enabled: input.api_enabled,
+      target_requires_auth: input.requires_auth,
+    });
+    if (error) {
+      const status = error.code === 'P0002' ? 404 : error.code === '42501' ? 403 : error.code === '22023' ? 400 : 500;
+      return c.json({ error: error.message || 'Could not update Product Object API access.' }, status as ContentfulStatusCode);
+    }
+  } else {
+    const { error } = await caller.from('objects')
+      .update({ api_enabled: input.api_enabled, requires_auth: input.requires_auth })
+      .eq('id', objectId);
+    if (error) {
+      if (error.code === '42501') return c.json({ error: 'You cannot change access settings for this Object.' }, 403);
+      return c.json({ error: 'Could not update Object API access.' }, 500);
+    }
+  }
+
+  const { data: updated, error: updatedError } = await caller.from('objects')
+    .select('id, api_enabled, requires_auth, status')
+    .eq('id', objectId)
+    .maybeSingle();
+  if (updatedError) return c.json({ error: 'Access was saved, but the Object status could not be reloaded.' }, 500);
+  if (!updated) return c.json({ error: 'Object not found after updating access.' }, 404);
+  return c.json({
+    object: {
+      ...updated,
+      requested_api_enabled: input.api_enabled,
+    },
+  });
 });
 
 // GET /api/objects/:idOrSlug

@@ -10,11 +10,9 @@ import {
   FileJson,
   Info,
   Loader2,
-  Lock,
   Plus,
   Save,
   Trash2,
-  Unlock,
   Upload,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -30,6 +28,7 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ObjectContentBlocksEditor } from '@/components/objects/ObjectContentBlocksEditor';
+import { ObjectApiAccessControls } from '@/components/objects/ObjectApiAccessControls';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1655,31 +1654,13 @@ const ObjectEditor: React.FC = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-3 pt-6">
-                <Switch
-                  id="api-enabled"
-                  checked={apiEnabled}
-                  onCheckedChange={setApiEnabled}
-                />
-                <Label htmlFor="api-enabled" className="flex items-center gap-1.5 cursor-pointer">
-                  {language === 'en' ? 'API enabled' : 'API aktiviert'}
-                </Label>
-              </div>
-              <div className="flex items-center gap-3 pt-6">
-                <Switch
-                  id="requires-auth"
-                  checked={requiresAuth}
-                  onCheckedChange={setRequiresAuth}
-                />
-                <Label htmlFor="requires-auth" className="flex items-center gap-1.5 cursor-pointer">
-                  {requiresAuth ? (
-                    <Lock className="h-3.5 w-3.5" />
-                  ) : (
-                    <Unlock className="h-3.5 w-3.5" />
-                  )}
-                  {language === 'en' ? 'Require Auth JWT' : 'Auth JWT erforderlich'}
-                </Label>
-              </div>
+              <ObjectApiAccessControls
+                apiEnabled={apiEnabled}
+                requiresAuth={requiresAuth}
+                onApiEnabledChange={setApiEnabled}
+                onRequiresAuthChange={setRequiresAuth}
+                idPrefix="object-editor-access"
+              />
             </div>
             {objectType === 'markdown' && (
               <div className="grid gap-4 md:grid-cols-[auto_1fr] md:items-center">

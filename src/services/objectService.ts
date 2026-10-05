@@ -16,6 +16,9 @@ export interface ObjectDatastreamRecord {
   status: 'published' | 'archived';
   requires_auth: boolean;
   api_enabled: boolean;
+  requested_api_enabled: boolean;
+  api_gate_open: boolean;
+  api_gate_reason: 'product_retired' | 'product_page_missing' | 'product_page_unpublished' | 'product_schema_not_eligible' | 'product_schema_not_registered' | null;
   publicly_readable: boolean;
   share_enabled: boolean;
   tenant_id: string | null;
@@ -55,6 +58,25 @@ const generateSlug = (name: string): string =>
     .replace(/^-|-$/g, '') || 'object';
 
 export { generateSlug as generateObjectSlug };
+
+export const updateObjectApiAccess = async (
+  id: string,
+  access: { api_enabled: boolean; requires_auth: boolean },
+): Promise<{ api_enabled: boolean; requires_auth: boolean; requested_api_enabled: boolean }> => {
+  if (!API_URL) throw new Error('API URL is not configured.');
+  const headers = await buildHeaders();
+  const response = await fetch(`${API_URL}/api/objects/${encodeURIComponent(id)}/access`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(access),
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    error?: string;
+    object?: { api_enabled: boolean; requires_auth: boolean; requested_api_enabled: boolean };
+  };
+  if (!response.ok || !payload.object) throw new Error(payload.error ?? 'API access settings could not be saved.');
+  return payload.object;
+};
 
 export const getObjectDatastreams = async (tenantId?: string | null): Promise<ObjectDatastreamRecord[]> => {
   if (!API_URL) throw new Error('API URL is not configured.');
