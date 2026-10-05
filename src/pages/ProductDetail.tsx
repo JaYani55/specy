@@ -19,6 +19,7 @@ import { getSchema, triggerRevalidation, type RevalidationResult } from '@/servi
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -71,7 +72,7 @@ const ProductDetail = () => {
         if (pageError) throw pageError;
         if (!page) return;
         const schema = await getSchema(page.schema_id);
-        if (schema.entity_kind !== 'service-product' || schema.tenant_id !== activeTenantId) return;
+        if (!isCatalogueSchema(schema.entity_kind) || schema.tenant_id !== activeTenantId) return;
         if (!cancelled) setProductPageEditorPath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
         if (page.status !== 'published' || schema.registration_status !== 'registered') return;
         const { data: tenant, error: tenantError } = await supabase.from('tenants').select('slug').eq('id', activeTenantId).maybeSingle();
@@ -160,7 +161,7 @@ const ProductDetail = () => {
             if (pageError) throw pageError;
             if (page?.status === 'published') {
               const schema = await getSchema(page.schema_id);
-              if (schema.tenant_id === requestedTenantId && schema.entity_kind === 'service-product' && schema.registration_status === 'registered') {
+              if (schema.tenant_id === requestedTenantId && isCatalogueSchema(schema.entity_kind) && schema.registration_status === 'registered') {
                 const result = await triggerRevalidation(schema.api_slug, page.slug);
                 setRevalidationResult(result);
                 if (!result.success) toast.warning('Produkt gespeichert, aber die Website konnte nicht aktualisiert werden.');

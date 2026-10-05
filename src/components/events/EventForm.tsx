@@ -41,6 +41,7 @@ import { toast } from 'sonner';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
 import { getTenantCustomFieldDefinitions, type TenantCustomFieldDefinitions } from '@/services/tenantCustomFieldsService';
 import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 
 const formSchema = zod.object({
   company_id: zod.string().optional(),
@@ -256,7 +257,7 @@ export const EventForm: React.FC<EventFormProps> = ({
     void getSchemas(activeTenantId).then((schemas) => {
       if (cancelled) return;
       const eligibleSchemas = schemas.filter((schema) =>
-        schema.entity_kind === 'event' && schema.content_scope === 'page-collection' && schema.tenant_id === activeTenantId
+        isCatalogueSchema(schema.entity_kind) && schema.content_scope === 'page-collection' && schema.tenant_id === activeTenantId
       );
       setEventSchemas(eligibleSchemas);
       const selectedSchemaId = form.getValues('event_schema_id');

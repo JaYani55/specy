@@ -59,6 +59,6 @@ describe('event page integration contract', () => {
     assert.match(schemasRoute, /projectPublicEventRelations/);
     assert.match(schemasRoute, /\.eq\('tenant_id', schema\.tenant_id\)/);
     assert.match(schemasRoute, /\.eq\('status', 'published'\)/);
-    assert.match(schemasRoute, /supported_includes: entityKind === 'service-product' \? \['entity'\] : entityKind === 'event'/);
+    assert.match(schemasRoute, /supported_includes: entityKind === 'event' \|\| entityKind === 'service-product' \? \['entity', 'event', 'product'\]/);
   });
 });

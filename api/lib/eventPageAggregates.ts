@@ -1,4 +1,5 @@
 import { normalizeSchemaPageSlug } from './schemaPages.ts';
+import { CATALOGUE_ENTITY_KINDS, type SchemaEntityKindValue } from './schemaKinds.ts';
 import type { createSupabaseClient } from './supabase';
 
 export interface EventPageCreateInput {
@@ -158,8 +159,8 @@ export async function createEventPageAggregate(
   if (!schema.tenant_id || schema.tenant_id !== input.tenant_id) {
     throw new EventPageAggregateError('Event schema does not belong to the requested workspace.', 404, 'P0002');
   }
-  if (schema.entity_kind !== 'event' || schema.content_scope !== 'page-collection') {
-    throw new EventPageAggregateError('Selected schema is not an event page collection.', 409, '23514');
+  if (!CATALOGUE_ENTITY_KINDS.includes(schema.entity_kind as SchemaEntityKindValue) || schema.content_scope !== 'page-collection') {
+    throw new EventPageAggregateError('Selected schema is not a catalogue page collection.', 409, '23514');
   }
   if (schema.definition_revision !== input.expected_definition_revision) {
     throw new EventPageAggregateError('Schema definition revision conflict.', 409, '40001');
@@ -245,7 +246,7 @@ export async function updateEventPageAggregate(
   if (!schema.tenant_id || schema.tenant_id !== input.tenant_id) {
     throw new EventPageAggregateError('Event schema does not belong to the requested workspace.', 404, 'P0002');
   }
-  if (schema.entity_kind !== 'event') {
+  if (schema.entity_kind !== 'event' && schema.entity_kind !== 'service-product') {
     throw new EventPageAggregateError('This schema does not contain event pages.', 409, '23514');
   }
   if (schema.definition_revision !== input.expected_definition_revision) {

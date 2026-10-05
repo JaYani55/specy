@@ -28,8 +28,9 @@ test('the Website-Produkte overview is retired and /products/schemas redirects t
   assert.match(app, /path="\/products\/schemas"[\s\S]{0,120}?to="\/products\/manage"/);
 });
 
-test('schema purpose is explicit and no longer described as integration-forced', () => {
-  assert.match(schemaEditor, /<SelectItem value="service-product">[\s\S]*?Produktschema/);
-  assert.match(schemaEditor, /<SelectItem value="event">[\s\S]*?Veranstaltungsschema/);
+test('schema purpose is explicit and unified into page vs catalogue', () => {
+  assert.match(schemaEditor, /<SelectItem value="catalogue">[\s\S]*?Katalogschema/);
+  assert.match(schemaEditor, /<SelectItem value="page">[\s\S]*?Seitenschema/);
+  assert.doesNotMatch(schemaEditor, /<SelectItem value="service-product">/);
   assert.doesNotMatch(schemaEditor, /Veranstaltungsschema \(über Integration festgelegt\)/i);
 });

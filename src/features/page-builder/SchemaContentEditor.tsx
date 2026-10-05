@@ -62,6 +62,7 @@ import { validateTenantCustomFieldValues } from '@/utils/tenantCustomFields';
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import type { RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 import {
   buildSchemaContent,
   fieldValueTypeConflict,
@@ -882,8 +883,9 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   const activeOptionalGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => !field.required && activeOptional.has(field.name)));
   const inactiveOptionalGroups = groupPresentedSchemaFields(fieldPresentation.filter(({ field }) => !field.required && !activeOptional.has(field.name)));
   const inactiveOptionalCount = inactiveOptionalGroups.reduce((total, group) => total + group.fields.length, 0);
-  const isServiceProduct = schema.entity_kind === 'service-product';
-  const isEventPage = schema.entity_kind === 'event';
+  // Catalogue pages are classified by their linked aggregate, not the schema kind.
+  const isServiceProduct = Boolean(productAggregateId);
+  const isEventPage = Boolean(eventAggregateId) && !productAggregateId;
   const currentPageContent = buildSchemaContent(baseContent, formData, fields, activeOptional, removedOptional);
   const hasUnsavedChanges = pageName !== (initialName || '')
     || pageSlug !== (initialSlug || (initialName ? generateSlug(initialName) : ''))
@@ -935,7 +937,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
 
       let updatedProduct: ServiceProduct | null = null;
       let updatedEventPage: { updated_at: string } | null = null;
-      const result = schema.entity_kind === 'service-product'
+      const result = isServiceProduct
         ? await (async () => {
             if (!productAggregateId || !aggregateVersion || !schema.tenant_id) {
               throw new Error('Produktaggregate konnten nicht geladen werden. Bitte Seite neu laden.');
@@ -955,7 +957,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             setProductCustomFields(product.custom_fields ?? productCustomFields);
             return { id: product.page_id, slug: product.slug || pageSlug };
           })()
-        : schema.entity_kind === 'event'
+        : isEventPage
           ? await (async () => {
               if (!eventAggregateId || !schema.tenant_id || !pageUpdatedAt) {
                 throw new Error('Event aggregate or page revision could not be loaded. Reload the page and retry.');
@@ -976,7 +978,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
           : await savePage(pageId, content, pageName, schema.id, pageSlug, schema.tenant_id ?? null);
       setSavedSlug(result.slug);
 
-      if (schema.entity_kind === 'service-product' && statusAfterSave && updatedProduct && schema.tenant_id) {
+      if (isServiceProduct && statusAfterSave && updatedProduct && schema.tenant_id) {
         updatedProduct = await setServiceProductPublication({
           id: updatedProduct.id,
           tenant_id: schema.tenant_id,
@@ -986,7 +988,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
         });
         setAggregateVersion(updatedProduct.version);
         setPublicationStatus(statusAfterSave);
-      } else if (schema.entity_kind === 'event' && statusAfterSave && updatedEventPage && eventAggregateId && schema.tenant_id) {
+      } else if (isEventPage && statusAfterSave && updatedEventPage && eventAggregateId && schema.tenant_id) {
         const publication = await setEventPagePublication({
           event_id: eventAggregateId,
           tenant_id: schema.tenant_id,
@@ -1046,7 +1048,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
               if (productPage) {
                 const productSchema = await getSchema(productPage.schema_id);
                 if (productSchema.tenant_id === schema.tenant_id
-                  && productSchema.entity_kind === 'service-product'
+                  && isCatalogueSchema(productSchema.entity_kind)
                   && productSchema.registration_status === 'registered') {
                   pageResults.push(await triggerRevalidation(productSchema.api_slug, productPage.slug));
                 }
@@ -1426,7 +1428,7 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             )}
           </div>
           <div className="flex items-center gap-2">
-          {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus === 'published' && (
+          {(isServiceProduct || isEventPage) && publicationStatus === 'published' && (
             <Button type="button" variant="outline" onClick={() => handleSave('draft')} size="lg" disabled={isSaving}>
               Veröffentlichung zurückziehen
             </Button>
@@ -1447,11 +1449,11 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
             ) : (
               <>
                 <Save className="h-4 w-4 mr-2" />
-                {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus === 'published' ? 'Änderungen speichern' : 'Speichern'}
+                {(isServiceProduct || isEventPage) && publicationStatus === 'published' ? 'Änderungen speichern' : 'Speichern'}
               </>
             )}
           </Button>
-          {(schema.entity_kind === 'service-product' || isEventPage) && publicationStatus !== 'published' && (
+          {(isServiceProduct || isEventPage) && publicationStatus !== 'published' && (
             <Button type="button" onClick={() => handleSave('published')} size="lg" disabled={isSaving} className="min-w-[180px]">
               {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eye className="h-4 w-4 mr-2" />}
               Veröffentlichen

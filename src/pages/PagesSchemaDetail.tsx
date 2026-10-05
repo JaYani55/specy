@@ -43,7 +43,9 @@ import {
 import { getSchemaSpecBundle } from '@/services/specService';
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { archiveServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
+import { archiveServiceProduct, deleteServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
+import { supabase } from '@/lib/supabase';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 import { getEventPageAggregateByPage, setEventPagePublication } from '@/services/events/eventPageService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
@@ -143,11 +145,56 @@ const PagesSchemaDetail: React.FC = () => {
   const handleDeletePage = async () => {
     if (!deletePageId) return;
     try {
-      await deletePage(deletePageId);
+      if (schema.entity_kind === 'service-product') {
+        if (!schema.tenant_id) throw new Error('Produktschema ohne Workspace-Zuordnung.');
+        // A linked product owns this page as its canonical page; deleting the page
+        // therefore deletes the product aggregate (product, events, page, mirror).
+        const { data: linkedProduct, error: linkedProductError } = await supabase
+          .from('mentorbooking_products')
+          .select('integration_id, version')
+          .eq('product_page_id', deletePageId)
+          .eq('tenant_id', schema.tenant_id)
+          .is('retired_at', null)
+          .maybeSingle();
+        if (linkedProductError) throw new Error(linkedProductError.message);
+        if (linkedProduct) {
+          if (!permissions.canManageProducts) throw new Error(language === 'en' ? 'You are not allowed to delete products.' : 'Du darfst keine Produkte löschen.');
+          await deleteServiceProduct({
+            id: linkedProduct.integration_id as string,
+            tenant_id: schema.tenant_id,
+            expected_version: Number(linkedProduct.version ?? 1),
+          });
+        } else {
+          await deletePage(deletePageId);
+        }
+      } else if (schema.entity_kind === 'event') {
+        if (!schema.tenant_id) throw new Error('Veranstaltungsschema ohne Workspace-Zuordnung.');
+        // A page linked to an event is RESTRICTed in the database; deleting the
+        // page therefore deletes the linked event first.
+        const { data: linkedEvent, error: linkedEventError } = await supabase
+          .from('mentorbooking_events')
+          .select('id')
+          .eq('page_id', deletePageId)
+          .eq('tenant_id', schema.tenant_id)
+          .maybeSingle();
+        if (linkedEventError) throw new Error(linkedEventError.message);
+        if (linkedEvent) {
+          if (!permissions.canDeleteEvents) throw new Error(language === 'en' ? 'You are not allowed to delete events.' : 'Du darfst keine Veranstaltungen löschen.');
+          const { error: eventDeleteError } = await supabase
+            .from('mentorbooking_events')
+            .delete()
+            .eq('id', linkedEvent.id as string)
+            .eq('tenant_id', schema.tenant_id);
+          if (eventDeleteError) throw new Error(eventDeleteError.message);
+        }
+        await deletePage(deletePageId);
+      } else {
+        await deletePage(deletePageId);
+      }
       setPages(prev => prev.filter(p => p.id !== deletePageId));
       toast.success(language === 'en' ? 'Page deleted' : 'Seite gelöscht');
-    } catch {
-      toast.error(language === 'en' ? 'Failed to delete page' : 'Fehler beim Löschen');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (language === 'en' ? 'Failed to delete page' : 'Fehler beim Löschen'));
     } finally {
       setDeletePageId(null);
     }
@@ -165,16 +212,33 @@ const PagesSchemaDetail: React.FC = () => {
         } else {
           await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
         }
-      } else if (schema.entity_kind === 'event') {
-        if (!schema.tenant_id || !currentPage) throw new Error('Veranstaltungsseite ohne Workspace oder Seitenrevision.');
-        const event = await getEventPageAggregateByPage(pageId, schema.tenant_id);
-        await setEventPagePublication({
-          event_id: event.id,
-          tenant_id: schema.tenant_id,
-          expected_definition_revision: schema.definition_revision ?? 1,
-          expected_page_updated_at: currentPage.updated_at,
-          status,
-        });
+      } else if (isCatalogueSchema(schema.entity_kind)) {
+        if (!schema.tenant_id || !currentPage) throw new Error('Katalogseite ohne Workspace oder Seitenrevision.');
+        // Catalogue pages are classified by their linked aggregate: event first,
+        // then the product that owns the page.
+        const { data: linkedEvent, error: linkedEventError } = await supabase
+          .from('mentorbooking_events')
+          .select('id')
+          .eq('page_id', pageId)
+          .eq('tenant_id', schema.tenant_id)
+          .maybeSingle();
+        if (linkedEventError) throw new Error(linkedEventError.message);
+        if (linkedEvent) {
+          await setEventPagePublication({
+            event_id: linkedEvent.id as string,
+            tenant_id: schema.tenant_id,
+            expected_definition_revision: schema.definition_revision ?? 1,
+            expected_page_updated_at: currentPage.updated_at,
+            status,
+          });
+        } else {
+          const product = await getServiceProductByPage(pageId, schema.tenant_id);
+          if (status === 'archived') {
+            await archiveServiceProduct({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version });
+          } else {
+            await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
+          }
+        }
       } else {
         await updatePageStatus(pageId, status);
       }
@@ -721,15 +785,13 @@ const PagesSchemaDetail: React.FC = () => {
                                 {language === 'en' ? 'Archive' : 'Archivieren'}
                               </DropdownMenuItem>
                             )}
-                            {schema.entity_kind === 'page' && (
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => setDeletePageId(page.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                {language === 'en' ? 'Delete' : 'Löschen'}
-                              </DropdownMenuItem>
-                            )}
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => setDeletePageId(page.id)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              {language === 'en' ? 'Delete' : 'Löschen'}
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -750,9 +812,17 @@ const PagesSchemaDetail: React.FC = () => {
               {language === 'en' ? 'Delete Page?' : 'Seite löschen?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {language === 'en'
-                ? 'This action cannot be undone. The page and all its content will be permanently deleted.'
-                : 'Diese Aktion kann nicht rückgängig gemacht werden. Die Seite und alle Inhalte werden dauerhaft gelöscht.'}
+              {schema.entity_kind === 'service-product'
+                ? language === 'en'
+                  ? 'This action cannot be undone. If the page is the canonical page of a product, the product with its events, archive history and the page are deleted.'
+                  : 'Diese Aktion kann nicht rückgängig gemacht werden. Ist die Seite die kanonische Seite eines Produkts, werden das Produkt mit seinen Veranstaltungen, Archivdaten und die Seite gelöscht.'
+                : schema.entity_kind === 'event'
+                  ? language === 'en'
+                    ? 'This action cannot be undone. If the page is linked to an event, that event is deleted together with the page. Unlinked pages are removed on their own.'
+                    : 'Diese Aktion kann nicht rückgängig gemacht werden. Ist die Seite mit einer Veranstaltung verknüpft, wird auch diese gelöscht. Verwaiste Seiten werden einzeln entfernt.'
+                  : language === 'en'
+                    ? 'This action cannot be undone. The page and all its content will be permanently deleted.'
+                    : 'Diese Aktion kann nicht rückgängig gemacht werden. Die Seite und alle Inhalte werden dauerhaft gelöscht.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

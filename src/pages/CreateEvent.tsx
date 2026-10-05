@@ -16,6 +16,7 @@ import { createPublicEventPage } from '@/services/events/eventPageService';
 import { getSchema } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { normalizeEventPageSlug } from '@/utils/eventPage';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 
 interface CreateEventNavigationState {
   preselectedProductId?: unknown;
@@ -70,7 +71,7 @@ const CreateEvent = () => {
       let publicPage: { page_id: string; editor_path: string } | null = null;
       if (values.event_schema_id) {
         const schema = await getSchema(values.event_schema_id);
-        if (schema.tenant_id !== activeTenantId || schema.entity_kind !== 'event' || schema.content_scope !== 'page-collection') {
+        if (schema.tenant_id !== activeTenantId || !isCatalogueSchema(schema.entity_kind) || schema.content_scope !== 'page-collection') {
           throw new Error(language === 'en' ? 'The selected event catalogue is not available in this workspace.' : 'Der gewählte Veranstaltungskatalog ist in diesem Workspace nicht verfügbar.');
         }
         const result = await createPublicEventPage({

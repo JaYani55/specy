@@ -46,7 +46,7 @@ export async function buildFrontendIntegrationManifest(
       detail_url_template: publicDeliveryAvailable ? `${baseUrl}/api/schemas/${schema.api_slug}/pages/:slug` : null,
       authentication: 'public-registered-schema',
       published_only: true,
-      supported_includes: schema.entity_kind === 'service-product' ? ['entity'] : schema.entity_kind === 'event' ? ['entity', 'event', 'product'] : [],
+      supported_includes: schema.entity_kind === 'event' || schema.entity_kind === 'service-product' ? ['entity', 'event', 'product'] : [],
       page_fields: ['id', 'slug', 'name', 'status', 'content', 'domain_url', 'updated_at', 'published_at'],
     },
     targets,

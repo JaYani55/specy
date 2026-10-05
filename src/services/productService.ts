@@ -98,3 +98,15 @@ export async function archiveServiceProduct(input: {
   });
   return result.product;
 }
+
+export async function deleteServiceProduct(input: {
+  id: string;
+  tenant_id: string;
+  expected_version: number;
+}): Promise<{ deleted: true; product_id: string }> {
+  const { id, ...body } = input;
+  return request<{ deleted: true; product_id: string }>(`/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: JSON.stringify(body),
+  });
+}

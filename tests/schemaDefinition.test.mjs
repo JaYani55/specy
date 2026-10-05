@@ -50,15 +50,14 @@ describe('schema definition revision contract', () => {
     assert.equal(parseSchemaDefinitionPatch({ expected_revision: 3, entity_kind: 'event', expected_page_count: 1.5 }).ok, false);
   });
 
-  it('reclassification with existing pages is guarded by the explicit flag and aggregate compatibility', async () => {
+  it('reclassification with existing pages is guarded by the explicit flag and catalogue aggregate compatibility', async () => {
     const source = await readFile('api/lib/schemaDefinition.ts', 'utf8');
     assert.match(source, /assertPagesCompatibleWithEntityKind/);
     assert.match(source, /patch\.allow_reclassification !== true \|\| patch\.expected_page_count !== count/);
     assert.match(source, /'schema_conversion_required'/);
-    assert.match(source, /mentorbooking_events/);
-    assert.match(source, /'page_id' : 'product_page_id'/);
-    assert.match(source, /mentorbooking_products/);
-    assert.match(source, /is\('retired_at', null\)/);
+    assert.match(source, /mentorbooking_events.*select\('page_id'\)\.in\('page_id', pageIds\)/);
+    assert.match(source, /mentorbooking_products.*select\('product_page_id'\)\.in\('product_page_id', pageIds\)\.is\('retired_at', null\)/);
+    assert.match(source, /pages have no linked event or product record/);
     assert.match(source, /Reclassifying a schema with existing pages requires the explicit allow_reclassification flag/);
   });
 });

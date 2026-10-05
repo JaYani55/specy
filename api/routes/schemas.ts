@@ -905,7 +905,7 @@ schemas.post('/:slug/pages', async (c) => {
   if (!schema) return c.json({ error: 'Schema not found.' }, 404);
   if (schema.content_scope === 'single-page') return c.json({ error: 'This is a single-page schema; it cannot receive additional entries.' }, 409);
 
-  if (schema.entity_kind === 'event') {
+  if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
     if (input.domain_url !== undefined) return c.json({ error: 'domain_url is not supported for event aggregate creation.' }, 400);
     if (input.status !== undefined && input.status !== 'draft') {
       return c.json({ error: 'Event pages are created as drafts and published separately.' }, 400);
@@ -940,8 +940,8 @@ schemas.post('/:slug/pages', async (c) => {
     }
   }
 
-  if (schema.entity_kind === 'service-product') {
-    return c.json({ error: 'Use POST /api/products for service-product schemas.', code: 'aggregate_operation_required' }, 409);
+  if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
+    return c.json({ error: 'Catalogue pages are created through the event or product aggregate APIs.', code: 'aggregate_operation_required' }, 409);
   }
   if (Object.prototype.hasOwnProperty.call(input, 'event')) {
     return c.json({ error: 'event details are accepted only by event-classified schemas.' }, 400);
@@ -1005,7 +1005,7 @@ schemas.get('/:slug/pages', async (c) => {
   const includeQuery = c.req.query('include');
   const includeResult = parsePublicEntityIncludes(includeQuery, entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
-  const publicIncludes = entityKind === 'event'
+  const publicIncludes = entityKind === 'event' || entityKind === 'service-product'
     ? applyDefaultPublicEventInclude(includeResult.includes, includeQuery)
     : includeResult.includes;
 
@@ -1061,7 +1061,7 @@ schemas.get('/:slug/pages', async (c) => {
         if (productPageError) return c.json({ error: productPageError.message }, 500);
         const productSchemaIds = [...new Set((visibleProductPages ?? []).map((productPage) => productPage.schema_id).filter((id): id is string => typeof id === 'string'))];
         const { data: visibleProductSchemas, error: productSchemaError } = productSchemaIds.length
-          ? await supabase.from('page_schemas').select('id, api_slug').eq('tenant_id', schema.tenant_id).eq('entity_kind', 'service-product').eq('registration_status', 'registered').in('id', productSchemaIds)
+          ? await supabase.from('page_schemas').select('id, api_slug').eq('tenant_id', schema.tenant_id).in('entity_kind', ['event', 'service-product']).eq('registration_status', 'registered').in('id', productSchemaIds)
           : { data: [], error: null };
         if (productSchemaError) return c.json({ error: productSchemaError.message }, 500);
         const publicProductSchemaById = new Map((visibleProductSchemas ?? []).map((productSchema) => [productSchema.id, productSchema.api_slug]));
@@ -1078,6 +1078,26 @@ schemas.get('/:slug/pages', async (c) => {
       }
     }
     publicPages = projectPublicEventRelations(publicPages, eventRefs, eventProducts, publicIncludes);
+
+    // Catalogue: also deliver product-owned pages with product relations.
+    const { data: catalogueProducts, error: catalogueProductsError } = await supabase
+      .from('service_products')
+      .select('id, page_id')
+      .eq('tenant_id', schema.tenant_id)
+      .is('retired_at', null);
+    if (catalogueProductsError) return c.json({ error: catalogueProductsError.message }, 500);
+    const catalogueProductRefs = (catalogueProducts ?? []).filter((product): product is { id: string; page_id: string } => Boolean(product.page_id));
+    const deliveredPageIds = new Set(publicPages.map((deliveredPage) => deliveredPage.id));
+    const productOwnedPages = (data ?? [] as PublicPageRecord[]).filter((cataloguePage) => {
+      const owned = catalogueProductRefs.some((catalogueProduct) => catalogueProduct.page_id === cataloguePage.id);
+      return owned && !deliveredPageIds.has(cataloguePage.id);
+    });
+    if (productOwnedPages.length) {
+      const projectedProductPages = publicIncludes.includeEntity
+        ? projectPublicProductRelations(productOwnedPages, catalogueProductRefs)
+        : productOwnedPages;
+      publicPages = [...publicPages, ...projectedProductPages];
+    }
   }
 
   const targets = await getSchemaFrontendTargets(c.env, schema.id, undefined, { publicRead: true });
@@ -1089,7 +1109,7 @@ schemas.get('/:slug/pages', async (c) => {
       api_slug: schema.api_slug,
       name: schema.name,
       entity_kind: entityKind,
-      supported_includes: entityKind === 'service-product' ? ['entity'] : entityKind === 'event' ? ['entity', 'event', 'product'] : [],
+      supported_includes: entityKind === 'event' || entityKind === 'service-product' ? ['entity', 'event', 'product'] : [],
       slug_structure: schema.slug_structure,
       integration_requirements: normalizeSchemaIntegrationRequirements(schema.integration_requirements),
       targets,
@@ -1113,7 +1133,7 @@ schemas.patch('/:slug/pages/:pageId', async (c) => {
   if (schemaError) return c.json({ error: schemaError.message }, 500);
   if (!schema) return c.json({ error: 'Schema not found.' }, 404);
 
-  if (schema.entity_kind === 'event') {
+  if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
     if (input.event !== undefined) return c.json({ error: 'Operational event schedule changes are managed through the event editor; Pages PATCH updates page content and publication only.' }, 400);
     if (typeof input.tenant_id !== 'string' || input.tenant_id !== schema.tenant_id
       || !Number.isSafeInteger(input.expected_definition_revision) || Number(input.expected_definition_revision) < 1
@@ -1148,7 +1168,7 @@ schemas.patch('/:slug/pages/:pageId', async (c) => {
       return c.json({ error: error instanceof Error ? error.message : 'Event page update failed.' }, 500);
     }
   }
-  if (schema.entity_kind === 'service-product') {
+  if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
     return c.json({ error: 'Use the product aggregate API to update product pages.', code: 'aggregate_operation_required' }, 409);
   }
   const pageId = c.req.param('pageId');
@@ -1215,7 +1235,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
   const includeQuery = c.req.query('include');
   const includeResult = parsePublicEntityIncludes(includeQuery, entityKind);
   if (!includeResult.ok) return c.json({ error: includeResult.error }, 400);
-  const publicIncludes = entityKind === 'event'
+  const publicIncludes = entityKind === 'event' || entityKind === 'service-product'
     ? applyDefaultPublicEventInclude(includeResult.includes, includeQuery)
     : includeResult.includes;
 
@@ -1232,7 +1252,19 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
   if (!page) return c.json({ error: 'Published page not found' }, 404);
 
   let deliveredPage: Record<string, unknown> = page as Record<string, unknown>;
-  if (entityKind === 'service-product') {
+  // Catalogue pages are classified by their linked aggregate: event first, then product.
+  let aggregateKind: 'event' | 'product' | null = null;
+  if (entityKind === 'event' || entityKind === 'service-product') {
+    if (!schema.tenant_id) return c.json({ error: 'Catalogue schema is not assigned to a workspace.' }, 404);
+    const { data: linkedEvent, error: linkedEventError } = await supabase.from('mentorbooking_events')
+      .select('id')
+      .eq('tenant_id', schema.tenant_id)
+      .eq('page_id', page.id)
+      .maybeSingle();
+    if (linkedEventError) return c.json({ error: linkedEventError.message }, 500);
+    aggregateKind = linkedEvent ? 'event' : 'product';
+  }
+  if (aggregateKind === 'product') {
     const { data: product, error: productError } = await supabase
       .from('service_products')
       .select('id, page_id')
@@ -1245,8 +1277,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     if (publicIncludes.includeEntity) {
       deliveredPage = { ...page, relations: { entity: { kind: 'service-product', id: product.id } } };
     }
-  } else if (entityKind === 'event') {
-    if (!schema.tenant_id) return c.json({ error: 'Event schema is not assigned to a workspace.' }, 404);
+  } else if (aggregateKind === 'event') {
     const { data: event, error: eventError } = await supabase.from('mentorbooking_events')
       .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id, registration_status, participant_min, participant_max')
       .eq('tenant_id', schema.tenant_id)
@@ -1270,7 +1301,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
           .eq('id', product.product_page_id).eq('tenant_id', schema.tenant_id).eq('status', 'published').maybeSingle();
         if (productPageError) return c.json({ error: productPageError.message }, 500);
         const { data: productSchema, error: productSchemaError } = productPage
-          ? await supabase.from('page_schemas').select('id, api_slug').eq('id', productPage.schema_id).eq('tenant_id', schema.tenant_id).eq('entity_kind', 'service-product').eq('registration_status', 'registered').maybeSingle()
+          ? await supabase.from('page_schemas').select('id, api_slug').eq('id', productPage.schema_id).eq('tenant_id', schema.tenant_id).in('entity_kind', ['event', 'service-product']).eq('registration_status', 'registered').maybeSingle()
           : { data: null, error: null };
         if (productSchemaError) return c.json({ error: productSchemaError.message }, 500);
         if (productPage && productSchema) {
@@ -1289,7 +1320,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     }
   }
 
-  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind, supported_includes: entityKind === 'event' ? ['entity', 'event', 'product'] : entityKind === 'service-product' ? ['entity'] : [] }, page: deliveredPage });
+  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind, supported_includes: entityKind === 'event' || entityKind === 'service-product' ? ['entity', 'event', 'product'] : [] }, page: deliveredPage });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback

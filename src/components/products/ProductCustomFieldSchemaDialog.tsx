@@ -149,7 +149,7 @@ export function ProductCustomFieldSchemaDialog({ productId, tenantId, version, p
           if (pageError) throw pageError;
           if (page?.status === 'published') {
             const pageSchema = await getSchema(page.schema_id);
-            if (pageSchema.tenant_id === tenantId && pageSchema.entity_kind === 'service-product' && pageSchema.registration_status === 'registered') {
+            if (pageSchema.tenant_id === tenantId && (pageSchema.entity_kind === 'service-product' || pageSchema.entity_kind === 'event') && pageSchema.registration_status === 'registered') {
               const revalidation = await triggerRevalidation(pageSchema.api_slug, page.slug);
               setRevalidationResult(revalidation);
               if (!revalidation.success) toast.warning('Angaben gespeichert, aber die Website konnte nicht aktualisiert werden.');

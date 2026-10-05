@@ -317,7 +317,7 @@ objects.get('/:id/source', async (c) => {
         .eq('id', page.schema_id)
         .maybeSingle();
       if (schemaError) return c.json({ error: 'Could not load the Product catalogue.' }, 500);
-      if (schema && schema.tenant_id === product.tenant_id && schema.entity_kind === 'service-product') {
+      if (schema && schema.tenant_id === product.tenant_id && (schema.entity_kind === 'service-product' || schema.entity_kind === 'event')) {
         const { data: tenant, error: tenantError } = await admin.from('tenants').select('slug').eq('id', product.tenant_id).maybeSingle();
         if (tenantError) return c.json({ error: 'Could not load the Product workspace.' }, 500);
         const editorPath = tenant?.slug

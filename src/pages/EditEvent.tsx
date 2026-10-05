@@ -18,6 +18,7 @@ import { ensureCompanyRecord } from '@/services/company/companyService';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { getSchema, triggerRevalidation, type RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
@@ -247,7 +248,7 @@ const EditEvent = () => {
         if (error) throw error;
         if (!page) throw new Error('Event page not found in the active workspace.');
         const schema = await getSchema(page.schema_id);
-        if (schema.tenant_id !== activeTenantId || schema.entity_kind !== 'event') {
+        if (schema.tenant_id !== activeTenantId || !isCatalogueSchema(schema.entity_kind)) {
           throw new Error('The linked page is not owned by this workspace event schema.');
         }
         if (cancelled) return;
@@ -357,7 +358,7 @@ const EditEvent = () => {
           if (pageError) throw pageError;
           if (!page || page.status !== 'published') return null;
           const schema = await getSchema(page.schema_id);
-          return schema.tenant_id === activeTenantId && schema.entity_kind === 'service-product' && schema.registration_status === 'registered'
+          return schema.tenant_id === activeTenantId && isCatalogueSchema(schema.entity_kind) && schema.registration_status === 'registered'
             ? { slug: page.slug, schemaSlug: schema.api_slug }
             : null;
         }));

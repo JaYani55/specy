@@ -472,7 +472,7 @@ async function createMcpServerWithTools(
           content_scope: schema.content_scope,
         }, null, 2) }] };
       }
-      if (schema.entity_kind === 'event') {
+      if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
         if (status === 'published') return mcpToolFailure('Event pages are created as drafts; publish them separately after content review.', 400);
         if (!event || !tenant_id || expected_definition_revision === undefined) {
           return mcpToolFailure('tenant_id, expected_definition_revision, and event details are required for an event schema.', 400);
@@ -701,7 +701,7 @@ async function createMcpServerWithTools(
         if (schema.content_scope === 'single-page') {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is a single-page schema; edit its existing page record instead of adding another page.' }, null, 2) }] };
         }
-        if (schema.entity_kind === 'event') {
+        if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
           if (status === 'published') return mcpToolFailure('Event pages are created as drafts; publish them separately after content review.', 400);
           if (domain_url !== undefined) return mcpToolFailure('domain_url is not supported for event aggregate creation.', 400);
           if (!event || !tenant_id || expected_definition_revision === undefined) {
@@ -783,7 +783,7 @@ async function createMcpServerWithTools(
       async ({ schema_slug, page_id, content, name, slug, status, domain_url, tenant_id, expected_definition_revision, expected_page_updated_at }) => {
         const { data: schema } = await supabase.from('page_schemas').select('id, tenant_id, entity_kind, definition_revision').eq('api_slug', schema_slug).single();
         if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
-        if (schema.entity_kind === 'event') {
+        if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
           if (!tenant_id || tenant_id !== schema.tenant_id || expected_definition_revision === undefined || !expected_page_updated_at) {
             return mcpToolFailure('Event page updates require matching tenant_id, expected_definition_revision, and expected_page_updated_at.', 400);
           }

@@ -63,18 +63,14 @@ export function parsePublicEntityIncludes(value: string | undefined, entityKind:
     return { ok: false, error: 'Include values must be unique.' };
   }
 
-  const allowed = entityKind === 'service-product'
-    ? new Set(['entity'])
-    : entityKind === 'event'
-      ? new Set(['entity', 'event', 'product'])
-      : new Set<string>();
+  const allowed = entityKind === 'service-product' || entityKind === 'event'
+    ? new Set(['entity', 'event', 'product'])
+    : new Set<string>();
   const unsupported = includes.find((include) => !allowed.has(include));
   if (unsupported) {
-    return { ok: false, error: entityKind === 'service-product'
-      ? 'Supported include is entity only.'
-      : entityKind === 'event'
-        ? 'Supported event includes are entity, event and product.'
-        : 'Includes are not supported for ordinary page schemas.' };
+    return { ok: false, error: entityKind === 'service-product' || entityKind === 'event'
+      ? 'Supported catalogue includes are entity, event and product.'
+      : 'Includes are not supported for ordinary page schemas.' };
   }
 
   return {

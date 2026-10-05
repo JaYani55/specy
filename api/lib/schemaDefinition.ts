@@ -109,10 +109,6 @@ async function assertPagesCompatibleWithEntityKind(
   targetKind: SchemaEntityKind,
 ): Promise<string | null> {
   if (targetKind === 'page') return null;
-  const table = targetKind === 'event' ? 'mentorbooking_events' : 'mentorbooking_products';
-  const linkColumn = targetKind === 'event' ? 'page_id' : 'product_page_id';
-  const aggregateLabel = targetKind === 'event' ? 'Veranstaltung' : 'Produkt';
-  const aggregateLabelEn = targetKind === 'event' ? 'event' : 'product';
 
   const { data: pages, error: pagesError } = await client
     .from('pages')
@@ -122,14 +118,21 @@ async function assertPagesCompatibleWithEntityKind(
   const pageIds = (pages ?? []).map((page) => page.id as string);
   if (!pageIds.length) return null;
 
-  let linkedQuery = client.from(table).select(linkColumn).in(linkColumn, pageIds);
-  if (targetKind === 'service-product') linkedQuery = linkedQuery.is('retired_at', null);
-  const { data: linked, error: linkedError } = await linkedQuery;
-  if (linkedError) return linkedError.message;
-  const linkedPageIds = new Set((linked ?? []).map((row) => String((row as Record<string, unknown>)[linkColumn])));
+  // Catalogue targets accept every page that keeps a manageable aggregate:
+  // an event link or a product link.
+  const [{ data: eventLinks, error: eventError }, { data: productLinks, error: productError }] = await Promise.all([
+    client.from('mentorbooking_events').select('page_id').in('page_id', pageIds),
+    client.from('mentorbooking_products').select('product_page_id').in('product_page_id', pageIds).is('retired_at', null),
+  ]);
+  if (eventError) return eventError.message;
+  if (productError) return productError.message;
+  const linkedPageIds = new Set<string>([
+    ...(eventLinks ?? []).map((row) => String((row as Record<string, unknown>).page_id)),
+    ...(productLinks ?? []).map((row) => String((row as Record<string, unknown>).product_page_id)),
+  ]);
   const unlinked = pageIds.filter((id) => !linkedPageIds.has(id));
   if (unlinked.length) {
-    return `${unlinked.length} of ${pageIds.length} pages have no linked ${aggregateLabelEn} record. Reclassifying would leave them without a manageable aggregate; convert or delete these pages first.`;
+    return `${unlinked.length} of ${pageIds.length} pages have no linked event or product record. Reclassifying would leave them without a manageable aggregate; convert or delete these pages first.`;
   }
   return null;
 }

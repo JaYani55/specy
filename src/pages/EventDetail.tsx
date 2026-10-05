@@ -16,6 +16,7 @@ import { supabase } from '../lib/supabase';
 import { isEventInPast } from '@/utils/eventUtils';
 import { getSchema } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 
 import { useEventDetail } from '@/hooks/useEventDetail';
 import useEventActions from '@/hooks/useEventActions';
@@ -131,7 +132,7 @@ const EventDetail = () => {
         if (error) throw error;
         if (!page) return;
         const schema = await getSchema(page.schema_id);
-        if (!cancelled && schema.tenant_id === activeTenantId && schema.entity_kind === 'service-product') {
+        if (!cancelled && schema.tenant_id === activeTenantId && isCatalogueSchema(schema.entity_kind)) {
           setProductPagePath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
         }
       } catch (error) {
@@ -272,7 +273,7 @@ const EventDetail = () => {
         if (error) throw error;
         if (!page) return;
         const schema = await getSchema(page.schema_id);
-        if (schema.entity_kind !== 'event' || schema.tenant_id !== activeTenantId) return;
+        if (!isCatalogueSchema(schema.entity_kind) || schema.tenant_id !== activeTenantId) return;
         if (!cancelled) setEventPagePath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
       } catch (error) {
         console.error('Could not resolve event page editor route:', error);

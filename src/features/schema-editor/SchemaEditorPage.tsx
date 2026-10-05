@@ -47,8 +47,7 @@ const FIELD_TYPES = ['string', 'number', 'boolean', 'array', 'object', 'ContentB
 type SchemaEntityKindValue = 'page' | 'service-product' | 'event';
 
 const entityKindLabel = (kind: SchemaEntityKindValue, language: string): string => {
-  if (kind === 'event') return language === 'en' ? 'Event schema' : 'Veranstaltungsschema';
-  if (kind === 'service-product') return language === 'en' ? 'Product schema' : 'Produktschema';
+  if (kind === 'event' || kind === 'service-product') return language === 'en' ? 'Catalogue schema' : 'Katalogschema';
   return language === 'en' ? 'Page schema' : 'Seitenschema';
 };
 const VALID_SCHEMA_TYPES = new Set<string>(FIELD_TYPES);
@@ -1120,8 +1119,8 @@ const SchemaEditor: React.FC = () => {
           <div className="space-y-2">
             <Label className="text-base font-semibold">{language === 'en' ? 'Schema purpose' : 'Schema-Zweck'}</Label>
             <Select
-              value={entityKind}
-              onValueChange={(value) => setEntityKind(value as 'page' | 'service-product' | 'event')}
+              value={entityKind === 'page' ? 'page' : 'catalogue'}
+              onValueChange={(value) => setEntityKind(value === 'catalogue' ? 'event' : 'page')}
               disabled={Boolean(existingSchema?.page_count)}
             >
               <SelectTrigger>
@@ -1129,22 +1128,17 @@ const SchemaEditor: React.FC = () => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="page">{language === 'en' ? 'Page schema' : 'Seitenschema'}</SelectItem>
-                <SelectItem value="service-product">{language === 'en' ? 'Product schema' : 'Produktschema'}</SelectItem>
-                <SelectItem value="event">{language === 'en' ? 'Event schema' : 'Veranstaltungsschema'}</SelectItem>
+                <SelectItem value="catalogue">{language === 'en' ? 'Catalogue schema (product + event pages)' : 'Katalogschema (Produkt- und Veranstaltungsseiten)'}</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              {entityKind === 'event'
+              {entityKind === 'page'
                 ? (language === 'en'
-                  ? 'Event schemas describe pages for scheduled occurrences. Choose Product schema for reusable product pages.'
-                  : 'Veranstaltungsschemata beschreiben Seiten für einzelne Termine. Für wiederverwendbare Produktseiten wähle Produktschema.')
-                : entityKind === 'service-product'
-                  ? (language === 'en'
-                    ? 'Product schemas create reusable product pages that connect to a website.'
-                    : 'Produktschemata erstellen wiederverwendbare Produktseiten für eine Website.')
-                  : (language === 'en'
-                    ? 'Page schemas are for ordinary editorial pages.'
-                    : 'Seitenschemata sind für normale redaktionelle Seiten.')}
+                  ? 'Page schemas are for ordinary editorial pages.'
+                  : 'Seitenschemata sind für normale redaktionelle Seiten.')
+                : (language === 'en'
+                  ? 'Catalogue schemas hold the canonical product page and its event pages. Each page is classified by its linked product or event.'
+                  : 'Katalogschemata enthalten die Produktseite und die zugehörigen Veranstaltungsseiten. Jede Seite wird über ihre Verknüpfung klassifiziert.')}
             </p>
             {existingSchema?.page_count ? (
               <div className="space-y-2">
@@ -1833,22 +1827,19 @@ const SchemaEditor: React.FC = () => {
             </div>
             <div className="space-y-2">
               <Label>{language === 'en' ? 'New purpose' : 'Neuer Zweck'}</Label>
-              <Select value={conversionKind} onValueChange={(value) => setConversionKind(value as 'page' | 'service-product' | 'event')}>
+              <Select
+                value={conversionKind === 'page' ? 'page' : 'catalogue'}
+                onValueChange={(value) => setConversionKind(value === 'catalogue' ? 'event' : 'page')}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="page">{language === 'en' ? 'Page schema' : 'Seitenschema'}</SelectItem>
-                  <SelectItem value="service-product">{language === 'en' ? 'Product schema' : 'Produktschema'}</SelectItem>
-                  <SelectItem value="event">{language === 'en' ? 'Event schema' : 'Veranstaltungsschema'}</SelectItem>
+                  <SelectItem value="catalogue">{language === 'en' ? 'Catalogue schema (product + event pages)' : 'Katalogschema (Produkt- und Veranstaltungsseiten)'}</SelectItem>
                 </SelectContent>
               </Select>
-              {conversionKind === 'event' && (
+              {conversionKind !== 'page' && (
                 <p className="text-xs text-muted-foreground">
-                  {language === 'en' ? 'Every existing page must already be linked to an event.' : 'Jede vorhandene Seite muss bereits mit einer Veranstaltung verknüpft sein.'}
-                </p>
-              )}
-              {conversionKind === 'service-product' && (
-                <p className="text-xs text-muted-foreground">
-                  {language === 'en' ? 'Every existing page must already be linked to a product.' : 'Jede vorhandene Seite muss bereits mit einem Produkt verknüpft sein.'}
+                  {language === 'en' ? 'Every existing page must already be linked to an event or a product.' : 'Jede vorhandene Seite muss bereits mit einer Veranstaltung oder einem Produkt verknüpft sein.'}
                 </p>
               )}
               {conversionKind === 'page' && (

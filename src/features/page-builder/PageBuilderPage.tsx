@@ -9,6 +9,7 @@ import { getPage, getSchema } from '@/services/pageService';
 import { getServiceProductByPage, type ServiceProduct } from '@/services/productService';
 import { getEventPageAggregateByPage, type EventPageAggregate } from '@/services/events/eventPageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isCatalogueSchema } from '@/utils/schemaKinds';
 import type { PageBuilderData, PageRecord, PageSchema } from '@/types/pagebuilder';
 import { LegacyProductContentEditor } from './LegacyProductContentEditor';
 import { SchemaContentEditor } from './SchemaContentEditor';
@@ -54,7 +55,7 @@ const PageBuilderPage: React.FC = () => {
       try {
         if (isSchemaRoute && schemaSlug) {
           const loadedSchema = await getSchema(schemaSlug, tenantSlug);
-          if (loadedSchema.entity_kind === 'event' && !isEditRoute) {
+          if (isCatalogueSchema(loadedSchema.entity_kind) && !isEditRoute) {
             throw new Error(languageRef.current === 'en'
               ? 'Create event pages from the event form so the event and page are linked safely.'
               : 'Erstelle Veranstaltungsseiten über das Veranstaltungsformular, damit Veranstaltung und Seite sicher verknüpft werden.');
@@ -75,20 +76,23 @@ const PageBuilderPage: React.FC = () => {
             setSchemaContent(loadedPage.content);
             setProductName(loadedPage.name);
 
-            if (loadedSchema.entity_kind === 'service-product') {
+            if (isCatalogueSchema(loadedSchema.entity_kind)) {
               if (!loadedSchema.tenant_id) {
                 throw new Error(languageRef.current === 'en'
-                  ? 'The product schema is not assigned to a workspace.'
-                  : 'Das Produktschema ist keinem Workspace zugeordnet.');
+                  ? 'The catalogue schema is not assigned to a workspace.'
+                  : 'Das Katalogschema ist keinem Workspace zugeordnet.');
               }
-              const aggregate = await getServiceProductByPage(loadedPage.id, loadedSchema.tenant_id);
-              if (cancelled) return;
-              setProductAggregate(aggregate);
-            } else if (loadedSchema.entity_kind === 'event') {
-              if (!loadedSchema.tenant_id) throw new Error('Event schema must belong to a workspace.');
-              const aggregate = await getEventPageAggregateByPage(loadedPage.id, loadedSchema.tenant_id);
-              if (cancelled) return;
-              setEventAggregate(aggregate);
+              // Catalogue pages are classified by their linked aggregate: try the
+              // event first, then the product that owns the page.
+              try {
+                const aggregate = await getEventPageAggregateByPage(loadedPage.id, loadedSchema.tenant_id);
+                if (cancelled) return;
+                setEventAggregate(aggregate);
+              } catch {
+                const aggregate = await getServiceProductByPage(loadedPage.id, loadedSchema.tenant_id);
+                if (cancelled) return;
+                setProductAggregate(aggregate);
+              }
             }
           } else if (!isEditRoute) {
             setProductName(loadedSchema.name);
@@ -113,11 +117,6 @@ const PageBuilderPage: React.FC = () => {
             throw new Error(languageRef.current === 'en'
               ? 'The product and its content page belong to different workspaces.'
               : 'Das Produkt und seine Inhaltsseite gehören zu unterschiedlichen Workspaces.');
-          }
-          if (linkedSchema.entity_kind === 'event') {
-            throw new Error(languageRef.current === 'en'
-              ? 'This page belongs to an event schema and cannot be edited as a product.'
-              : 'Diese Seite gehört zu einem Veranstaltungsschema und kann nicht als Produkt bearbeitet werden.');
           }
           redirected = true;
           navigate(`${getSchemaConsolePath(linkedSchema)}/edit/${legacyProduct.pageId}`, { replace: true });

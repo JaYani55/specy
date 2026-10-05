@@ -24,7 +24,7 @@ The legacy product form remains the standard event-product overview. Its product
 
 ## Schema eligibility
 
-A product catalogue is a tenant-owned `page-collection` schema with `entity_kind = service-product`. The schema JSON defines one product entry's presentation contract. `pages.content` is arbitrary developer-owned JSON and remains separate from operational product identity/status.
+A product catalogue is a tenant-owned `page-collection` catalogue schema. Since the catalogue unification, `entity_kind = event` is the catalogue kind and holds both the product's canonical page and its event pages; the legacy `service-product` kind is migrated to `event` and remains accepted defensively. The schema JSON defines one product entry's presentation contract. `pages.content` is arbitrary developer-owned JSON and remains separate from operational product identity/status.
 
 Generic page create/update is rejected for this classification. Database constraint-trigger checks also prevent a product-schema page from committing without a same-tenant product row. Product/editor entry points use aggregate operations.
 

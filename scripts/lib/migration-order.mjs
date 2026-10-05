@@ -134,6 +134,7 @@ export const MIGRATION_ORDER_CORE = [
   '202610050002_product_delete_with_events.sql',
   '202610050003_product_object_api_independent_from_pages.sql',
   '202610050004_product_schema_reassignment.sql',
+  '202610060001_catalogue_schema_unification.sql',
 ];
 
 /**
