@@ -218,9 +218,9 @@ function buildSpecSections(
   );
   if (schema.entity_kind === 'event') {
     lines.push(
-      'Event pages also include relations.event by default with allow-listed date, time, end_time, duration_minutes, mode, and timezone fields.',
-      'Use ?include=entity,event,product to request the event entity identity and an eligible published product relation.',
-      'Operational date/time facts are not copied into page content; private company, meeting, staff, and scheduling fields are never public.',
+      'Event Pages include a revalidation/build-time relations.event snapshot by default with allow-listed schedule, registration_status, participant_min, and participant_max fields.',
+      'Use ?include=entity,event,product to request the event entity identity and an eligible published product relation. The generated Product Object is the canonical dynamic operational data stream.',
+      'Operational facts are not copied into page content; private company, meeting, staff, and scheduler status fields are never public.',
       '',
     );
   }
@@ -1037,7 +1037,7 @@ schemas.get('/:slug/pages', async (c) => {
     const pageIds = publicPages.map((page) => page.id);
     const { data: eventRows, error: eventError } = pageIds.length
       ? await supabase.from('mentorbooking_events')
-        .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id')
+        .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id, registration_status, participant_min, participant_max')
         .eq('tenant_id', schema.tenant_id)
         .in('page_id', pageIds)
       : { data: [], error: null };
@@ -1248,7 +1248,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
   } else if (entityKind === 'event') {
     if (!schema.tenant_id) return c.json({ error: 'Event schema is not assigned to a workspace.' }, 404);
     const { data: event, error: eventError } = await supabase.from('mentorbooking_events')
-      .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id')
+      .select('id, page_id, date, time, end_time, duration_minutes, mode, timezone, product_id, registration_status, participant_min, participant_max')
       .eq('tenant_id', schema.tenant_id)
       .eq('page_id', page.id)
       .maybeSingle();

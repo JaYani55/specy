@@ -128,6 +128,7 @@ export const MIGRATION_ORDER_CORE = [
   '202610040003_product_event_custom_fields.sql',
   '202610040004_product_scoped_fields_and_object_sources.sql',
   '202610040005_product_object_projection.sql',
+  '202610040006_product_event_dynamic_data_contract.sql',
 ];
 
 /**

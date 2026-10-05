@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import type { EventRegistrationStatus } from '@/types/event';
 import { isValidIanaTimezone, normalizeEventPageSlug } from '@/utils/eventPage';
 
 export interface PublicEventPageLink {
@@ -22,6 +23,9 @@ export interface EventPageAggregate {
   product_id: number | null;
   timezone: string | null;
   custom_fields?: Record<string, unknown>;
+  registration_status: EventRegistrationStatus | null;
+  participant_min: number | null;
+  participant_max: number | null;
 }
 
 export interface CreatePublicEventPageInput {
@@ -50,6 +54,9 @@ export interface CreatePublicEventPageInput {
     initial_selected_mentors?: string[];
     timezone: string;
     custom_fields?: Record<string, unknown>;
+    registration_status?: EventRegistrationStatus | null;
+    participant_min?: number | null;
+    participant_max?: number | null;
   };
   page_name: string;
   page_slug?: string;
@@ -68,7 +75,7 @@ export async function getEventPageAggregateByPage(pageId: string, tenantId: stri
   if (!tenantId) throw new Error('An active workspace is required to load an event page.');
   const { data, error } = await supabase
     .from('mentorbooking_events')
-    .select('id, page_id, tenant_id, date, time, end_time, duration_minutes, mode, product_id, timezone, custom_fields')
+    .select('id, page_id, tenant_id, date, time, end_time, duration_minutes, mode, product_id, timezone, custom_fields, registration_status, participant_min, participant_max')
     .eq('page_id', pageId)
     .eq('tenant_id', tenantId)
     .maybeSingle();

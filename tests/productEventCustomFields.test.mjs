@@ -10,6 +10,7 @@ const objectList = readFileSync(new URL('../src/pages/Objects.tsx', import.meta.
 const migration = readFileSync(new URL('../migrations/202610040003_product_event_custom_fields.sql', import.meta.url), 'utf8');
 const productSchemaMigration = readFileSync(new URL('../migrations/202610040004_product_scoped_fields_and_object_sources.sql', import.meta.url), 'utf8');
 const objectSyncMigration = readFileSync(new URL('../migrations/202610040005_product_object_projection.sql', import.meta.url), 'utf8');
+const dynamicContractMigration = readFileSync(new URL('../migrations/202610040006_product_event_dynamic_data_contract.sql', import.meta.url), 'utf8');
 
 describe('dynamic product/event custom fields', () => {
   it('validates typed money values on authenticated writes', () => {
@@ -43,6 +44,11 @@ describe('dynamic product/event custom fields', () => {
     assert.match(objectSyncMigration, /after insert or update or delete on public\.mentorbooking_events/);
     assert.match(objectSyncMigration, /after insert or update or delete on public\.pages/);
     assert.match(objectSyncMigration, /project_product_custom_fields\(product_field_schema -> 'event', event_record\.custom_fields\)/);
+    assert.match(dynamicContractMigration, /registration_status text null/i);
+    assert.match(dynamicContractMigration, /participant_min integer null/i);
+    assert.match(dynamicContractMigration, /participant_max integer null/i);
+    assert.match(dynamicContractMigration, /event_item - 'content' - 'name'/);
+    assert.match(dynamicContractMigration, /registration_status.*participant_min.*participant_max/s);
     assert.match(route, /products\.get\('\/:workspaceSlug\/:productSlug'/);
     assert.match(route, /\.eq\('source_product_id', product\.id\)/);
     assert.match(route, /\.eq\('api_enabled', true\)/);

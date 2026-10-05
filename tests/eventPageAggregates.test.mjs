@@ -18,7 +18,10 @@ const validInput = () => ({
     duration_minutes: 90,
     timezone: 'Europe/Berlin',
     mode: 'online',
-    custom_fields: { registration_status: 'open', participant_max: 10 },
+    registration_status: 'open',
+    participant_min: 3,
+    participant_max: 10,
+    custom_fields: { facilitator_note: 'public copy stays separate' },
   },
 });
 
@@ -30,7 +33,10 @@ describe('agent event-page create input', () => {
     assert.equal(result.value.slug, 'workshop-berlin');
     assert.equal(result.value.event.product_id, product);
     assert.equal(result.value.event.timezone, 'Europe/Berlin');
-    assert.deepEqual(result.value.event.custom_fields, { registration_status: 'open', participant_max: 10 });
+    assert.equal(result.value.event.registration_status, 'open');
+    assert.equal(result.value.event.participant_min, 3);
+    assert.equal(result.value.event.participant_max, 10);
+    assert.deepEqual(result.value.event.custom_fields, { facilitator_note: 'public copy stays separate' });
     assert.deepEqual(result.value.content, { headline: 'Public title', sections: [] });
   });
 
@@ -42,5 +48,7 @@ describe('agent event-page create input', () => {
     assert.equal(parseEventPageCreateInput({ ...validInput(), event: { ...validInput().event, date: '2026-02-31' } }).ok, false);
     assert.equal(parseEventPageCreateInput({ ...validInput(), event: { ...validInput().event, timezone: 'Not/A_Timezone' } }).ok, false);
     assert.equal(parseEventPageCreateInput({ ...validInput(), event: { ...validInput().event, product_id: 4 } }).ok, false);
+    assert.equal(parseEventPageCreateInput({ ...validInput(), event: { ...validInput().event, registration_status: 'available' } }).ok, false);
+    assert.equal(parseEventPageCreateInput({ ...validInput(), event: { ...validInput().event, participant_min: 12, participant_max: 10 } }).ok, false);
   });
 });

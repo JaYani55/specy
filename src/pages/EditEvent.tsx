@@ -13,7 +13,7 @@ import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeed
 import { useData } from '../contexts/DataContext'; 
 import { calculateEndTime } from '@/utils/timeUtils';
 import { calculateEventStatus } from '../utils/eventUtils';
-import { EventStatus, EventMode } from '@/types/event';
+import { EventStatus, EventMode, EventRegistrationStatus } from '@/types/event';
 import { ensureCompanyRecord } from '@/services/company/companyService';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { getSchema, triggerRevalidation, type RevalidationResult } from '@/services/pageService';
@@ -64,6 +64,9 @@ type SupabaseEventRow = {
   teams_link: string | null;
   initial_selected_mentors: string[] | null;
   custom_fields: Record<string, unknown> | null;
+  registration_status: EventRegistrationStatus | null;
+  participant_min: number | null;
+  participant_max: number | null;
 };
 
 const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormInitialValues => ({
@@ -91,6 +94,9 @@ const toInitialValues = (input: Partial<EventFormInitialValues>): EventFormIniti
     ? input.initial_selected_mentors
     : [],
   custom_fields: input.custom_fields ?? {},
+  registration_status: input.registration_status ?? null,
+  participant_min: input.participant_min ?? null,
+  participant_max: input.participant_max ?? null,
 });
 
 const EditEvent = () => {
@@ -163,6 +169,9 @@ const EditEvent = () => {
             teams_link: cachedEvent.teams_link,
             initial_selected_mentors: cachedEvent.initial_selected_mentors,
             custom_fields: cachedEvent.custom_fields,
+            registration_status: cachedEvent.registration_status,
+            participant_min: cachedEvent.participant_min,
+            participant_max: cachedEvent.participant_max,
             page_id: cachedEvent.page_id,
             timezone: cachedEvent.timezone,
           });
@@ -203,6 +212,9 @@ const EditEvent = () => {
             ? data.initial_selected_mentors
             : undefined,
           custom_fields: data.custom_fields ?? {},
+          registration_status: data.registration_status,
+          participant_min: data.participant_min,
+          participant_max: data.participant_max,
         });
 
         setEventData(normalizedFromDb);
@@ -309,6 +321,9 @@ const EditEvent = () => {
           product_id: values.product_id ?? null,
           teams_link: values.teams_link ?? "",
           custom_fields: values.custom_fields ?? {},
+          registration_status: values.registration_status ?? 'closed',
+          participant_min: values.participant_min ?? null,
+          participant_max: values.participant_max ?? null,
           ...(eventData?.page_id ? { timezone: values.timezone ?? null } : {}),
         })
         .eq('id', id)

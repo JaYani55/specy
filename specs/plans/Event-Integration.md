@@ -1,6 +1,6 @@
 # Event integration — focused implementation plan
 
-**Status:** Focused MVP implementation is complete in core. The registered migration has not been applied or verified against the live database; production tenant/data/RLS review remains required.  
+**Status:** Focused MVP and migrations through `202610040005_product_object_projection.sql` are reported deployed and tested. Follow-up migration `202610040006_product_event_dynamic_data_contract.sql` remains to be rolled out.
 **Relationship to the broader plan:** This is a customer-focused slice of [`PRODUCT-INTEGRATION.md`](PRODUCT-INTEGRATION.md), not completion of its staff, CRM, event rebuild, or legacy-migration scope.
 
 ## 1. Goal and recommendation
@@ -15,7 +15,7 @@ Instead:
 - When public presentation is requested, create **one page per event** in a tenant-owned `page-collection` schema classified as `entity_kind = 'event'`.
 - Link that event page to the existing operational event. The page belongs to the event schema, not the product schema.
 - Keep the page draft until someone explicitly publishes it. Event scheduling status (for example `new` or `locked`) is not page publication status.
-- Keep operational date/time and event facts in the event record as the source of truth. Use `pages.content` for schema-defined presentation/editorial content. Public delivery should expose an allow-listed event projection from the event record so schedule edits do not require copying the same date/time into page JSON.
+- Keep operational date/time and event facts in the event record as the source of truth. Use `pages.content` for schema-defined presentation/editorial content. Pages are the revalidation transport; the generated Product Object is the dynamic operational read stream. Public Pages may carry an allow-listed snapshot for static regeneration, while Object reads expose current facts without duplicating `pages.content`.
 - Let the frontend associate an event with its product through an explicit, tenant-checked, public product reference. Only expose a product relation when it is safe to expose that product; never expose a legacy integer ID or private product fields as the public identity.
 
 This fits the existing schema/PageBuilder architecture and can grow later into a full event catalogue without treating the product content schema as a generic event store.

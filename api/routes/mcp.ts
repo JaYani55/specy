@@ -39,6 +39,7 @@ import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreate
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schemaDefinition';
+import { isPublicObjectReadable } from '../lib/objectVisibility';
 
 const mcpRoute = new Hono<{ Bindings: Env }>();
 
@@ -54,7 +55,14 @@ const eventPageCreateDetailsSchema = z.object({
   required_staff_count: z.number().int().min(1).optional(),
   required_trait_id: z.number().int().positive().nullable().optional(),
   description: z.string().optional().describe('Operational description; it is not included in the public event projection.'),
-  custom_fields: z.record(z.string(), z.unknown()).optional().describe('Workspace-defined event fields, separate from page content. Public fields are returned by the dynamic product/event endpoint.'),
+  custom_fields: z.record(z.string(), z.unknown()).optional().describe('Product-defined event fields, separate from page content.'),
+  registration_status: z.enum(['open', 'waitlist', 'full', 'closed', 'cancelled']).nullable().optional().describe('Operational registration state; distinct from page publication and scheduler status.'),
+  participant_min: z.number().int().min(1).nullable().optional(),
+  participant_max: z.number().int().min(1).nullable().optional(),
+}).superRefine((event, context) => {
+  if (event.participant_min != null && event.participant_max != null && event.participant_min > event.participant_max) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['participant_min'], message: 'participant_min cannot exceed participant_max.' });
+  }
 });
 
 const BUILT_IN_MCP_TOOLS = [
@@ -607,7 +615,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_list_pages',
-      '[specy-pages > schemas > pages] List every page record for a schema, including drafts and archived records visible under RLS. Content is omitted unless requested.',
+      '[specy-pages > schemas > pages] List Page records only: editorial content, publication and Page system fields. Linked operational Product/Event facts are not part of this contract; use the relevant Object for dynamic data. Content is omitted unless requested.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list'),
         include_content: z.boolean().optional().describe('Include full arbitrary JSON page content; defaults to false.'),
@@ -635,7 +643,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_get_page',
-      '[specy-pages > schemas > pages] Load one page record, including its complete stored JSON content and system fields.',
+      '[specy-pages > schemas > pages] Load one Page record only, including its complete stored editorial JSON content and Page system fields. Use the relevant Object for dynamic Product/Event facts.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
         page_id: z.string().uuid().describe('Page UUID from specy_pages_schemas_list_pages'),
@@ -1205,7 +1213,7 @@ async function createMcpServerWithTools(
   // ── Tool: list_objects ─────────────────────────────────────────────────
   server.tool(
     'list_objects',
-    'List all available data objects. Objects are arbitrarily definable JSONB data structures (e.g. price lists, configurations).',
+    'List available Objects. A detail_url is returned only when the Object is anonymously readable; Objects are the dynamic API stream, separate from Pages and their revalidation lifecycle.',
     {},
     async () => {
       let query = supabase
@@ -1227,15 +1235,21 @@ async function createMcpServerWithTools(
         return { content: [{ type: 'text' as const, text: `Error fetching objects: ${error.message}` }] };
       }
 
-      const objectsMap = (data ?? []).map((o) => ({
-        id: o.id,
-        name: o.name,
-        slug: o.slug,
-        description: o.description,
-        requires_auth: o.requires_auth,
-        updated_at: o.updated_at,
-        detail_url: `${baseUrl}/api/objects/${o.slug}`,
-      }));
+      const objectsMap = (data ?? []).map((o) => {
+        const publiclyReadable = isPublicObjectReadable(o);
+        return {
+          id: o.id,
+          name: o.name,
+          slug: o.slug,
+          description: o.description,
+          status: o.status,
+          requires_auth: o.requires_auth,
+          api_enabled: o.api_enabled,
+          publicly_readable: publiclyReadable,
+          updated_at: o.updated_at,
+          ...(publiclyReadable ? { detail_url: `${baseUrl}/api/objects/${encodeURIComponent(o.slug)}` } : {}),
+        };
+      });
 
       return {
         content: [{
@@ -1249,7 +1263,7 @@ async function createMcpServerWithTools(
   // ── Tool: get_object ───────────────────────────────────────────────────
   server.tool(
     'get_object',
-    'Get the full data and schema for a specific object by its slug or ID.',
+    'Get the current dynamic Object data and schema by slug or UUID. Generated Product Objects include current operational Event facts; Page editorial content is read through Pages tools/API.',
     { idOrSlug: z.string().describe('The object slug or UUID') },
     async ({ idOrSlug }) => {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);

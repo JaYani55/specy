@@ -20,6 +20,9 @@ export interface EventPageCreateInput {
     required_trait_id?: number | null;
     description?: string;
     custom_fields?: Record<string, unknown>;
+    registration_status?: 'open' | 'waitlist' | 'full' | 'closed' | 'cancelled' | null;
+    participant_min?: number | null;
+    participant_max?: number | null;
   };
 }
 
@@ -100,6 +103,19 @@ export function parseEventPageCreateInput(input: unknown):
   }
   if (event.description !== undefined && typeof event.description !== 'string') return { ok: false, error: 'event.description must be a string.' };
   if (event.custom_fields !== undefined && !validateContent(event.custom_fields)) return { ok: false, error: 'event.custom_fields must be a JSON object no larger than 1 MiB.' };
+  if (event.registration_status !== undefined && event.registration_status !== null
+    && !['open', 'waitlist', 'full', 'closed', 'cancelled'].includes(String(event.registration_status))) {
+    return { ok: false, error: 'event.registration_status must be open, waitlist, full, closed, cancelled, or null.' };
+  }
+  for (const [key, value] of [['participant_min', event.participant_min], ['participant_max', event.participant_max]] as const) {
+    if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || Number(value) < 1)) {
+      return { ok: false, error: `event.${key} must be a positive integer or null.` };
+    }
+  }
+  if (typeof event.participant_min === 'number' && typeof event.participant_max === 'number'
+    && event.participant_min > event.participant_max) {
+    return { ok: false, error: 'event.participant_min cannot exceed event.participant_max.' };
+  }
 
   const slug = typeof input.slug === 'string' && input.slug.trim() ? input.slug : input.name;
   return {
@@ -123,6 +139,12 @@ export function parseEventPageCreateInput(input: unknown):
         ...(typeof event.required_trait_id === 'number' || event.required_trait_id === null ? { required_trait_id: event.required_trait_id as number | null } : {}),
         ...(typeof event.description === 'string' ? { description: event.description } : {}),
         ...(isRecord(event.custom_fields) ? { custom_fields: event.custom_fields } : {}),
+        ...(typeof event.registration_status === 'string' || event.registration_status === null
+          ? { registration_status: event.registration_status as EventPageCreateInput['event']['registration_status'] } : {}),
+        ...(typeof event.participant_min === 'number' || event.participant_min === null
+          ? { participant_min: event.participant_min as number | null } : {}),
+        ...(typeof event.participant_max === 'number' || event.participant_max === null
+          ? { participant_max: event.participant_max as number | null } : {}),
       },
     },
   };
@@ -174,6 +196,9 @@ export async function createEventPageAggregate(
       duration_minutes: input.event.duration_minutes,
       timezone: input.event.timezone,
       mode: input.event.mode ?? 'online',
+      registration_status: input.event.registration_status ?? null,
+      participant_min: input.event.participant_min ?? null,
+      participant_max: input.event.participant_max ?? null,
       required_staff_count: input.event.required_staff_count ?? 1,
       amount_requiredmentors: input.event.required_staff_count ?? 1,
       required_trait_id: input.event.required_trait_id ?? null,

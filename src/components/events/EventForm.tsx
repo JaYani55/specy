@@ -23,7 +23,7 @@ import type { PageSchema } from '@/types/pagebuilder';
 import { isValidIanaTimezone } from '@/utils/eventPage';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EventStatus, EventMode } from '@/types/event';
+import { EventStatus, EventMode, EventRegistrationStatus } from '@/types/event';
 import { format } from 'date-fns';
 import { fetchProductById, Product } from '../../services/events/productService';
 import { supabase } from "@/lib/supabase";
@@ -61,6 +61,9 @@ const formSchema = zod.object({
   teams_link: zod.string().optional(),
   initial_selected_mentors: zod.array(zod.string()).optional(),
   custom_fields: zod.record(zod.string(), zod.unknown()).default({}),
+  registration_status: zod.enum(['open', 'waitlist', 'full', 'closed', 'cancelled']).nullable(),
+  participant_min: zod.number().int().min(1).nullable(),
+  participant_max: zod.number().int().min(1).nullable(),
   ProductInfo: zod.object({
     id: zod.number(),
     name: zod.string(),
@@ -75,6 +78,11 @@ const formSchema = zod.object({
   }
   if (values.event_schema_id && !isValidIanaTimezone(values.timezone ?? '')) {
     context.addIssue({ code: zod.ZodIssueCode.custom, path: ['timezone'], message: 'Choose a valid IANA timezone.' });
+  }
+  if (values.participant_min !== null && values.participant_max !== null
+    && values.participant_min !== undefined && values.participant_max !== undefined
+    && values.participant_min > values.participant_max) {
+    context.addIssue({ code: zod.ZodIssueCode.custom, path: ['participant_min'], message: 'Die Mindestzahl darf die Höchstzahl nicht überschreiten.' });
   }
 });
 
@@ -104,6 +112,9 @@ interface EventFormProps {
     event_page_name?: string;
     timezone?: string;
     custom_fields?: Record<string, unknown>;
+    registration_status?: EventRegistrationStatus | null;
+    participant_min?: number | null;
+    participant_max?: number | null;
   };
   onSubmit: (values: EventFormValues) => Promise<void>;
   isLoading: boolean;
@@ -146,6 +157,9 @@ export const EventForm: React.FC<EventFormProps> = ({
       teams_link: initialValues?.teams_link || "",
       initial_selected_mentors: initialValues?.initial_selected_mentors || [],
       custom_fields: initialValues?.custom_fields || {},
+      registration_status: initialValues?.registration_status === undefined ? 'closed' : initialValues.registration_status,
+      participant_min: initialValues?.participant_min ?? null,
+      participant_max: initialValues?.participant_max ?? null,
     }
   });
 
@@ -485,6 +499,45 @@ export const EventForm: React.FC<EventFormProps> = ({
                 language={language}
               />
             </div>
+            <section className="space-y-4 rounded-lg border p-4">
+              <div>
+                <h3 className="font-semibold">Anmeldung und Teilnehmendenzahl</h3>
+                <p className="text-sm text-muted-foreground">Operative Angaben; unabhängig vom Veröffentlichungsstatus der Seite und vom Personalbedarf.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <FormField control={form.control} name="registration_status" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Anmeldestatus</FormLabel>
+                    <Select value={field.value ?? '__unset'} onValueChange={(value) => field.onChange(value === '__unset' ? null : value)} disabled={isLoading}>
+                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                      <SelectContent>
+                        <SelectItem value="__unset">Nicht festgelegt</SelectItem>
+                        <SelectItem value="open">Offen</SelectItem>
+                        <SelectItem value="waitlist">Warteliste</SelectItem>
+                        <SelectItem value="full">Ausgebucht</SelectItem>
+                        <SelectItem value="closed">Geschlossen</SelectItem>
+                        <SelectItem value="cancelled">Abgesagt</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="participant_min" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Mindestens Teilnehmende</FormLabel>
+                    <FormControl><Input type="number" min={1} step={1} value={field.value ?? ''} onChange={(event) => field.onChange(event.target.value === '' ? null : Number(event.target.value))} disabled={isLoading} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="participant_max" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Höchstens Teilnehmende</FormLabel>
+                    <FormControl><Input type="number" min={1} step={1} value={field.value ?? ''} onChange={(event) => field.onChange(event.target.value === '' ? null : Number(event.target.value))} disabled={isLoading} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+            </section>
             {Object.keys(customFieldDefinitions).length > 0 && (
               <TenantCustomFieldsEditor
                 key={`${activeTenantId ?? 'no-workspace'}-${initialValues?.id ?? 'new-event'}-${watchedProductId ?? 'no-product'}`}

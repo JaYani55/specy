@@ -121,6 +121,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           teams_link: event.teams_link || '',
           initial_selected_mentors: event.initial_selected_mentors || [],
           custom_fields: event.custom_fields && typeof event.custom_fields === 'object' ? event.custom_fields : {},
+          registration_status: event.registration_status ?? null,
+          participant_min: event.participant_min ?? null,
+          participant_max: event.participant_max ?? null,
         };
       });
     return transformedEvents;

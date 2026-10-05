@@ -1,10 +1,10 @@
 # Objects × Products integration plan
 
-**Status:** Plan only — no implementation authorized by this document.  
+**Status:** Baseline implemented. Migrations through `202610040005_product_object_projection.sql` have been deployed and tested per the current rollout report. Follow-up migration `202610040006_product_event_dynamic_data_contract.sql` adds the Page/Object delivery boundary and structured Event registration/capacity; it requires its own rollout.
 **Owner:** Core CMS.  
-**Scope:** Make a Product's Object the canonical agent/frontend read model for that Product and its associated public Events, while retaining the current Product/Event tables and aggregate write paths as the operational source of truth.
+**Scope:** Product Objects are the dynamic read model for Product/Event operational data; Pages own editorial content and publication/revalidation transport. Product/Event rows remain operational sources of truth.
 
-> This plan was requested after reviewing `specs/agents/SPECY-MCP-DX-REPORT041026.md` and the existing Objects, Product, Event, MCP, and public Pages implementations. It deliberately does not prescribe putting operational values into `page_schemas.schema` or `pages.content`.
+> This document records the original integration plan. For the current implemented contract, use [`../features/service-products.md`](../features/service-products.md), [`../features/event-catalogue.md`](../features/event-catalogue.md), and [`../agents/event-catalogue-integration.md`](../agents/event-catalogue-integration.md). It does not authorize duplicating Pages content into the dynamic Object stream.
 
 ## 1. Goal and decisions
 
@@ -22,7 +22,7 @@ A Product is a reusable service offering; Events are scheduled occurrences of th
 
 ## 2. Current implementation inventory
 
-### 2.1 Objects (existing)
+### 2.1 Objects (baseline before the Product mirror implementation)
 
 - `migrations/objects.sql` creates `public.objects` with UUID `id`, globally unique `slug`, `schema jsonb`, `data jsonb`, `status` (`published`/`archived`), `requires_auth`, and `api_enabled`.
 - `migrations/202605310001_markdown_objects.sql` adds `object_type`, `agent_description`, `share_enabled`, and `share_slug`. `202605310002_markdown_object_share_scope.sql` scopes the share-slug unique index by `(tenant_id, share_slug)`.
@@ -36,7 +36,7 @@ A Product is a reusable service offering; Events are scheduled occurrences of th
 - `src/pages/ObjectEditor.tsx` authors an Object schema and its JSON/Markdown data. Its field types include string, number, boolean, array, object, URL, email, date, and price. `src/services/objectService.ts` and `src/types/objects.ts` are the frontend access/type layer.
 - Object slugs are globally unique. Share slugs are unique per tenant. `tenant_id`, `api_enabled`, `requires_auth`, and `share_enabled` have distinct authorization meanings and must not be conflated with Product/Event publication.
 
-### 2.2 Product and Event (existing)
+### 2.2 Product and Event (baseline before the Product mirror implementation)
 
 - The old `/products/manage` workflow edits the integer-ID `mentorbooking_products` record through `ProductForm` / `ProductManagementModal`. Events reference it through integer `mentorbooking_events.product_id`.
 - The newer service-product aggregate uses `mentorbooking_products.integration_id` as its public UUID through the `service_products` view. Its canonical page is `product_page_id`; `pages.status` controls publication. Product create/update/publish already use tenant/schema/version checks.

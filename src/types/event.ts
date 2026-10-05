@@ -3,6 +3,7 @@ import { Product } from '../services/events/productService';
 
 export type EventStatus = 'new' | 'firstRequests' | 'successPartly' | 'successComplete' | 'locked';
 export type EventMode = 'live' | 'online' | 'hybrid';
+export type EventRegistrationStatus = 'open' | 'waitlist' | 'full' | 'closed' | 'cancelled';
 
 export interface Event {
   id: string;
@@ -35,6 +36,9 @@ export interface Event {
   product_id?: number;
   initial_selected_mentors?: string[];
   custom_fields?: Record<string, unknown>;
+  registration_status?: EventRegistrationStatus | null;
+  participant_min?: number | null;
+  participant_max?: number | null;
   companyInfo?: {
     id: string;
     name: string;
@@ -61,6 +65,9 @@ export interface EventFormData {
   isLocked: boolean;
   timezone?: string | null;
   custom_fields?: Record<string, unknown>;
+  registration_status?: EventRegistrationStatus | null;
+  participant_min?: number | null;
+  participant_max?: number | null;
 }
 
 export interface EventFormErrors {

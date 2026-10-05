@@ -37,6 +37,7 @@ describe('published event page projection', () => {
   const event = {
     id: 'event-uuid', page_id: 'page-event', date: '2026-11-05', time: '09:00', end_time: '10:00',
     duration_minutes: 60, mode: 'online', timezone: 'Europe/Berlin', product_id: 4,
+    registration_status: 'open', participant_min: 3, participant_max: 10,
   };
 
   it('allows only named event includes and rejects private/unknown expansions', () => {
@@ -65,7 +66,7 @@ describe('published event page projection', () => {
     assert.deepEqual(projected[0].content, page.content);
     assert.deepEqual(projected[0].relations, {
       entity: { kind: 'event', id: 'event-uuid' },
-      event: { date: '2026-11-05', time: '09:00', end_time: '10:00', duration_minutes: 60, mode: 'online', timezone: 'Europe/Berlin' },
+      event: { date: '2026-11-05', time: '09:00', end_time: '10:00', duration_minutes: 60, mode: 'online', timezone: 'Europe/Berlin', registration_status: 'open', participant_min: 3, participant_max: 10 },
       product: { id: 'product-public-uuid', name: 'Public Product', slug: 'public-product', schema_api_slug: 'products-api' },
     });
     assert.equal(JSON.stringify(projected).includes('product_id'), false);

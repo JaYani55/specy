@@ -72,6 +72,9 @@ test('MCP page tools expose the specy-pages > schemas hierarchy and management a
     assert.match(mcpSource, new RegExp(`'${toolName}'`));
   }
   assert.match(mcpSource, /include_content: z\.boolean\(\)\.optional\(\)/);
+  assert.match(mcpSource, /List Page records only: editorial content, publication and Page system fields/);
+  assert.match(mcpSource, /Get the current dynamic Object data and schema/);
+  assert.match(mcpSource, /Objects are the dynamic API stream, separate from Pages/);
   assert.match(mcpSource, /updateSchemaDefinition\(supabase, schema_slug, parsed\.patch\)/);
   assert.doesNotMatch(mcpSource, /fetch\(`\$\{baseUrl\}\/api\/schemas\/\$\{encodeURIComponent\(schema_slug\)\}\/definition`/);
 });

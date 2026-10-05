@@ -2,7 +2,7 @@
 
 ## Status
 
-Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). This is not the full Products × Pages plan: staff presentation/identity migration, CRM, dedicated event collection tools, external invoice handoff, durable outbox delivery, and conversion of historical records into schema-backed aggregates remain pending. Product Object mirror backfill is included in its migration but has not been applied to a live database here.
+Service-product schema upload/classification and the product aggregate workflow are implemented in core. A focused optional event-page workflow is also implemented; see [`event-catalogue-integration.md`](event-catalogue-integration.md). Migrations through `202610040005_product_object_projection.sql` have been deployed and tested per the current rollout report. Staff presentation/identity migration, CRM, dedicated event collection tools, external invoice handoff, durable outbox delivery, and conversion of historical records into schema-backed aggregates remain out of scope.
 
 ## Frontend-first setup
 
@@ -50,7 +50,7 @@ No arbitrary table joins/includes are supported. Product delivery excludes retir
 
 ## Dynamic Product and Event data
 
-Each Product has one generated, read-only Object mirror. `GET /api/objects/{objectSlug}` is the canonical dynamic read and returns the normal Object `{ schema, data }` contract. The friendly `GET /api/products/:workspaceSlug/:productSlug` resolves the published Product page and returns the identical Object envelope. `data.product` contains page content and allow-listed descriptive/custom values; `data.events` contains linked published Event page content and operational schedule facts. Product and Event custom values appear only when the selected Product's corresponding field definition explicitly marks them public. Objects are synchronized transactionally and are never edited in ObjectEditor; users edit Product and Event source records in the dashboard.
+Each Product has one generated, read-only Object mirror. `GET /api/objects/{objectSlug}` is the canonical dynamic read and returns the normal Object `{ schema, data }` contract. The friendly `GET /api/products/:workspaceSlug/:productSlug` resolves the published Product page and returns the identical Object envelope. Pages own editorial content/publication and use the revalidation transport; the Object stream contains current Product/Event operational values and Page references, not copied `pages.content`. Event records include schedule, registration status, participant capacity, and only custom values explicitly marked public in the selected Product's field schema. Objects are synchronized transactionally and are never edited in ObjectEditor; users edit Page content in PageBuilder and Product/Event facts in their dedicated forms.
 
 ## Contract and safety limits
 

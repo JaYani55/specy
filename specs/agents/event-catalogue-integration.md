@@ -53,7 +53,7 @@ A frontend that needs a product together with its scheduled occurrences can fetc
 GET /api/products/{workspaceSlug}/{productSlug}
 ```
 
-`workspaceSlug` is `public.tenants.slug`; `productSlug` is the published page slug in a registered service-product schema. The friendly URL resolves the generated Product Object and returns the same Object envelope as `/api/objects/{objectSlug}`: Product and Event fields are under `data.product` and `data.events`. Nested Events contain published page content and allow-listed operational date, time, end time, duration, timezone, and mode. Custom fields are returned only when the selected Product's field definition marks them public. Internal status, company/customer records, staff, meeting URLs, approvals, and compensation are excluded. The Object is synchronized transactionally and does not depend on static-site revalidation for dynamic reads.
+`workspaceSlug` is `public.tenants.slug`; `productSlug` is the published page slug in a registered service-product schema. The friendly URL resolves the generated Product Object and returns the same Object envelope as `/api/objects/{objectSlug}`: Product and Event fields are under `data.product` and `data.events`. Nested Events contain current operational date, time, end time, duration, timezone, mode, registration status, participant capacity, public custom values, and Page references. Editorial `pages.content` is not copied into the Object; fetch it through the Pages contract and use its revalidation lifecycle. Internal scheduler status, company/customer records, staff, meeting URLs, approvals, and compensation are excluded. The Object is synchronized transactionally and does not depend on static-site revalidation for dynamic reads.
 
 ## Public API includes
 
@@ -64,9 +64,9 @@ GET /api/schemas/:apiSlug/pages?include=entity,event,product
 GET /api/schemas/:apiSlug/pages/:pageSlug?include=entity,event,product
 ```
 
-- With no `include` query, `relations.event` is returned by default with allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, and IANA `timezone`. Supplying `include` opts into the named relations only.
+- With no `include` query, `relations.event` is returned by default as a Page/revalidation snapshot with allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, IANA `timezone`, `registration_status`, `participant_min`, and `participant_max`. Supplying `include` opts into the named relations only. Use the Product Object for the current dynamic operational stream.
 - `entity`: `{ kind: "event", id: "<event-uuid>" }`
-- `event`: allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, and IANA `timezone`
+- `event`: allow-listed `date`, `time`, `end_time`, `duration_minutes`, `mode`, IANA `timezone`, `registration_status`, `participant_min`, and `participant_max`
 - `product`: only an active product whose service-product page is registered and published; returns its opaque UUID, name, page slug, and `schema_api_slug`
 
 Default page `content` is the stored JSON. Relations are an independent response envelope and never overwrite content keys. Draft/archived pages, unregistered schemas, unlinked records, and events without a valid timezone are not delivered publicly. Company/customer fields, meeting links, internal status, staff/account IDs, assignments, approval/request arrays, compensation, and private notes are excluded.
@@ -75,6 +75,6 @@ Default page `content` is the stored JSON. Relations are an independent response
 
 Authenticated writes run as the caller and remain subject to RLS. The event, selected product, event page, event schema, and any selected company must belong to the same workspace. Event pages are created, edited, and published through event-aware aggregate RPCs; ordinary page CRUD is not a supported writer. Event page deletion is restricted while linked; deleting an event removes its linked page transactionally.
 
-Public page publication is explicit and independent of event scheduling status. Event schedule edits update the operational record, which is the public source of date/time facts; the PageBuilder does not copy those values into arbitrary page JSON. Dashboard revalidation is best-effort only; durable invalidation and static route generation guarantees are not implemented.
+Public Page publication is explicit and independent of event scheduling/registration status. Event schedule edits update the operational record, which is the dynamic source of date/time/registration/capacity facts; the PageBuilder does not copy those values into arbitrary Page JSON. Pages are the editorial/revalidation transport and Objects are the dynamic read API. Dashboard revalidation is best-effort only; durable invalidation and static route generation guarantees are not implemented.
 
 See [`../features/event-catalogue.md`](../features/event-catalogue.md) for the complete current contract and [`../platform/multi-tenancy.md`](../platform/multi-tenancy.md) for workspace ownership/RLS requirements. Event creation always returns a draft page; explicit publication is a separate operation.

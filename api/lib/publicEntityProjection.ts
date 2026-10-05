@@ -26,6 +26,9 @@ export interface PublicEventReference {
   mode: 'live' | 'online' | 'hybrid' | null;
   timezone: string | null;
   product_id: number | null;
+  registration_status?: 'open' | 'waitlist' | 'full' | 'closed' | 'cancelled' | null;
+  participant_min?: number | null;
+  participant_max?: number | null;
 }
 
 export interface PublicEventProduct {
@@ -124,6 +127,9 @@ export function projectPublicEventRelations(
         duration_minutes: event.duration_minutes,
         mode: event.mode,
         timezone: event.timezone,
+        registration_status: event.registration_status ?? null,
+        participant_min: event.participant_min ?? null,
+        participant_max: event.participant_max ?? null,
       };
     }
     if (includes.includeProduct && event.product_id !== null) {
