@@ -11,6 +11,7 @@ import type { PageSchema } from '@/types/pagebuilder';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
 import { TenantCustomFieldsDialog } from '@/components/products/TenantCustomFieldsDialog';
+import { ProductSchemaPreview } from '@/components/products/ProductSchemaPreview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,11 @@ export default function ProductCatalogue() {
       ]);
       setServiceProducts(nextServiceProducts);
       setLegacyProducts(nextLegacyProducts);
-      setSchemas(nextSchemas.filter((schema) => schema.tenant_id === activeTenantId && schema.entity_kind === 'service-product'));
+      setSchemas(nextSchemas.filter((schema) =>
+        schema.tenant_id === activeTenantId
+        && schema.entity_kind === 'service-product'
+        && schema.content_scope === 'page-collection'
+      ));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Produkte konnten nicht geladen werden.');
     } finally {
@@ -105,7 +110,7 @@ export default function ProductCatalogue() {
           <Button variant="outline" onClick={() => navigate('/products/manage/new')}>
             <Plus className="mr-2 h-4 w-4" />Veranstaltungsprodukt anlegen
           </Button>
-          <Button onClick={() => navigate('/products/schemas')}>
+          <Button onClick={() => navigate('/products/schemas?create=1')} disabled={!activeTenantId}>
             <Plus className="mr-2 h-4 w-4" />Website-Produkt anlegen
           </Button>
         </div>
@@ -140,7 +145,10 @@ export default function ProductCatalogue() {
                         <div key={product.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
                           <div className="min-w-0">
                             <p className="truncate font-medium">{product.name}</p>
-                            <p className="text-sm text-muted-foreground">{schema?.name ?? 'Website-Katalog'}</p>
+                            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                              <span>{schema?.name ?? 'Website-Katalog'}</span>
+                              {schema && <ProductSchemaPreview schema={schema} triggerLabel="Aufbau ansehen" compact />}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant={state === 'published' ? 'default' : 'secondary'}>{statusText(state)}</Badge>

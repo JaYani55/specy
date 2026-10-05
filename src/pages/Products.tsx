@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Archive, ArrowLeft, Loader2, Package, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
@@ -8,6 +8,7 @@ import { getSchemas } from '@/services/pageService';
 import { archiveServiceProduct, createServiceProduct, listServiceProducts, type ServiceProduct } from '@/services/productService';
 import type { PageSchema } from '@/types/pagebuilder';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { ProductSchemaPreview } from '@/components/products/ProductSchemaPreview';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 const Products: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { language } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
   const [products, setProducts] = useState<ServiceProduct[]>([]);
@@ -34,6 +36,7 @@ const Products: React.FC = () => {
   const productSchemas = useMemo(() => schemas.filter((schema) =>
     schema.entity_kind === 'service-product' && schema.tenant_id === activeTenantId && schema.content_scope === 'page-collection'
   ), [schemas, activeTenantId]);
+  const selectedSchema = productSchemas.find((schema) => schema.id === selectedSchemaId) ?? null;
 
   const load = useCallback(async () => {
     if (!activeTenantId) {
@@ -71,6 +74,18 @@ const Products: React.FC = () => {
     setSelectedSchemaId(productSchemas.length === 1 ? productSchemas[0].id : '');
     setCreateOpen(true);
   };
+
+  useEffect(() => {
+    if (isLoading || searchParams.get('create') !== '1') return;
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete('create');
+    setSearchParams(nextSearchParams, { replace: true });
+    if (productSchemas.length > 0) {
+      setProductName('');
+      setSelectedSchemaId(productSchemas.length === 1 ? productSchemas[0].id : '');
+      setCreateOpen(true);
+    }
+  }, [isLoading, productSchemas, searchParams, setSearchParams]);
 
   const handleCreate = async () => {
     if (!activeTenantId || !selectedSchemaId || !productName.trim()) {
@@ -130,12 +145,12 @@ const Products: React.FC = () => {
           </Button>
           <div>
             <h1 className="text-3xl font-bold">Website-Produkte</h1>
-            <p className="mt-1 text-muted-foreground">Produkte mit eigenen Website-Seiten und aktuellen Produktangaben.</p>
+            <p className="mt-1 text-muted-foreground">Erstelle hier Website-Produkte und ordne jedes Produkt einem vorhandenen Website-Schema zu.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={openCreate} disabled={!activeTenantId || productSchemas.length === 0}>
-            <Plus className="mr-2 h-4 w-4" />Neues Website-Produkt
+            <Plus className="mr-2 h-4 w-4" />Neues Produkt mit Schema
           </Button>
         </div>
       </div>
@@ -158,14 +173,21 @@ const Products: React.FC = () => {
           {filteredProducts.length === 0 ? <Card><CardContent className="py-10 text-center text-muted-foreground">{language === 'en' ? 'No products found.' : 'Keine Produkte gefunden.'}</CardContent></Card> : (
             <div className="overflow-hidden rounded-lg border">
               <table className="w-full text-sm">
-                <thead className="bg-muted/50"><tr><th className="p-3 text-left font-medium">{language === 'en' ? 'Name' : 'Name'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Catalogue' : 'Katalog'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Publication' : 'Veröffentlichung'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Updated' : 'Aktualisiert'}</th><th className="p-3 text-right font-medium">{language === 'en' ? 'Actions' : 'Aktionen'}</th></tr></thead>
+                <thead className="bg-muted/50"><tr><th className="p-3 text-left font-medium">{language === 'en' ? 'Name' : 'Name'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Page schema' : 'Produktseiten-Schema'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Publication' : 'Veröffentlichung'}</th><th className="p-3 text-left font-medium">{language === 'en' ? 'Updated' : 'Aktualisiert'}</th><th className="p-3 text-right font-medium">{language === 'en' ? 'Actions' : 'Aktionen'}</th></tr></thead>
                 <tbody>
                   {filteredProducts.map((product) => {
                     const schema = productSchemas.find((entry) => entry.id === product.schema_id || entry.id === product.page?.schema_id);
                     const status = product.status ?? product.page?.status ?? 'draft';
                     return <tr key={product.id} className="border-t hover:bg-muted/20">
                       <td className="p-3"><button className="text-left font-medium hover:underline" onClick={() => schema && navigate(`${getSchemaConsolePath(schema)}/edit/${product.page_id}`)}>{product.name}</button></td>
-                      <td className="p-3 text-muted-foreground">{schema?.name ?? '—'}</td>
+                      <td className="p-3">
+                        {schema ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-muted-foreground">{schema.name}</span>
+                            <ProductSchemaPreview schema={schema} triggerLabel={language === 'en' ? 'View structure' : 'Aufbau ansehen'} compact />
+                          </div>
+                        ) : <span className="text-muted-foreground">—</span>}
+                      </td>
                       <td className="p-3"><Badge variant={status === 'published' ? 'default' : status === 'archived' ? 'destructive' : 'secondary'}>{status === 'published' ? (language === 'en' ? 'Published' : 'Veröffentlicht') : status === 'archived' ? (language === 'en' ? 'Archived' : 'Archiviert') : (language === 'en' ? 'Draft' : 'Entwurf')}</Badge></td>
                       <td className="p-3 text-muted-foreground">{new Date(product.updated_at).toLocaleDateString(language === 'en' ? 'en' : 'de')}</td>
                       <td className="p-3 text-right"><Button variant="ghost" size="sm" disabled={archivingId === product.id} onClick={() => void handleArchive(product)}><Archive className="mr-1 h-4 w-4" />{language === 'en' ? 'Archive' : 'Archivieren'}</Button></td>
@@ -183,7 +205,30 @@ const Products: React.FC = () => {
           <DialogHeader><DialogTitle>{language === 'en' ? 'New service product' : 'Neues Serviceprodukt'}</DialogTitle><DialogDescription>{language === 'en' ? 'Create a draft product with one page in the selected catalogue.' : 'Erstelle einen Produktentwurf mit einer Seite im ausgewählten Katalog.'}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2"><Label>{language === 'en' ? 'Product name' : 'Produktname'}</Label><Input value={productName} onChange={(event) => setProductName(event.target.value)} autoFocus /></div>
-            {productSchemas.length > 1 && <div className="space-y-2"><Label>{language === 'en' ? 'Catalogue' : 'Katalog'}</Label><Select value={selectedSchemaId} onValueChange={setSelectedSchemaId}><SelectTrigger><SelectValue placeholder={language === 'en' ? 'Choose catalogue' : 'Katalog auswählen'} /></SelectTrigger><SelectContent>{productSchemas.map((schema) => <SelectItem key={schema.id} value={schema.id}>{schema.name}</SelectItem>)}</SelectContent></Select></div>}
+            <div className="space-y-2">
+              <Label>{language === 'en' ? 'Product page schema' : 'Produktseiten-Schema'}</Label>
+              <Select value={selectedSchemaId} onValueChange={setSelectedSchemaId}>
+                <SelectTrigger><SelectValue placeholder={language === 'en' ? 'Choose a schema for the product page' : 'Schema für die Produktseite auswählen'} /></SelectTrigger>
+                <SelectContent>
+                  {productSchemas.map((schema) => (
+                    <SelectItem key={schema.id} value={schema.id}>
+                      {schema.name}{(schema.frontend_url || schema.integration_requirements?.canonical_frontend_url) ? ` — ${schema.frontend_url || schema.integration_requirements?.canonical_frontend_url}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedSchema && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-3">
+                  <div className="min-w-0">
+                    <p className="font-medium">{selectedSchema.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedSchema.frontend_url || selectedSchema.integration_requirements?.canonical_frontend_url || (language === 'en' ? 'No website connected' : 'Keine Website verbunden')}
+                    </p>
+                  </div>
+                  <ProductSchemaPreview schema={selectedSchema} triggerLabel={language === 'en' ? 'Preview structure' : 'Aufbau ansehen'} />
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>{language === 'en' ? 'Cancel' : 'Abbrechen'}</Button><Button disabled={isCreating || !productName.trim() || !selectedSchemaId} onClick={() => void handleCreate()}>{isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{language === 'en' ? 'Create draft' : 'Entwurf erstellen'}</Button></DialogFooter>
         </DialogContent>
