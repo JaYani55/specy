@@ -328,6 +328,14 @@ export interface TLDRegistryEntry {
   schema_count: number;
   /** Whether the registered schemas all belong to the owning tenant */
   ownership_consistent: boolean;
+  /** Migration-scope preview: what the reassignment RPC would move */
+  page_count?: number;
+  product_count?: number;
+  event_count?: number;
+  /** Distinct companies assigned to the moved events (they move along) */
+  company_count?: number;
+  /** Companies also referenced by events OUTSIDE the domain — these block the move */
+  blocking_company_names?: string[];
 }
 
 // --- Agent Log Types ---

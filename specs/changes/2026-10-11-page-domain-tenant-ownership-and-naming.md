@@ -40,13 +40,18 @@ own. This change introduces a first-class `public.page_domains` registry with:
   and `PATCH /api/schemas/admin/domains/:id` (ownership move via the RPC
   invoked with the **user's bearer token** — the JWT `user_roles` claim must
   reach the database session for the in-function `is_super_admin()` guard;
-  display-name update; 409 for blocked cascades).
+  display-name update; 409 for blocked cascades). The GET endpoint additionally
+  returns a migration-scope preview per domain (`page_count`, `product_count`,
+  `event_count`, `company_count`, `blocking_company_names`) mirroring exactly
+  what the RPC moves.
 - `src/types/pagebuilder.ts` — `TLDRegistryEntry` type; `TLDGroup.domain_registry`.
 - `src/services/pageService.ts` — `getAdminPageDomains()`,
   `updateAdminPageDomain(id, patch)`; `groupSchemasByTLD` accepts a registry map.
 - `src/pages/Pages.tsx` — TLD cards show display-name title with raw domain as
-  description; super-admin-only workspace select (ownership move with
-  confirmation) and Rename dialog; "Mixed ownership" drift badge.
+  description; super-admin-only workspace select that opens a migration-scope
+  **move dialog** (no browser confirm): scope list (schemas/pages/events/
+  products/companies), blocking-company warning, inline error with retry;
+  Rename dialog; "Mixed ownership" drift badge.
 - `src/lib/apiCatalog.ts` — both admin endpoints documented.
 - `specs/features/README.md` — register `page-domains.md`.
 
@@ -64,8 +69,12 @@ referenced by events outside the domain) and the registry row in one
 transaction. The `enforce_event_page_link` constraint trigger on `pages` is
 temporarily disabled inside the transaction to resolve the ordering paradox
 with the event BEFORE trigger; ALTER TABLE is transactional, so a rollback
-re-enables it automatically. No existing data is rewritten except the
-idempotent domain backfill (insert-only, `on conflict do nothing`).
+re-enables it automatically. The catalogue guard triggers reject direct event-
+page writes, so the RPC enables the aggregate escape hatches
+(`specy.event_page_write`, `specy.product_schema_reassignment`) locally for its
+transaction — the same pattern the aggregate services use. No existing data is
+rewritten except the idempotent domain backfill (insert-only,
+`on conflict do nothing`).
 
 ### Runtime
 

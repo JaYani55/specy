@@ -46,9 +46,12 @@ test('Page domains is an ordered migration creating the registry, RLS and the gu
   // The disable must be scoped to the trigger's existence (robust against renames)
   assert.match(migration, /tgname = 'enforce_event_page_link'/);
 
-  // Unassignment is rejected; backfill is idempotent
+  // Unassignment is rejected; backfill is idempotent; aggregate guard
+  // escape-hatch settings are enabled for the duration of the move
   assert.match(migration, /page domains cannot be unassigned/);
   assert.match(migration, /on conflict \(domain_url\) do nothing/);
+  assert.match(migration, /set_config\('specy\.event_page_write', 'on', true\)/);
+  assert.match(migration, /set_config\('specy\.product_schema_reassignment', 'on', true\)/);
 });
 
 test('Registration records the page domain without stealing an already-managed TLD', () => {
@@ -61,6 +64,12 @@ test('Admin endpoints are super-admin-only and map to the registry surfaces', ()
   const domainsRoute = routes.slice(routes.indexOf("schemas.get('/admin/domains'"));
   assert.match(domainsRoute, /requireAppRole\(c, 'super-admin'\)/);
   assert.match(domainsRoute, /ownership_consistent/);
+  // Migration-scope preview powering the dashboard move dialog
+  assert.match(domainsRoute, /page_count:/);
+  assert.match(domainsRoute, /event_count:/);
+  assert.match(domainsRoute, /product_count:/);
+  assert.match(domainsRoute, /company_count:/);
+  assert.match(domainsRoute, /blocking_company_names:/);
   const patchRoute = routes.slice(routes.indexOf("schemas.patch('/admin/domains/:id'"));
   assert.match(patchRoute, /requireAppRole\(c, 'super-admin'\)/);
   // The RPC must be invoked with the user's bearer token so is_super_admin()
@@ -78,8 +87,14 @@ test('The dashboard exposes super-admin TLD management on the /pages cards', () 
   assert.match(pages, /const \{ canViewAdminData \} = usePermissions\(\)/);
   assert.match(pages, /getAdminPageDomains\(\), getVisibleTenants\(\)/);
   assert.match(pages, /onValueChange=\{handleOwnerChange\}/);
-  assert.match(pages, /onUpdateDomain\(registry\.id, \{ tenant_id: tenantId \}\)/);
+  assert.match(pages, /onUpdateDomain\(registry\.id, \{ tenant_id: moveTarget\.id \}\)/);
   assert.match(pages, /onUpdateDomain\(registry\.id, \{ display_name: renameValue\.trim\(\) \|\| null \}\)/);
+  // The owner move uses a migration-scope dialog (no browser confirm), which
+  // stays open on failure so the blocking aggregates can be addressed first.
+  assert.match(pages, /handleConfirmMove/);
+  assert.match(pages, /Migration scope/);
+  assert.match(pages, /blocking_company_names/);
+  assert.doesNotMatch(pages.slice(pages.indexOf('handleOwnerChange'), pages.indexOf('handleConfirmMove')), /window\.confirm/);
   // Display name wins, the raw domain stays visible as description
   assert.match(pages, /registry\?\.display_name\s*\|\|/);
   // Mixed-ownership drift badge

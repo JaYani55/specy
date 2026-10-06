@@ -792,6 +792,9 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
   const [isSaving, setIsSaving] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   const handleUnhook = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -818,18 +821,33 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
   const displayTitle = registry?.display_name
     || (group.domain ? group.domain.replace(/^https?:\/\//, '') : null);
 
-  const handleOwnerChange = async (tenantId: string) => {
+  const handleOwnerChange = (tenantId: string) => {
     if (!registry || tenantId === registry.tenant_id) return;
-    const targetName = tenantOptions.find(t => t.id === tenantId)?.name ?? tenantId;
-    if (!window.confirm(
-      language === 'en'
-        ? `Move "${registry.domain_url}" to workspace "${targetName}"? All schemas registered on this domain, their pages, frontend targets and linked aggregates are moved atomically. Linked aggregates that cannot follow (e.g. events whose company stays in the old workspace) abort the move.`
-        : `"${registry.domain_url}" in den Arbeitsbereich "${targetName}" verschieben? Alle auf dieser Domain registrierten Schemas, ihre Seiten, Frontend-Ziele und verknüpften Aggregate werden atomar mitverschoben. Aggregate, die nicht folgen können (z. B. Veranstaltungen, deren Firma im alten Arbeitsbereich bleibt), brechen die Verschiebung ab.`
-    )) return;
+    // No browser confirm — a proper dialog previews the migration scope and
+    // keeps the error visible for retry (see move dialog below).
+    setMoveError(null);
+    setMoveTarget({
+      id: tenantId,
+      name: tenantOptions.find((t) => t.id === tenantId)?.name ?? tenantId,
+    });
+    setMoveOpen(true);
+  };
 
+  const handleConfirmMove = async () => {
+    if (!registry || !moveTarget) return;
     setIsSaving(true);
+    setMoveError(null);
     try {
-      await onUpdateDomain(registry.id, { tenant_id: tenantId });
+      await onUpdateDomain(registry.id, { tenant_id: moveTarget.id });
+      setMoveOpen(false);
+    } catch (err) {
+      // The dialog stays open so the operator can retry after moving the
+      // blocking aggregates — the database error names them.
+      setMoveError(
+        err instanceof Error
+          ? err.message
+          : (language === 'en' ? 'The move failed.' : 'Die Verschiebung ist fehlgeschlagen.'),
+      );
     } finally {
       setIsSaving(false);
     }
@@ -842,6 +860,8 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
       // Empty input clears back to the default (the domain URL itself)
       await onUpdateDomain(registry.id, { display_name: renameValue.trim() || null });
       setRenameOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : (language === 'en' ? 'Failed to rename domain' : 'Domain konnte nicht umbenannt werden'));
     } finally {
       setIsSaving(false);
     }
@@ -1085,6 +1105,99 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
           </DialogContent>
         </Dialog>
       )}
+
+      {isAdmin && registry && moveTarget && (
+        <Dialog
+          open={moveOpen}
+          onOpenChange={(open) => {
+            if (!isSaving) {
+              setMoveOpen(open);
+              if (!open) setMoveError(null);
+            }
+          }}
+        >
+          <DialogContent onClick={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle>
+                {language === 'en' ? 'Move domain' : 'Domain verschieben'}
+              </DialogTitle>
+              <DialogDescription>
+                {language === 'en'
+                  ? `Move "${registry.domain_url}" to workspace "${moveTarget.name}"? Everything registered on the domain is migrated atomically to the target workspace — the move cannot succeed partially.`
+                  : `"${registry.domain_url}" in den Arbeitsbereich "${moveTarget.name}" verschieben? Alles auf der Domain Registrierte wird atomar in den Ziel-Arbeitsbereich verschoben — eine teilweise Verschiebung gibt es nicht.`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                {language === 'en' ? 'Migration scope' : 'Verschiebeumfang'}
+              </p>
+              <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
+                <li>
+                  {registry.schema_count}{' '}
+                  {language === 'en'
+                    ? (registry.schema_count === 1 ? 'schema' : 'schemas')
+                    : (registry.schema_count === 1 ? 'Schema' : 'Schemas')}
+                </li>
+                <li>
+                  {registry.page_count ?? 0}{' '}
+                  {language === 'en'
+                    ? ((registry.page_count ?? 0) === 1 ? 'page' : 'pages')
+                    : ((registry.page_count ?? 0) === 1 ? 'Seite' : 'Seiten')}
+                </li>
+                <li>
+                  {registry.event_count ?? 0}{' '}
+                  {language === 'en'
+                    ? ((registry.event_count ?? 0) === 1 ? 'event' : 'events')
+                    : ((registry.event_count ?? 0) === 1 ? 'Veranstaltung' : 'Veranstaltungen')}
+                </li>
+                <li>
+                  {registry.product_count ?? 0}{' '}
+                  {language === 'en'
+                    ? ((registry.product_count ?? 0) === 1 ? 'product' : 'products')
+                    : ((registry.product_count ?? 0) === 1 ? 'Produkt' : 'Produkte')}
+                </li>
+                <li>
+                  {registry.company_count ?? 0}{' '}
+                  {language === 'en'
+                    ? ((registry.company_count ?? 0) === 1 ? 'company' : 'companies')
+                    : ((registry.company_count ?? 0) === 1 ? 'Firma' : 'Firmen')}
+                  {' — '}
+                  {language === 'en' ? 'assigned to the moved events' : 'den verschobenen Veranstaltungen zugeordnet'}
+                </li>
+              </ul>
+            </div>
+            {(registry.blocking_company_names?.length ?? 0) > 0 && (
+              <p className="text-xs text-destructive">
+                {language === 'en'
+                  ? `These companies are also used by events outside this domain and block the move: ${registry.blocking_company_names!.join(', ')}. Move those events (or their domain) to the target workspace first.`
+                  : `Diese Firmen werden auch von Veranstaltungen außerhalb dieser Domain genutzt und blockieren die Verschiebung: ${registry.blocking_company_names!.join(', ')}. Verschiebe diese Veranstaltungen (oder ihre Domain) zuerst in den Ziel-Arbeitsbereich.`}
+              </p>
+            )}
+            {moveError && (
+              <p className="text-xs text-destructive whitespace-pre-wrap">{moveError}</p>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => {
+                  setMoveOpen(false);
+                  setMoveError(null);
+                }}
+              >
+                {language === 'en' ? 'Cancel' : 'Abbrechen'}
+              </Button>
+              <Button size="sm" disabled={isSaving} onClick={handleConfirmMove}>
+                {isSaving
+                  ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  : null}
+                {language === 'en' ? 'Move to workspace' : 'In Arbeitsbereich verschieben'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </Collapsible>
   );
 };
@@ -1163,19 +1276,15 @@ const Pages: React.FC = () => {
   }, [activeTenantId, canViewAdminData]);
 
   // Super-admin TLD management: move ownership to another tenant and/or set
-  // an arbitrary display name. Errors surface via toast; the caller resets
-  // its busy state in a finally block.
+  // an arbitrary display name. Errors propagate to the caller (the move dialog
+  // shows them inline for retry; the rename path falls back to a toast).
   const handleUpdateDomain = useCallback(async (
     domainId: string,
     patch: { tenant_id?: string; display_name?: string | null },
   ) => {
-    try {
-      await updateAdminPageDomain(domainId, patch);
-      toast.success(language === 'en' ? 'Domain updated.' : 'Domain aktualisiert.');
-      await fetchAndGroup();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : (language === 'en' ? 'Failed to update domain' : 'Domain konnte nicht aktualisiert werden'));
-    }
+    await updateAdminPageDomain(domainId, patch);
+    toast.success(language === 'en' ? 'Domain updated.' : 'Domain aktualisiert.');
+    await fetchAndGroup();
   }, [fetchAndGroup, language]);
 
   useEffect(() => {

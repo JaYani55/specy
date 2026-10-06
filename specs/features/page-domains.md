@@ -96,8 +96,12 @@ On `/pages`, every TLD card shows:
 - **Title** — `display_name` when set, otherwise the domain host.
 - **Description** — always the raw domain URL (the default assigned name).
 - Super-admin controls (visible only with the super-admin custom claim):
-  - a **workspace select** on the card header that moves TLD ownership after a
-    confirmation dialog describing the atomic cascade;
+  - a **workspace select** on the card header that opens a **move dialog**
+    (no browser `confirm`): it previews the migration scope — schemas, pages,
+    events, products and the companies assigned to the moved events — and
+    warns about companies that would block the move. The dialog stays open on
+    failure and shows the database error inline so the operator can address
+    the blocking aggregates and retry;
   - a **Rename** button opening a dialog for the display name, explaining that
     the domain URL stays unchanged;
   - a **Mixed ownership** warning badge (`Gemischte Zuordnung`) when the
@@ -108,7 +112,7 @@ On `/pages`, every TLD card shows:
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent` |
+| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent`, and the migration-scope preview: `page_count`, `product_count`, `event_count`, `company_count`, `blocking_company_names` |
 | PATCH | `/api/schemas/admin/domains/:id` | super-admin | `{ tenant_id? }` (cascading reassignment) and/or `{ display_name? }` |
 
 Both endpoints require the `super-admin` role (custom claim). The reassignment
@@ -127,7 +131,12 @@ the dashboard API catalog (`src/lib/apiCatalog.ts`).
 - **insert / update / delete** — super-admin only.
 
 Writes from the registration flow and the admin routes use the service client
-and are authorized by their own role checks.
+and are authorized by their own role checks (the reassignment RPC itself is
+invoked with the user's bearer token — see below). Because the catalogue guard
+triggers reject direct writes to event pages, the RPC enables the aggregate
+escape hatches `specy.event_page_write` and `specy.product_schema_reassignment`
+for its transaction (`set_config(…, true)` = local), exactly like the
+event/product aggregate services do.
 
 ## Related documentation
 

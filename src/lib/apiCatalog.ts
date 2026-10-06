@@ -450,7 +450,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     method: 'GET',
     path: '/api/schemas/admin/domains',
     summary: 'List page domains (TLDs) with ownership and naming data',
-    description: 'Super-admin registry view over public.page_domains: every registered frontend origin with its owning tenant, arbitrary display name, schema usage and an ownership_consistent flag (true when all schemas on the domain belong to the owning tenant).',
+    description: 'Super-admin registry view over public.page_domains: every registered frontend origin with its owning tenant, arbitrary display name, schema usage, an ownership_consistent flag (true when all schemas on the domain belong to the owning tenant) and the migration-scope preview (page_count, product_count, event_count, company_count, blocking_company_names) that powers the dashboard move dialog.',
     auth: 'bearer-required',
     mountsAt: '/api/schemas',
     sourceFile: 'api/routes/schemas.ts',
@@ -466,11 +466,16 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     "display_name": null,
     "schema_count": 3,
     "schema_tenant_ids": ["…"],
-    "ownership_consistent": true
+    "ownership_consistent": true,
+    "page_count": 12,
+    "product_count": 5,
+    "event_count": 4,
+    "company_count": 2,
+    "blocking_company_names": []
   }
 ] }`,
     }],
-    notes: ['Requires the super-admin role (custom claim).', 'Rows are created at registration time; display_name falls back to the domain URL.'],
+    notes: ['Requires the super-admin role (custom claim).', 'Rows are created at registration time; display_name falls back to the domain URL.', 'The migration-scope counts mirror exactly what the reassignment RPC moves; blocking_company_names lists companies whose events span domains and would abort the move.'],
     tables: ['page_domains', 'page_schemas'],
   },
   {

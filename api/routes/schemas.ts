@@ -1883,12 +1883,112 @@ schemas.get('/admin/domains', async (c) => {
   if (schemaError) return c.json({ error: schemaError.message }, 500);
 
   const usage = new Map<string, { schemas: number; tenants: Set<string> }>();
+  const schemaIdsByDomain = new Map<string, string[]>();
+  const allSchemaIds: string[] = [];
   for (const row of schemaRows ?? []) {
     if (!row.frontend_url) continue;
     const entry = usage.get(row.frontend_url) ?? { schemas: 0, tenants: new Set<string>() };
     entry.schemas += 1;
     if (row.tenant_id) entry.tenants.add(row.tenant_id);
     usage.set(row.frontend_url, entry);
+
+    const ids = schemaIdsByDomain.get(row.frontend_url) ?? [];
+    ids.push(row.id);
+    schemaIdsByDomain.set(row.frontend_url, ids);
+    allSchemaIds.push(row.id);
+  }
+
+  // ── Migration-scope preview per domain (pages, products, events, companies
+  //    plus companies that would block the move). Powers the dashboard move
+  //    dialog; every count mirrors exactly what the reassignment RPC moves.
+  const domainUrls = (domains ?? []).map((d) => d.domain_url);
+  const scope = new Map<string, {
+    pages: string[];
+    products: number;
+    events: number;
+    companies: string[];
+    blockingCompanies: string[];
+  }>();
+
+  if (allSchemaIds.length > 0) {
+    const { data: pageRows } = await admin
+      .from('pages')
+      .select('id, schema_id, domain_url')
+      .or(
+        `schema_id.in.(${allSchemaIds.join(',')}),domain_url.in.(${domainUrls.map((u) => `"${u}"`).join(',')})`,
+      );
+
+    const schemaIdToDomain = new Map<string, string>();
+    for (const [domain, ids] of schemaIdsByDomain) {
+      for (const id of ids) schemaIdToDomain.set(id, domain);
+    }
+    const pageIdToDomain = new Map<string, string>();
+
+    for (const page of pageRows ?? []) {
+      const domain = page.schema_id
+        ? schemaIdToDomain.get(page.schema_id)
+        : (page.domain_url ?? undefined);
+      if (!domain) continue;
+      const entry = scope.get(domain) ?? { pages: [], products: 0, events: 0, companies: [], blockingCompanies: [] };
+      entry.pages.push(page.id);
+      pageIdToDomain.set(page.id, domain);
+      scope.set(domain, entry);
+    }
+
+    const allPageIds = [...scope.values()].flatMap((entry) => entry.pages);
+    if (allPageIds.length > 0) {
+      const { data: productRows } = await admin
+        .from('mentorbooking_products')
+        .select('product_page_id')
+        .in('product_page_id', allPageIds);
+      for (const product of productRows ?? []) {
+        const domain = product.product_page_id ? pageIdToDomain.get(product.product_page_id) : undefined;
+        if (domain) {
+          const entry = scope.get(domain);
+          if (entry) entry.products += 1;
+        }
+      }
+
+      const { data: eventRows } = await admin
+        .from('mentorbooking_events')
+        .select('id, page_id, company_id')
+        .in('page_id', allPageIds);
+      for (const event of eventRows ?? []) {
+        const domain = event.page_id ? pageIdToDomain.get(event.page_id) : undefined;
+        if (!domain) continue;
+        const entry = scope.get(domain);
+        if (!entry) continue;
+        entry.events += 1;
+        if (event.company_id) entry.companies.push(event.company_id);
+      }
+
+      const companyIds = [...new Set((eventRows ?? []).flatMap((e) => (e.company_id ? [e.company_id] : [])))];
+      if (companyIds.length > 0) {
+        // A company blocks the move when an event outside the moved page set
+        // also references it (the RPC pre-check aborts on those).
+        const { data: referencingEvents } = await admin
+          .from('mentorbooking_events')
+          .select('company_id, page_id')
+          .in('company_id', companyIds);
+        const movedPageIds = new Set(allPageIds);
+        const blockingByCompany = new Map<string, boolean>();
+        for (const row of referencingEvents ?? []) {
+          if (!row.company_id) continue;
+          const isOutside = !row.page_id || !movedPageIds.has(row.page_id);
+          blockingByCompany.set(row.company_id, (blockingByCompany.get(row.company_id) ?? false) || isOutside);
+        }
+        const companyNames = companyIds.length
+          ? (await admin.from('companies').select('id, name').in('id', companyIds)).data ?? []
+          : [];
+        const nameById = new Map(companyNames.map((c) => [c.id, c.name]));
+        for (const entry of scope.values()) {
+          entry.companies = [...new Set(entry.companies)];
+          entry.blockingCompanies = entry.companies
+            .filter((id) => blockingByCompany.get(id))
+            .map((id) => nameById.get(id) ?? id);
+        }
+      }
+    }
   }
 
   return c.json({
@@ -1902,6 +2002,11 @@ schemas.get('/admin/domains', async (c) => {
         ownership_consistent:
           schemaTenants.length === 0
             || (schemaTenants.length === 1 && schemaTenants[0] === (domain.tenant_id ?? '')),
+        page_count: scope.get(domain.domain_url)?.pages.length ?? 0,
+        product_count: scope.get(domain.domain_url)?.products ?? 0,
+        event_count: scope.get(domain.domain_url)?.events ?? 0,
+        company_count: scope.get(domain.domain_url)?.companies.length ?? 0,
+        blocking_company_names: scope.get(domain.domain_url)?.blockingCompanies ?? [],
       };
     }),
   });

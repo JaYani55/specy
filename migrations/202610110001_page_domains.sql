@@ -174,6 +174,14 @@ begin
   --    strict ordering paradox. The constraint trigger is therefore disabled
   --    for the duration of this atomic move; ALTER TABLE is transactional, so
   --    a rollback re-enables it automatically.
+  -- The catalogue guard triggers reject direct writes to event pages (and
+  -- controlled product-page operations) unless the aggregate-service escape
+  -- hatch is on. The domain reassignment IS an authorized aggregate-level
+  -- operation (super-admin gated), so enable both for this transaction — the
+  -- same pattern the event/product aggregate RPCs use.
+  perform set_config('specy.event_page_write', 'on', true);
+  perform set_config('specy.product_schema_reassignment', 'on', true);
+
   if exists (
     select 1 from pg_trigger
     where tgrelid = 'public.pages'::regclass
