@@ -33,6 +33,10 @@ test('Page domains is an ordered migration creating the registry, RLS and the gu
   assert.match(migration, /update public\.pages[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /update public\.mentorbooking_products[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /update public\.mentorbooking_events[\s\S]*?set tenant_id = p_target_tenant_id/);
+  // Companies assigned to the moved events follow their events, with a
+  // guard against companies also referenced by events outside the move.
+  assert.match(migration, /update public\.companies[\s\S]*?set tenant_id = p_target_tenant_id/);
+  assert.match(migration, /is also referenced by events outside this domain/);
   assert.match(migration, /update public\.page_domains[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /grant execute on function public\.reassign_page_domain_tenant\(uuid, uuid\) to authenticated/);
 
@@ -59,7 +63,9 @@ test('Admin endpoints are super-admin-only and map to the registry surfaces', ()
   assert.match(domainsRoute, /ownership_consistent/);
   const patchRoute = routes.slice(routes.indexOf("schemas.patch('/admin/domains/:id'"));
   assert.match(patchRoute, /requireAppRole\(c, 'super-admin'\)/);
-  assert.match(patchRoute, /admin\.rpc\('reassign_page_domain_tenant'/);
+  // The RPC must be invoked with the user's bearer token so is_super_admin()
+  // sees the custom claim inside the database session (not the service client).
+  assert.match(patchRoute, /createSupabaseClient\(c\.env, auth\.token\)[\s\S]*?\.rpc\('reassign_page_domain_tenant'/);
   assert.match(patchRoute, /page domains cannot be unassigned/);
   assert.match(patchRoute, /display_name must be 120 characters or fewer/);
   assert.ok(routes.indexOf("schemas.get('/admin/domains'") < routes.indexOf("schemas.patch('/admin/domains/:id'"));

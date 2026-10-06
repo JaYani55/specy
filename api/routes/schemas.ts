@@ -1944,7 +1944,12 @@ schemas.patch('/admin/domains/:id', async (c) => {
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
       return c.json({ error: 'tenant_id must be a tenant UUID; page domains cannot be unassigned' }, 400);
     }
-    const { error: rpcError } = await admin.rpc('reassign_page_domain_tenant', {
+    // The RPC re-checks the super-admin role from the invoker's JWT inside
+    // the database (same pattern as the /admin logs routes): it must be
+    // invoked with the user's bearer token, not the service client, or
+    // is_super_admin() would evaluate against an empty claim set.
+    const supabase = await createSupabaseClient(c.env, auth.token);
+    const { error: rpcError } = await supabase.rpc('reassign_page_domain_tenant', {
       p_domain_id: domainId,
       p_target_tenant_id: tenantId,
     });

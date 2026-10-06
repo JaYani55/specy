@@ -37,7 +37,9 @@ own. This change introduces a first-class `public.page_domains` registry with:
   row for the frontend origin (ownership assigned only on first sight; unique
   races tolerated).
 - `api/routes/schemas.ts` — super-admin endpoints `GET /api/schemas/admin/domains`
-  and `PATCH /api/schemas/admin/domains/:id` (ownership move via RPC,
+  and `PATCH /api/schemas/admin/domains/:id` (ownership move via the RPC
+  invoked with the **user's bearer token** — the JWT `user_roles` claim must
+  reach the database session for the in-function `is_super_admin()` guard;
   display-name update; 409 for blocked cascades).
 - `src/types/pagebuilder.ts` — `TLDRegistryEntry` type; `TLDGroup.domain_registry`.
 - `src/services/pageService.ts` — `getAdminPageDomains()`,
@@ -56,7 +58,9 @@ New table `public.page_domains` with `updated_at` trigger and RLS; new SECURITY
 DEFINER function `public.reassign_page_domain_tenant` (granted to
 `authenticated`; guarded by `is_super_admin()` from the JWT). The cascade moves
 `page_schemas`, `pages`, `schema_frontend_targets`, `page_content_templates`,
-`mentorbooking_products`, `mentorbooking_events` and the registry row in one
+`mentorbooking_products`, `mentorbooking_events`, the **companies assigned to
+the moved events** (with a pre-check blocking moves when a company is also
+referenced by events outside the domain) and the registry row in one
 transaction. The `enforce_event_page_link` constraint trigger on `pages` is
 temporarily disabled inside the transaction to resolve the ordering paradox
 with the event BEFORE trigger; ALTER TABLE is transactional, so a rollback

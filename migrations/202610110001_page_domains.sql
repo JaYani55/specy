@@ -8,7 +8,8 @@
 -- model —
 --   1. change the ownership of a TLD to a different tenant (the move cascades
 --      to every schema registered on the domain, its pages, frontend targets,
---      content templates and tenant-locked aggregates), and
+--      content templates, tenant-locked aggregates and the companies assigned
+--      to the moved events), and
 --   2. give the TLD an arbitrary display name that is independent of the
 --      domain URL itself (the domain URL stays the default assigned name and
 --      is never rewritten).
@@ -88,6 +89,8 @@ declare
   v_old_tenant_id uuid;
   v_schema_ids uuid[] := '{}'::uuid[];
   v_page_ids uuid[] := '{}'::uuid[];
+  v_company_id uuid;
+  v_company_name text;
 begin
   if not public.is_super_admin() then
     raise exception 'Only super-admins may reassign page domains.' using errcode = '42501';
@@ -125,6 +128,31 @@ begin
     from public.pages
     where schema_id = any(v_schema_ids)
        or (schema_id is null and domain_url = v_domain_url);
+
+  -- 0. Pre-check: companies referenced by the moved events must be free to
+  --    follow. A company that is ALSO referenced by events which are not
+  --    part of this domain move (e.g. events on another domain that stays in
+  --    the old workspace, or events without a public page) would be left
+  --    inconsistent — block the whole move with an actionable message.
+  for v_company_id, v_company_name in
+    select distinct c.id, c.name
+    from public.companies c
+    join public.mentorbooking_events e on e.company_id = c.id
+    where e.page_id is not null
+      and e.page_id = any(v_page_ids)
+      and c.tenant_id is distinct from p_target_tenant_id
+  loop
+    if exists (
+      select 1 from public.mentorbooking_events other
+      where other.company_id = v_company_id
+        and (other.page_id is null or other.page_id <> all(v_page_ids))
+    ) then
+      raise exception
+        'Company "%" is also referenced by events outside this domain; move those events (or their domain) to the target workspace first.',
+        v_company_name
+        using errcode = '22023';
+    end if;
+  end loop;
 
   -- 1. Schemas and their derived rows follow the domain.
   update public.page_schemas
@@ -165,13 +193,31 @@ begin
     set tenant_id = p_target_tenant_id
     where product_page_id = any(v_page_ids);
 
+  -- 4. Companies assigned to the moved events follow their events. This must
+  --    happen BEFORE the event move: validate_event_company_tenant requires
+  --    the company to already sit in the target workspace when the event row
+  --    is updated. The pre-check above guarantees no other event references
+  --    these companies.
+  update public.companies
+    set tenant_id = p_target_tenant_id
+    where id in (
+      select distinct e.company_id
+      from public.mentorbooking_events e
+      where e.company_id is not null
+        and e.page_id is not null
+        and e.page_id = any(v_page_ids)
+    )
+    and tenant_id is distinct from p_target_tenant_id;
+
+  -- 5. Events: page and company are now both in the target workspace, so the
+  --    event validation triggers pass.
   update public.mentorbooking_events
     set tenant_id = p_target_tenant_id
     where page_id = any(v_page_ids);
 
   execute 'alter table public.pages enable trigger enforce_event_page_link';
 
-  -- 4. Domain ownership moves last.
+  -- 6. Domain ownership moves last.
   update public.page_domains
     set tenant_id = p_target_tenant_id
     where id = p_domain_id;

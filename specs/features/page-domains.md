@@ -47,7 +47,14 @@ invoker JWT and performs one atomic transaction:
    (`schema_id is null and domain_url = origin`).
 4. `mentorbooking_products.tenant_id` and `mentorbooking_events.tenant_id` for
    aggregates whose tenant is trigger-locked to the owning page.
-5. `page_domains.tenant_id` last.
+5. `companies.tenant_id` for every company assigned to a moved event — this
+   must happen **before** the event move because
+   `validate_event_company_tenant` requires the company to already sit in the
+   target workspace. A company that is **also** referenced by events outside
+   the moved set (events on another domain that stays behind, or events
+   without a public page) blocks the whole move with an actionable error:
+   those events (or their domain) must move first.
+6. `page_domains.tenant_id` last.
 
 ### Ordering paradox and the event-link constraint trigger
 
@@ -68,11 +75,11 @@ re-enables the trigger automatically — no manual repair path exists.
 
 The move is all-or-nothing. Trigger-locked aggregates that cannot follow abort
 the entire reassignment with a PostgreSQL error, surfaced by the API as
-`409 { "error": "Tenant reassignment failed: …" }`. Typical case: an event
-under the domain whose `company_id` belongs to the old workspace — the company
-must be moved first. There is no partial move and no data loss on failure.
-Unassignment (`tenant_id: null`) is rejected: a TLD always has exactly one
-owning tenant.
+`409 { "error": "Tenant reassignment failed: …" }`. Typical cases: an event
+whose company stays in the old workspace, or a company whose events span
+domains in both workspaces — the blocking entity must move first. There is no
+partial move and no data loss on failure. Unassignment (`tenant_id: null`) is
+rejected: a TLD always has exactly one owning tenant.
 
 ## Display naming (super-admin)
 
@@ -104,8 +111,11 @@ On `/pages`, every TLD card shows:
 | GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent` |
 | PATCH | `/api/schemas/admin/domains/:id` | super-admin | `{ tenant_id? }` (cascading reassignment) and/or `{ display_name? }` |
 
-Both endpoints require the `super-admin` role (custom claim) and are documented
-in the dashboard API catalog (`src/lib/apiCatalog.ts`).
+Both endpoints require the `super-admin` role (custom claim). The reassignment
+RPC is invoked with the **user's bearer token** (same pattern as the super-admin
+log routes): the JWT claim must reach the database session so the in-function
+`is_super_admin()` guard evaluates the caller's roles. Both are documented in
+the dashboard API catalog (`src/lib/apiCatalog.ts`).
 
 ## RLS
 
