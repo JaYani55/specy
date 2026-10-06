@@ -178,7 +178,7 @@ begin
     select 1 from pg_trigger
     where tgrelid = 'public.pages'::regclass
       and tgname = 'enforce_event_page_link'
-      and not tgisdisable
+      and tgenabled <> 'D'  -- 'D' = disabled
   ) then
     execute 'alter table public.pages disable trigger enforce_event_page_link';
   end if;
