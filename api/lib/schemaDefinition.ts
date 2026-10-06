@@ -52,7 +52,11 @@ export function parseSchemaDefinitionPatch(input: unknown): SchemaDefinitionPatc
     if (!['page', 'service-product', 'event'].includes(String(input.entity_kind))) {
       return { ok: false, error: 'entity_kind must be page, service-product, or event.' };
     }
-    patch.entity_kind = input.entity_kind as SchemaEntityKind;
+    // Catalogue unification: 'service-product' is a legacy alias for the
+    // unified catalogue kind 'event' (the migration converted existing rows).
+    // Normalize here so new/updated schemas always land in a state the
+    // catalogue aggregate RPCs accept.
+    patch.entity_kind = (input.entity_kind === 'service-product' ? 'event' : input.entity_kind) as SchemaEntityKind;
   }
   if (Object.prototype.hasOwnProperty.call(input, 'name')) {
     if (typeof input.name !== 'string' || !input.name.trim()) return { ok: false, error: 'name must be a non-empty string.' };
@@ -251,7 +255,15 @@ export async function updateSchemaDefinition(
     }
   }
 
-  const { expected_revision: _expectedRevision, ...update } = patch;
+  // Control flags (expected_revision, allow_reclassification,
+  // expected_page_count) drive the checks above but are NOT columns of
+  // page_schemas — they must never reach the update payload.
+  const {
+    expected_revision: _expectedRevision,
+    allow_reclassification: _allowReclassification,
+    expected_page_count: _expectedPageCount,
+    ...update
+  } = patch;
   const updateData: Record<string, unknown> = { ...update };
   if (requestedScope !== undefined) updateData.content_scope = requestedScope;
   if (patch.integration_requirements && Object.prototype.hasOwnProperty.call(patch.integration_requirements, 'page_target')) {

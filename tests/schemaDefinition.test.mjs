@@ -19,7 +19,8 @@ describe('schema definition revision contract', () => {
     if (result.ok) {
       assert.equal(result.patch.expected_revision, 4);
       assert.deepEqual(result.patch.schema, schema);
-      assert.equal(result.patch.entity_kind, 'service-product');
+      // Catalogue unification: 'service-product' normalizes to 'event'.
+      assert.equal(result.patch.entity_kind, 'event');
     }
   });
 

@@ -224,10 +224,25 @@ begin
   loop
     if v_product_page_id is not null
       and v_product_page_id <> all(v_page_ids) then
-      raise exception
-        'Product "%" is linked to a page on another domain; include that domain in this move or move it first.',
-        v_product_name
-        using errcode = '22023';
+      -- The page may sit on another domain OR on a domain-less schema (no
+      -- registry row, nothing to include). Give an actionable message for
+      -- both cases.
+      if exists (
+        select 1 from public.pages p
+        join public.page_schemas s on s.id = p.schema_id
+        where p.id = v_product_page_id
+          and s.frontend_url is not null
+      ) then
+        raise exception
+          'Product "%" is linked to a page on another domain; include that domain in this move or move it first.',
+          v_product_name
+          using errcode = '22023';
+      else
+        raise exception
+          'Product "%" is linked to a page whose schema is not connected to any domain. Delete that page/product (or connect its schema to a domain) before moving this domain.',
+          v_product_name
+          using errcode = '22023';
+      end if;
     end if;
     if exists (
       select 1 from public.mentorbooking_events other

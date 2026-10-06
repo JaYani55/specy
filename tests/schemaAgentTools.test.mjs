@@ -100,7 +100,9 @@ test('schema definition patch parser enforces revisioned classification metadata
   if (result.ok) {
     assert.equal(result.patch.expected_revision, 8);
     assert.deepEqual(result.patch.schema, schema);
-    assert.equal(result.patch.entity_kind, 'service-product');
+    // Catalogue unification: the legacy 'service-product' alias normalizes to
+    // the unified catalogue kind 'event'.
+    assert.equal(result.patch.entity_kind, 'event');
   }
   assert.equal(parseSchemaDefinitionPatch({ expected_revision: 0, schema: {} }).ok, false);
   assert.equal(parseSchemaDefinitionPatch({ expected_revision: 1, entity_kind: 'product' }).ok, false);

@@ -13,6 +13,63 @@ own. This change introduces a first-class `public.page_domains` registry with:
    the domain URL itself, which stays unchanged and remains the default
    assigned name (empty/null falls back to the domain host).
 
+## Follow-up fixes (same day): migration fallout
+
+Live use surfaced four defects around the migration/rebuild flow:
+
+1. **Product creation was broken by the catalogue unification** — the API
+   eligibility checks in `api/lib/productAggregateService.ts` still required
+   the retired `entity_kind = 'service-product'` while the unified
+   `create_service_product_aggregate` RPC requires `'event'`. No entity kind
+   satisfied both layers → `specy_products_create` returned
+   `409 "Schema is not an eligible catalogue collection"` for every kind. The
+   API layer now requires the unified catalogue kind `'event'` +
+   `page-collection`, and the legacy `'service-product'` alias is normalized
+   to `'event'` at every entry point (schema creation, definition updates,
+   MCP) so new schemas always satisfy the RPC guards.
+2. **`allow_reclassification` caused HTTP 500** — the control flags
+   (`allow_reclassification`, `expected_page_count`) leaked from the parsed
+   patch into the Supabase update payload ("Could not find the
+   'allow_reclassification' column"). They are now stripped before the
+   update.
+3. **The destructive product-delete cascade was invisible in the dashboard** —
+   the schema console's page-delete dialog branched on `schema.entity_kind`,
+   so a product-owned page on an ordinary/unassigned schema showed the generic
+   "page and content are deleted" text while the delete actually removed the
+   product WITH every linked active event and its public page (including event
+   pages on other schemas/domains — how the migrated event pages were
+   destroyed). The dialog now resolves ownership up front
+   (`openDeletePageDialog`) and names the blast radius (affected event pages
+   listed). Migration guidance and tool descriptions already require explicit
+   confirmation; the dashboard now carries the same warning.
+4. **`specy_pages_schemas_get` with a tenant-local slug returned PostgREST's
+   cryptic "Cannot coerce the result to a single JSON object"** — the schema
+   tools used `.single()` on an `api_slug` lookup. They now resolve via
+   `maybeSingle` with a tenant-local-slug fallback (unique across visible
+   workspaces) and actionable errors naming `specy_pages_schemas_list`.
+
+Additionally the domain-move pre-check now distinguishes "product page on
+another domain" (include that domain) from "product page on a domain-less
+schema" (delete the page/product or connect its schema to a domain first).
+
+### Files changed (follow-up)
+
+- `api/lib/schemaDefinition.ts` — strip control flags from the update payload;
+  normalize `entity_kind` to the unified catalogue kind.
+- `api/lib/schemaCreation.ts` — normalize `entity_kind` on creation.
+- `api/lib/productAggregateService.ts` — unified catalogue eligibility
+  (`entity_kind = 'event'`) in `createProductAggregate` and
+  `loadProductSchema`.
+- `api/routes/mcp.ts` — `resolveSchemaForTool` helper (api_slug → tenant-local
+  fallback, actionable errors) used by the page/schema MCP tools.
+- `src/pages/PagesSchemaDetail.tsx` — ownership-resolved delete dialog warning
+  listing affected event pages.
+- `migrations/202610110001_page_domains.sql` — differentiated pre-check
+  message for domain-less product pages.
+- `specs/features/service-products.md` — eligibility contract documented.
+- `tests/pageDomains.test.mjs`, `tests/schemaAgentTools.test.mjs`,
+  `tests/schemaDefinition.test.mjs` — updated/added contract checks.
+
 ## Files Added
 
 - `migrations/202610110001_page_domains.sql` — `public.page_domains` table

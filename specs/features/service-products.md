@@ -26,6 +26,8 @@ The legacy product form remains the standard event-product overview. Its product
 
 A product catalogue is a tenant-owned `page-collection` catalogue schema. Since the catalogue unification, `entity_kind = event` is the catalogue kind and holds both the product's canonical page and its event pages; the legacy `service-product` kind is migrated to `event` and remains accepted defensively. The schema JSON defines one product entry's presentation contract. `pages.content` is arbitrary developer-owned JSON and remains separate from operational product identity/status.
 
+**Eligibility contract (post-unification):** `specy_products_create` requires `entity_kind = 'event'` with `content_scope = 'page-collection'` — enforced consistently by the API layer (`createProductAggregate`/`loadProductSchema`) and the `create_service_product_aggregate` RPC. The legacy `service-product` kind is normalized to `'event'` at every entry point (schema creation, `specy_pages_schemas_update_definition`, Schema Editor purpose selector), so a product schema always lands in a state the catalogue RPCs accept. Reclassification with pages still requires the `allow_reclassification` flag plus the matching `expected_page_count`; both are control flags and never reach the database update payload.
+
 Generic page create/update is rejected for this classification. Database constraint-trigger checks also prevent a product-schema page from committing without a same-tenant product row. Product/editor entry points use aggregate operations.
 
 ## Aggregate identity and operations

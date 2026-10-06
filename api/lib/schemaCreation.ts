@@ -97,7 +97,10 @@ export async function createPendingSchema(
     tenantId = typeof currentTenantId === 'string' ? currentTenantId : null;
   }
   const schemaSlug = await ensureUniqueSchemaSlug(client, input.slug || input.name, tenantId);
-  const entityKind = input.entity_kind ?? 'page';
+  // Catalogue unification: 'service-product' is a legacy alias for the
+  // unified catalogue kind 'event' — normalize on creation so new schemas
+  // satisfy the catalogue aggregate RPC guards from the start.
+  const entityKind = (input.entity_kind ?? 'page') === 'service-product' ? 'event' : (input.entity_kind ?? 'page');
   const contentScope = input.content_scope ?? 'page-collection';
   const integrationRequirements = normalizeSchemaIntegrationRequirements(input.integration_requirements);
   if (entityKind !== 'page' && !tenantId) {

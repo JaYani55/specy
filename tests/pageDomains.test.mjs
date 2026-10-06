@@ -6,6 +6,7 @@ import { MIGRATION_ORDER_CORE } from '../scripts/lib/migration-order.mjs';
 const migration = await readFile('migrations/202610110001_page_domains.sql', 'utf8');
 const registration = await readFile('api/lib/schemaRegistration.ts', 'utf8');
 const routes = await readFile('api/routes/schemas.ts', 'utf8');
+const mcpRoutes = await readFile('api/routes/mcp.ts', 'utf8');
 const pageService = await readFile('src/services/pageService.ts', 'utf8');
 const pages = await readFile('src/pages/Pages.tsx', 'utf8');
 const pagesDetail = await readFile('src/pages/PagesSchemaDetail.tsx', 'utf8');
@@ -138,6 +139,44 @@ test('Unused schemas can be permanently deleted by super-admins, with guards', (
   assert.match(pagesDetail, /tenant_id: product\.tenant_id/);
   // Real error messages surface instead of a generic failure toast.
   assert.match(pagesDetail, /error instanceof Error \? error\.message : \(language === 'en' \? 'Failed to update status'/);
+});
+
+test('Catalogue unification fixes: product eligibility, reclassification payload, MCP schema resolution', async () => {
+  const schemaDefinition = await readFile('api/lib/schemaDefinition.ts', 'utf8');
+  const schemaCreation = await readFile('api/lib/schemaCreation.ts', 'utf8');
+  const productAggregateService = await readFile('api/lib/productAggregateService.ts', 'utf8');
+
+  // The API eligibility check must match the unified catalogue model
+  // (entity_kind 'event') — the retired 'service-product' check made product
+  // creation impossible after the unification migration.
+  assert.match(productAggregateService, /schema\.entity_kind !== 'event' \|\| schema\.content_scope !== 'page-collection'/);
+  assert.match(productAggregateService, /Catalogue schemas use entity_kind "event"/);
+  assert.doesNotMatch(productAggregateService, /entity_kind !== 'service-product'/);
+
+  // Control flags must never reach the SQL update payload (the
+  // allow_reclassification column does not exist → HTTP 500).
+  assert.match(schemaDefinition, /allow_reclassification: _allowReclassification,/);
+  assert.match(schemaDefinition, /expected_page_count: _expectedPageCount,/);
+
+  // New schemas normalize the legacy alias so catalogue RPCs accept them.
+  assert.match(schemaCreation, /=== 'service-product' \? 'event' : \(input\.entity_kind \?\? 'page'\)/);
+  assert.match(schemaDefinition, /=== 'service-product' \? 'event' : input\.entity_kind/);
+
+  // MCP schema tools resolve via maybeSingle with a clear api_slug error and
+  // a tenant-local fallback instead of the cryptic ".single()" coercion
+  // failure.
+  assert.match(mcpRoutes, /resolveSchemaForTool = async <T = any>/);
+  assert.match(mcpRoutes, /tenant-local slugs only resolve when unique across visible workspaces/);
+  assert.match(mcpRoutes, /matches \$\{byLocalSlug\.length\} schemas across visible workspaces/);
+});
+
+test('Page-delete dialog warns from resolved ownership, not schema kind', () => {
+  assert.match(pagesDetail, /const openDeletePageDialog = async \(pageId: string\)/);
+  assert.match(pagesDetail, /kind: 'product', eventPageNames \}/);
+  assert.match(pagesDetail, /page_id as string\)\.filter\(Boolean\)/);
+  assert.match(pagesDetail, /void openDeletePageDialog\(page\.id\)/);
+  assert.match(pagesDetail, /ALLEN verknüpften Veranstaltungen/);
+  assert.doesNotMatch(pagesDetail, /schema\.entity_kind === 'service-product'\s*\?\s*language/);
 });
 
 test('Both admin endpoints are registered in the API catalog and feature docs', () => {

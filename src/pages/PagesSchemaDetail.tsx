@@ -76,6 +76,7 @@ const PagesSchemaDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<'online' | 'offline' | 'checking' | null>(null);
   const [deletePageId, setDeletePageId] = useState<string | null>(null);
+  const [deletePageWarning, setDeletePageWarning] = useState<{ kind: 'product' | 'plain' | 'unknown'; eventPageNames?: string[] } | null>(null);
   const [deleteSchemaOpen, setDeleteSchemaOpen] = useState(false);
   const [isDeletingSchema, setIsDeletingSchema] = useState(false);
   const [isStartingRegistration, setIsStartingRegistration] = useState(false);
@@ -152,12 +153,12 @@ const PagesSchemaDetail: React.FC = () => {
    * change must resolve the owner by page id, not by schema kind.
    */
   const resolvePageOwner = async (pageId: string): Promise<{
-    product: { integration_id: string; version: number; tenant_id: string | null } | null;
+    product: { id: number; integration_id: string; version: number; tenant_id: string | null } | null;
     event: { id: string; tenant_id: string | null } | null;
   }> => {
     const { data: product, error: productError } = await supabase
       .from('mentorbooking_products')
-      .select('integration_id, version, tenant_id')
+      .select('id, integration_id, version, tenant_id')
       .eq('product_page_id', pageId)
       .is('retired_at', null)
       .maybeSingle();
@@ -174,6 +175,42 @@ const PagesSchemaDetail: React.FC = () => {
       product: product ?? null,
       event: event ?? null,
     };
+  };
+
+  /**
+   * Resolves the blast radius before showing the delete confirmation:
+   * deleting a product-owned page removes the product WITH every linked
+   * active event and its public page — including event pages on other
+   * schemas/domains. The dialog must say so explicitly.
+   */
+  const openDeletePageDialog = async (pageId: string) => {
+    setDeletePageId(pageId);
+    setDeletePageWarning(null);
+    try {
+      const { product } = await resolvePageOwner(pageId);
+      if (product) {
+        const { data: linkedEvents, error: linkedEventsError } = await supabase
+          .from('mentorbooking_events')
+          .select('page_id')
+          .eq('product_id', product.id);
+        if (linkedEventsError) throw new Error(linkedEventsError.message);
+        const eventPageIds = (linkedEvents ?? []).map((e) => e.page_id as string).filter(Boolean);
+        let eventPageNames: string[] = [];
+        if (eventPageIds.length > 0) {
+          const { data: eventPages, error: eventPagesError } = await supabase
+            .from('pages')
+            .select('id, name')
+            .in('id', eventPageIds);
+          if (eventPagesError) throw new Error(eventPagesError.message);
+          eventPageNames = (eventPages ?? []).map((p) => p.name);
+        }
+        setDeletePageWarning({ kind: 'product', eventPageNames });
+      } else {
+        setDeletePageWarning({ kind: 'plain' });
+      }
+    } catch {
+      setDeletePageWarning({ kind: 'unknown' });
+    }
   };
 
   const handleDeletePage = async () => {
@@ -850,7 +887,7 @@ const PagesSchemaDetail: React.FC = () => {
                             )}
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => setDeletePageId(page.id)}
+                              onClick={() => void openDeletePageDialog(page.id)}
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
                               {language === 'en' ? 'Delete' : 'Löschen'}
@@ -875,14 +912,14 @@ const PagesSchemaDetail: React.FC = () => {
               {language === 'en' ? 'Delete Page?' : 'Seite löschen?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {schema.entity_kind === 'service-product'
+              {deletePageWarning?.kind === 'product'
                 ? language === 'en'
-                  ? 'This action cannot be undone. If the page is the canonical page of a product, the product with its events, archive history and the page are deleted.'
-                  : 'Diese Aktion kann nicht rückgängig gemacht werden. Ist die Seite die kanonische Seite eines Produkts, werden das Produkt mit seinen Veranstaltungen, Archivdaten und die Seite gelöscht.'
-                : schema.entity_kind === 'event'
+                  ? `This page is the canonical page of a product. Deleting it removes the product with ALL its linked events and their public pages — including events/pages on other schemas or domains${deletePageWarning.eventPageNames?.length ? ` (affected: ${deletePageWarning.eventPageNames.join(', ')})` : ''}. This cannot be undone.`
+                  : `Diese Seite ist die kanonische Seite eines Produkts. Das Löschen entfernt das Produkt mit ALLEN verknüpften Veranstaltungen und deren öffentlichen Seiten — auch auf anderen Schemas/Domains${deletePageWarning.eventPageNames?.length ? ` (betroffen: ${deletePageWarning.eventPageNames.join(', ')})` : ''}. Dies kann nicht rückgängig gemacht werden.`
+                : deletePageWarning?.kind === 'unknown'
                   ? language === 'en'
-                    ? 'This action cannot be undone. If the page is linked to an event, that event is deleted together with the page. Unlinked pages are removed on their own.'
-                    : 'Diese Aktion kann nicht rückgängig gemacht werden. Ist die Seite mit einer Veranstaltung verknüpft, wird auch diese gelöscht. Verwaiste Seiten werden einzeln entfernt.'
+                    ? 'The page ownership could not be verified. If this page is linked to a product or event, deleting it removes that aggregate with it. This action cannot be undone.'
+                    : 'Die Seitenverknüpfung konnte nicht geprüft werden. Ist die Seite mit einem Produkt oder einer Veranstaltung verknüpft, wird dieses Aggregat mitgelöscht. Diese Aktion kann nicht rückgängig gemacht werden.'
                   : language === 'en'
                     ? 'This action cannot be undone. The page and all its content will be permanently deleted.'
                     : 'Diese Aktion kann nicht rückgängig gemacht werden. Die Seite und alle Inhalte werden dauerhaft gelöscht.'}

@@ -241,6 +241,41 @@ async function createMcpServerWithTools(
   const isAuthenticated = Boolean(authSession?.token);
 
   const supabase = await createSupabaseClient(env, authToken ?? undefined);
+
+  /**
+   * Resolves a schema by its stable api_slug, falling back to the tenant-local
+   * slug. PostgREST's ".single()" turns a zero-row lookup into the cryptic
+   * "Cannot coerce the result to a single JSON object" — and tenant-local
+   * slugs can match multiple workspaces after migrations. This returns a
+   * clear, actionable error instead.
+   */
+  const resolveSchemaForTool = async <T = any>(
+    schemaSlug: string,
+    projection: string,
+  ): Promise<{ schema: T | null; error?: string }> => {
+    const { data: byApiSlug, error: apiSlugError } = await supabase
+      .from('page_schemas')
+      .select(projection)
+      .eq('api_slug', schemaSlug)
+      .maybeSingle();
+    if (apiSlugError) return { schema: null, error: apiSlugError.message };
+    if (byApiSlug) return { schema: byApiSlug as unknown as T };
+
+    const { data: byLocalSlug, error: localSlugError } = await supabase
+      .from('page_schemas')
+      .select(projection)
+      .eq('slug', schemaSlug)
+      .order('updated_at', { ascending: false });
+    if (localSlugError) return { schema: null, error: localSlugError.message };
+    if (!byLocalSlug?.length) {
+      return { schema: null, error: `Schema "${schemaSlug}" not found. Use the stable api_slug from specy_pages_schemas_list — tenant-local slugs only resolve when unique across visible workspaces.` };
+    }
+    if (byLocalSlug.length > 1) {
+      return { schema: null, error: `"${schemaSlug}" matches ${byLocalSlug.length} schemas across visible workspaces (tenant-local slug). Use the stable api_slug from specy_pages_schemas_list instead.` };
+    }
+    return { schema: byLocalSlug[0] as unknown as T };
+  };
+
   const callProductOperation = async (operation: () => Promise<unknown>) => {
     try {
       const result = await operation();
@@ -487,13 +522,9 @@ async function createMcpServerWithTools(
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Authentication required. Use the MCP client OAuth flow first.' }, null, 2) }] };
       }
 
-      const { data: schema, error: schemaError } = await supabase
-        .from('page_schemas')
-        .select('id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope, entity_kind, definition_revision')
-        .eq('api_slug', schema_slug)
-        .single();
-      if (schemaError || !schema) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: schemaError?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
+      const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, slug, api_slug, tenant_id, frontend_url, slug_structure, content_scope, entity_kind, definition_revision');
+      if (resolveError || !schema) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
       }
 
       if (schema.content_scope === 'single-page') {
@@ -629,12 +660,8 @@ async function createMcpServerWithTools(
       '[specy-pages > schemas] View one full schema definition and its safe system metadata. Secrets and registration codes are never returned.',
       { schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list') },
       async ({ schema_slug }) => {
-        const { data: schema, error } = await supabase
-          .from('page_schemas')
-          .select('id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, created_at, updated_at')
-          .eq('api_slug', schema_slug)
-          .single();
-        if (error || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, slug, api_slug, tenant_id, name, description, schema, llm_instructions, registration_status, is_default, frontend_url, revalidation_endpoint, slug_structure, integration_requirements, content_scope, page_target, entity_kind, definition_revision, editor_config, created_at, updated_at');
+        if (resolveError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
 
         const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);
         return {
@@ -666,12 +693,8 @@ async function createMcpServerWithTools(
         include_content: z.boolean().optional().describe('Include full arbitrary JSON page content; defaults to false.'),
       },
       async ({ schema_slug, include_content }) => {
-        const { data: schema, error: schemaError } = await supabase
-          .from('page_schemas')
-          .select('id, api_slug')
-          .eq('api_slug', schema_slug)
-          .single();
-        if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, api_slug');
+        if (resolveError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
 
         const projection = include_content
           ? 'id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at'
@@ -694,8 +717,8 @@ async function createMcpServerWithTools(
         page_id: z.string().uuid().describe('Page UUID from specy_pages_schemas_list_pages'),
       },
       async ({ schema_slug, page_id }) => {
-        const { data: schema } = await supabase.from('page_schemas').select('id').eq('api_slug', schema_slug).single();
-        if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id');
+        if (resolveError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
         const { data: page, error } = await supabase
           .from('pages')
           .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
@@ -722,12 +745,8 @@ async function createMcpServerWithTools(
         event: eventPageCreateDetailsSchema.optional().describe('Required for event schemas; these operational fields are separate from page content.'),
       },
       async ({ schema_slug, name, slug, content, status, domain_url, tenant_id, expected_definition_revision, event }) => {
-        const { data: schema, error: schemaError } = await supabase
-          .from('page_schemas')
-          .select('id, api_slug, slug, tenant_id, content_scope, entity_kind, definition_revision')
-          .eq('api_slug', schema_slug)
-          .single();
-        if (schemaError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, api_slug, slug, tenant_id, content_scope, entity_kind, definition_revision');
+        if (resolveError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
         if (schema.content_scope === 'single-page') {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is a single-page schema; edit its existing page record instead of adding another page.' }, null, 2) }] };
         }
@@ -825,7 +844,8 @@ async function createMcpServerWithTools(
         expected_page_updated_at: z.string().min(1).optional().describe('Page updated_at from the latest page read; required for event pages.'),
       },
       async ({ schema_slug, page_id, content, name, slug, status, domain_url, tenant_id, expected_definition_revision, expected_page_updated_at }) => {
-        const { data: schema } = await supabase.from('page_schemas').select('id, tenant_id, entity_kind, definition_revision').eq('api_slug', schema_slug).single();
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, tenant_id, entity_kind, definition_revision');
+        if (resolveError || !schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError }, null, 2) }] };
         if (!schema) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
         if (schema.entity_kind === 'event' || schema.entity_kind === 'service-product') {
           if (!tenant_id || tenant_id !== schema.tenant_id || expected_definition_revision === undefined || !expected_page_updated_at) {
@@ -1069,13 +1089,9 @@ async function createMcpServerWithTools(
         page_id: z.string().uuid().optional().describe('Page UUID from specy_pages_schemas_list_pages. Omit to only report the preview configuration.'),
       },
       async ({ schema_slug, page_id }) => {
-        const { data: schema, error: schemaError } = await supabase
-          .from('page_schemas')
-          .select('id, api_slug, slug, tenant_id, frontend_url, integration_requirements')
-          .eq('api_slug', schema_slug)
-          .single();
-        if (schemaError || !schema) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        const { schema, error: resolveError } = await resolveSchemaForTool(schema_slug, 'id, api_slug, slug, tenant_id, frontend_url, integration_requirements');
+        if (resolveError || !schema) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: resolveError || `Schema "${schema_slug}" not found.` }, null, 2) }] };
         }
 
         const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);

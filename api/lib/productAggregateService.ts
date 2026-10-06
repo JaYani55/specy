@@ -86,8 +86,12 @@ export async function createProductAggregate(client: UserClient, input: CreateSe
     .maybeSingle();
   if (schemaError) throwDatabaseError(schemaError);
   if (!schema || schema.tenant_id !== input.tenant_id) throw new ProductAggregateError('Schema not found in the requested workspace.', 404, 'P0002');
-  if (schema.entity_kind !== 'service-product' || schema.content_scope !== 'page-collection') {
-    throw new ProductAggregateError('Schema is not an eligible service-product collection.', 409, '23514');
+  // Catalogue unification: catalogue schemas carry entity_kind 'event'
+  // (the legacy 'service-product' kind was converted by migration) and are
+  // classified per page by their linked aggregate. Must match the guard in
+  // create_service_product_aggregate.
+  if (schema.entity_kind !== 'event' || schema.content_scope !== 'page-collection') {
+    throw new ProductAggregateError('Schema is not an eligible catalogue collection. Catalogue schemas use entity_kind "event" with page-collection content scope.', 409, '23514');
   }
   if (schema.definition_revision !== input.expected_definition_revision) {
     throw new ProductAggregateError('Schema definition revision conflict.', 409, '40001');
@@ -113,8 +117,8 @@ async function loadProductSchema(client: UserClient, tenantId: string, pageSchem
     .eq('id', pageSchemaId)
     .maybeSingle();
   if (error) throwDatabaseError(error);
-  if (!schema || schema.tenant_id !== tenantId || schema.entity_kind !== 'service-product') {
-    throw new ProductAggregateError('Product schema not found in the requested workspace.', 404, 'P0002');
+  if (!schema || schema.tenant_id !== tenantId || schema.entity_kind !== 'event') {
+    throw new ProductAggregateError('Catalogue schema not found in the requested workspace (catalogue schemas use entity_kind "event").', 404, 'P0002');
   }
   return schema;
 }
