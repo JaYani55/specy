@@ -37,6 +37,7 @@ import {
   getRevalidationSecretStatus,
   setRevalidationSecret,
   deleteRevalidationSecret,
+  deleteSchema,
   type RevalidationSecretStatus,
   type RevalidationResult,
 } from '@/services/pageService';
@@ -76,6 +77,8 @@ const PagesSchemaDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<'online' | 'offline' | 'checking' | null>(null);
   const [deletePageId, setDeletePageId] = useState<string | null>(null);
+  const [deleteSchemaOpen, setDeleteSchemaOpen] = useState(false);
+  const [isDeletingSchema, setIsDeletingSchema] = useState(false);
   const [isStartingRegistration, setIsStartingRegistration] = useState(false);
   const [revalidationSecretStatus, setRevalidationSecretStatus] = useState<RevalidationSecretStatus | null>(null);
   const [revalidationNotice, setRevalidationNotice] = useState<{ pageSlug: string; result: RevalidationResult } | null>(null);
@@ -315,6 +318,23 @@ const PagesSchemaDetail: React.FC = () => {
     }
   };
 
+  // Permanent schema deletion (super-admin). Only offered while the schema
+  // has no pages — the server re-checks this and refuses default schemas.
+  const handleDeleteSchema = async () => {
+    if (!schema) return;
+    setIsDeletingSchema(true);
+    try {
+      await deleteSchema(schema.api_slug);
+      toast.success(language === 'en' ? 'Schema deleted' : 'Schema gelöscht');
+      navigate('/pages');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : (language === 'en' ? 'Failed to delete schema' : 'Fehler beim Löschen des Schemas'));
+      setDeleteSchemaOpen(false);
+    } finally {
+      setIsDeletingSchema(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -374,6 +394,20 @@ const PagesSchemaDetail: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
+          {permissions.canViewAdminData && (
+            <Button
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+              disabled={pages.length > 0}
+              title={pages.length > 0
+                ? (language === 'en' ? 'Delete the schema pages first.' : 'Lösche zuerst die Seiten des Schemas.')
+                : undefined}
+              onClick={() => setDeleteSchemaOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {language === 'en' ? 'Delete Schema' : 'Schema löschen'}
+            </Button>
+          )}
           <Button variant="outline" onClick={() => navigate(`${getSchemaConsolePath(schema)}/settings`)}>
             <Settings className="h-4 w-4 mr-2" />
             {language === 'en' ? 'Schema Settings' : 'Schema-Einstellungen'}
@@ -858,6 +892,35 @@ const PagesSchemaDetail: React.FC = () => {
             </AlertDialogCancel>
             <AlertDialogAction onClick={handleDeletePage} className="bg-destructive text-destructive-foreground">
               {language === 'en' ? 'Delete' : 'Löschen'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Schema deletion confirmation dialog (super-admin) */}
+      <AlertDialog open={deleteSchemaOpen} onOpenChange={setDeleteSchemaOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {language === 'en' ? 'Delete Schema?' : 'Schema löschen?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {language === 'en'
+                ? `This permanently deletes "${schema.name}" with its field definitions, frontend targets and content templates. This action cannot be undone. Default schemas cannot be deleted.`
+                : `Dies löscht "${schema.name}" dauerhaft samt Felddefinitionen, Frontend-Zielen und Inhaltsvorlagen. Diese Aktion kann nicht rückgängig gemacht werden. Standardschemas können nicht gelöscht werden.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingSchema}>
+              {language === 'en' ? 'Cancel' : 'Abbrechen'}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteSchema}
+              disabled={isDeletingSchema}
+              className="bg-destructive text-destructive-foreground"
+            >
+              {isDeletingSchema && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {language === 'en' ? 'Delete permanently' : 'Endgültig löschen'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

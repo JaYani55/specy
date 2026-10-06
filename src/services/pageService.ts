@@ -461,13 +461,25 @@ export const updateSchema = async (
   return body.schema;
 };
 
-export const deleteSchema = async (id: string): Promise<void> => {
-  const { error } = await supabase
-    .from('page_schemas')
-    .update({ registration_status: 'archived' })
-    .eq('id', id);
+/**
+ * Permanently deletes an unused schema (super-admin only, enforced by the
+ * API). Refuses schemas with attached pages or default schemas — the error
+ * carries the actionable reason. Frontend targets, schema specs and content
+ * templates cascade; the page-domain registry row is kept.
+ */
+export const deleteSchema = async (apiSlug: string): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
 
-  if (error) throw new Error(error.message);
+  const response = await fetch(`${API_URL}/api/schemas/${apiSlug}`, {
+    method: 'DELETE',
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? 'Failed to delete schema');
+  }
 };
 
 export const unhookSchema = async (schemaSlug: string): Promise<void> => {

@@ -47,7 +47,12 @@ own. This change introduces a first-class `public.page_domains` registry with:
   event-referenced products without a canonical page.
 - `src/types/pagebuilder.ts` — `TLDRegistryEntry` type; `TLDGroup.domain_registry`.
 - `src/services/pageService.ts` — `getAdminPageDomains()`,
-  `updateAdminPageDomain(id, patch)`; `groupSchemasByTLD` accepts a registry map.
+  `updateAdminPageDomain(id, patch)`; `groupSchemasByTLD` accepts a registry map;
+  `deleteSchema(apiSlug)` now performs a guarded hard delete through the API
+  (previously an unused soft-archive helper).
+- `src/pages/PagesSchemaDetail.tsx` — destructive **Schema löschen** action
+  (super-admin, disabled while pages are attached) with confirmation dialog;
+  navigates back to `/pages` after deletion.
 - `src/pages/Pages.tsx` — TLD cards show display-name title with raw domain as
   description; super-admin-only workspace select that opens a migration-scope
   **move dialog** (no browser confirm): scope list (schemas/pages/events/
@@ -89,7 +94,10 @@ there is no partial move.
 
 ### API surface
 
-Two new super-admin-only endpoints (documented in `src/lib/apiCatalog.ts`).
+Two new super-admin-only endpoints (documented in `src/lib/apiCatalog.ts`),
+plus a super-admin-only `DELETE /api/schemas/:slug` for permanent deletion of
+unused schemas (guards: default schemas and schemas with attached pages are
+refused; secret removed, targets/specs/templates cascade, registry row kept).
 Unassignment of a TLD is intentionally unsupported (`tenant_id` must be a
 tenant UUID).
 

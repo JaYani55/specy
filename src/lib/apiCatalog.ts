@@ -396,6 +396,27 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     tables: ['page_schemas', 'schema_frontend_targets', 'managed_secrets'],
   },
   {
+    id: 'schema-delete',
+    tag: 'Schemas',
+    method: 'DELETE',
+    path: '/api/schemas/:slug',
+    summary: 'Permanently delete an unused schema',
+    description: 'Super-admin deletion of a page schema that is no longer used. Refuses default schemas and schemas with attached pages (delete those pages first — a product/event page delete removes its aggregate with it). Removes the schema, its frontend targets, schema specs and content templates; clears its managed revalidation secret. The page-domain registry row is kept so a later registration preserves ownership and display name.',
+    auth: 'bearer-required',
+    mountsAt: '/api/schemas',
+    sourceFile: 'api/routes/schemas.ts',
+    logging: 'agentLogger',
+    parameters: [
+      { name: 'slug', in: 'path', required: true, type: 'string', description: 'Stable schema API identifier (api_slug).' },
+    ],
+    responseExamples: [
+      { status: 200, description: 'Schema deleted.', example: '{ "success": true }' },
+      { status: 409, description: 'Blocked — default schema or pages still attached.', example: '{ "error": "Schema is in use by 2 pages; delete those pages first …" }' },
+    ],
+    sideEffects: ['Deletes the page_schemas row (cascade: schema_frontend_targets, page_schema_specs, page_content_templates).', 'Deletes the managed revalidation secret when configured.', 'Keeps the page_domains registry row.'],
+    tables: ['page_schemas', 'schema_frontend_targets', 'page_schema_specs', 'page_content_templates', 'managed_secrets', 'page_domains'],
+  },
+  {
     id: 'schema-frontend-targets',
     tag: 'Schemas',
     method: 'PUT',

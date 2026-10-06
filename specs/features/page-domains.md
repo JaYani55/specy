@@ -169,6 +169,33 @@ escape hatches `specy.event_page_write` and `specy.product_schema_reassignment`
 for its transaction (`set_config(…, true)` = local), exactly like the
 event/product aggregate services do.
 
+## Deleting unused schemas (super-admin)
+
+Schemas that ended up connected to no domain (or are otherwise unused) can be
+**permanently deleted** through `DELETE /api/schemas/:slug` — super-admin only,
+matching the `page_schemas` delete RLS. The schema console
+(`/pages/schema/...`) shows a destructive **Schema löschen** action for
+super-admins, disabled while pages are attached.
+
+Guards:
+
+- **Default schemas cannot be deleted** — they form the always-available
+  onboarding set.
+- **Schemas with pages cannot be deleted** — the FK would silently detach the
+  pages from their content contract. Delete the pages first (deleting a
+  product/event page removes its aggregate with it, see the schema console's
+  page-delete flow).
+
+On success the managed revalidation secret is removed; frontend targets,
+schema specs and content templates cascade; `page_schema_templates` and
+`agent_logs` references are set null. The `page_domains` registry row is
+**kept** — consistent with unhook — so a later registration on the same
+origin preserves ownership and display name.
+
+This is the escape hatch for the domain-move pre-checks: a product whose
+page lives on a domain-less schema is unblocked by deleting that page/product
+and then the unused schema, after which the move succeeds.
+
 ## Related documentation
 
 - [Pages feature / PageBuilder](page-builder.md)

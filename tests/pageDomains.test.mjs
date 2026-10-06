@@ -8,6 +8,7 @@ const registration = await readFile('api/lib/schemaRegistration.ts', 'utf8');
 const routes = await readFile('api/routes/schemas.ts', 'utf8');
 const pageService = await readFile('src/services/pageService.ts', 'utf8');
 const pages = await readFile('src/pages/Pages.tsx', 'utf8');
+const pagesDetail = await readFile('src/pages/PagesSchemaDetail.tsx', 'utf8');
 const apiCatalog = await readFile('src/lib/apiCatalog.ts', 'utf8');
 const featuresReadme = await readFile('specs/features/README.md', 'utf8');
 
@@ -108,6 +109,23 @@ test('The dashboard exposes super-admin TLD management on the /pages cards', () 
   assert.match(pages, /registry\?\.display_name\s*\|\|/);
   // Mixed-ownership drift badge
   assert.match(pages, /Gemischte Zuordnung/);
+});
+
+test('Unused schemas can be permanently deleted by super-admins, with guards', () => {
+  const deleteRoute = routes.slice(routes.indexOf("schemas.delete('/:slug'", routes.indexOf("schemas.delete('/:slug/revalidation-secret'")));
+  assert.ok(deleteRoute.length > 0, 'schema delete route not found');
+  assert.match(deleteRoute, /requireAppRole\(c, 'super-admin'\)/);
+  assert.match(deleteRoute, /Default schemas cannot be deleted\./);
+  assert.match(deleteRoute, /Schema is in use by \$\{pageCount\}/);
+  assert.match(deleteRoute, /deleteManagedSecret\(c\.env, schema\.revalidation_secret_name\)/);
+  assert.match(deleteRoute, /\.from\('page_schemas'\)[\s\S]*?\.delete\(\)/);
+  // The frontend service performs the hard delete through the API and the
+  // schema console exposes it to super-admins only when no pages are attached.
+  assert.match(pageService, /method: 'DELETE',/);
+  assert.match(pagesDetail, /deleteSchema\(schema\.api_slug\)/);
+  assert.match(pagesDetail, /permissions\.canViewAdminData && \(/);
+  assert.match(pagesDetail, /disabled=\{pages\.length > 0\}/);
+  assert.match(apiCatalog, /id: 'schema-delete'/);
 });
 
 test('Both admin endpoints are registered in the API catalog and feature docs', () => {

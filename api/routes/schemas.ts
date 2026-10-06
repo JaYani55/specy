@@ -1688,6 +1688,59 @@ schemas.post('/:slug/unhook', async (c) => {
 });
 
 // POST /api/schemas/:slug/revalidate — Trigger ISR on the registered frontend
+// DELETE /api/schemas/:slug — Permanently delete an unused schema (super-admin)
+schemas.delete('/:slug', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const slug = c.req.param('slug');
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: schema } = await admin
+    .from('page_schemas')
+    .select('id, slug, api_slug, is_default, registration_status, revalidation_secret_name')
+    .eq('api_slug', slug)
+    .maybeSingle();
+  if (!schema) {
+    return c.json({ error: `Schema "${slug}" not found` }, 404);
+  }
+
+  // Default schemas form the always-available onboarding set and cannot be
+  // removed.
+  if (schema.is_default) {
+    return c.json({ error: 'Default schemas cannot be deleted.' }, 409);
+  }
+
+  // Deletion must not orphan pages: a schema with pages is not unused. The
+  // FK would set pages.schema_id to null and silently detach them from their
+  // content contract — refuse with an actionable message instead.
+  const { count: pageCount, error: countError } = await admin
+    .from('pages')
+    .select('id', { count: 'exact', head: true })
+    .eq('schema_id', schema.id);
+  if (countError) return c.json({ error: countError.message }, 500);
+  if (pageCount && pageCount > 0) {
+    return c.json({
+      error: `Schema is in use by ${pageCount} page${pageCount === 1 ? '' : 's'}; delete those pages first (a product/event page delete removes its aggregate with it).`,
+    }, 409);
+  }
+
+  if (schema.revalidation_secret_name) {
+    await deleteManagedSecret(c.env, schema.revalidation_secret_name);
+  }
+
+  // Cascades remove schema_frontend_targets, page_schema_specs and
+  // page_content_templates; page_schema_templates and agent_logs reference
+  // the schema with set null. The page_domains registry row is kept so a
+  // later registration preserves ownership and display name.
+  const { error: deleteError } = await admin
+    .from('page_schemas')
+    .delete()
+    .eq('id', schema.id);
+  if (deleteError) return c.json({ error: deleteError.message }, 500);
+
+  return c.json({ success: true });
+});
+
 schemas.post('/:slug/revalidate', async (c) => {
   const slug = c.req.param('slug');
   const token = parseBearerToken(c.req.header('Authorization'));
