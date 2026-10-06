@@ -8,8 +8,8 @@
 -- model —
 --   1. change the ownership of a TLD to a different tenant (the move cascades
 --      to every schema registered on the domain, its pages, frontend targets,
---      content templates, tenant-locked aggregates and the companies assigned
---      to the moved events), and
+--      content templates, tenant-locked aggregates and the products/companies
+--      assigned to the moved events), and
 --   2. give the TLD an arbitrary display name that is independent of the
 --      domain URL itself (the domain URL stays the default assigned name and
 --      is never rewritten).
@@ -91,6 +91,9 @@ declare
   v_page_ids uuid[] := '{}'::uuid[];
   v_company_id uuid;
   v_company_name text;
+  v_product_id integer;
+  v_product_name text;
+  v_product_page_id uuid;
 begin
   if not public.is_super_admin() then
     raise exception 'Only super-admins may reassign page domains.' using errcode = '42501';
@@ -154,6 +157,39 @@ begin
     end if;
   end loop;
 
+  -- 0b. Pre-check products referenced by the moved events: the trigger
+  --    validate_event_product_tenant requires the product to sit in the
+  --    event's workspace. A product follows its events — even when it has no
+  --    canonical page — unless (a) its canonical page lives outside this
+  --    domain or (b) an event outside the move also references it. Both
+  --    cases block the whole move with an actionable message.
+  for v_product_id, v_product_name, v_product_page_id in
+    select distinct p.id, p.name, p.product_page_id
+    from public.mentorbooking_products p
+    join public.mentorbooking_events e on e.product_id = p.id
+    where e.page_id is not null
+      and e.page_id = any(v_page_ids)
+      and p.tenant_id is distinct from p_target_tenant_id
+  loop
+    if v_product_page_id is not null
+      and v_product_page_id <> all(v_page_ids) then
+      raise exception
+        'Product "%" is linked to a page outside this domain; move that domain to the target workspace first.',
+        v_product_name
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from public.mentorbooking_events other
+      where other.product_id = v_product_id
+        and (other.page_id is null or other.page_id <> all(v_page_ids))
+    ) then
+      raise exception
+        'Product "%" is also referenced by events outside this domain; move those events (or their domain) to the target workspace first.',
+        v_product_name
+        using errcode = '22023';
+    end if;
+  end loop;
+
   -- 1. Schemas and their derived rows follow the domain.
   update public.page_schemas
     set tenant_id = p_target_tenant_id
@@ -195,11 +231,20 @@ begin
     set tenant_id = p_target_tenant_id
     where id = any(v_page_ids);
 
-  -- 3. Aggregates whose tenant is trigger-locked to the owning page. Their
-  --    own validation triggers now find the page under the target tenant.
+  -- 3. Aggregates whose tenant is trigger-locked to the owning page: every
+  --    product with a canonical page on the domain, plus every product the
+  --    moved events reference (pageless products follow their events). The
+  --    product owner trigger finds its page already under the target tenant.
   update public.mentorbooking_products
     set tenant_id = p_target_tenant_id
-    where product_page_id = any(v_page_ids);
+    where product_page_id = any(v_page_ids)
+       or id in (
+         select distinct e.product_id
+         from public.mentorbooking_events e
+         where e.product_id is not null
+           and e.page_id is not null
+           and e.page_id = any(v_page_ids)
+       );
 
   -- 4. Companies assigned to the moved events follow their events. This must
   --    happen BEFORE the event move: validate_event_company_tenant requires

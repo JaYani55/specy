@@ -46,15 +46,25 @@ invoker JWT and performs one atomic transaction:
 3. `pages.tenant_id` for schema-bound pages plus legacy domain-bound pages
    (`schema_id is null and domain_url = origin`).
 4. `mentorbooking_products.tenant_id` and `mentorbooking_events.tenant_id` for
-   aggregates whose tenant is trigger-locked to the owning page.
+   aggregates whose tenant is trigger-locked to the owning page. Products
+   follow their events even when they have **no canonical page** — the event
+   trigger `validate_event_product_tenant` requires the referenced product to
+   sit in the event's workspace.
 5. `companies.tenant_id` for every company assigned to a moved event — this
    must happen **before** the event move because
    `validate_event_company_tenant` requires the company to already sit in the
-   target workspace. A company that is **also** referenced by events outside
-   the moved set (events on another domain that stays behind, or events
-   without a public page) blocks the whole move with an actionable error:
-   those events (or their domain) must move first.
+   target workspace.
 6. `page_domains.tenant_id` last.
+
+Pre-checks (step 0/0b) block the whole move with an actionable error when an
+entity cannot follow its events:
+
+- a **company** also referenced by events outside the moved set (events on
+  another domain that stays behind, or events without a public page);
+- a **product** whose canonical page lives outside the domain (its
+  `validate_service_product_page_owner` trigger requires page and product to
+  share a workspace — move that domain first);
+- a **product** also referenced by events outside the moved set.
 
 ### Ordering paradox and the event-link constraint trigger
 
@@ -75,11 +85,13 @@ re-enables the trigger automatically — no manual repair path exists.
 
 The move is all-or-nothing. Trigger-locked aggregates that cannot follow abort
 the entire reassignment with a PostgreSQL error, surfaced by the API as
-`409 { "error": "Tenant reassignment failed: …" }`. Typical cases: an event
-whose company stays in the old workspace, or a company whose events span
-domains in both workspaces — the blocking entity must move first. There is no
-partial move and no data loss on failure. Unassignment (`tenant_id: null`) is
-rejected: a TLD always has exactly one owning tenant.
+`409 { "error": "Tenant reassignment failed: …" }`. Pre-checks catch the
+typical cases before anything is written: an event whose company/product
+stays behind, a company whose events span domains in both workspaces, a
+product whose canonical page lives on another domain. The blocking entity
+must move first. There is no partial move and no data loss on failure.
+Unassignment (`tenant_id: null`) is rejected: a TLD always has exactly one
+owning tenant.
 
 ## Display naming (super-admin)
 
@@ -112,7 +124,7 @@ On `/pages`, every TLD card shows:
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent`, and the migration-scope preview: `page_count`, `product_count`, `event_count`, `company_count`, `blocking_company_names` |
+| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent`, and the migration-scope preview: `page_count`, `product_count`, `event_count`, `company_count`, `blocking_company_names`, `blocking_product_names` |
 | PATCH | `/api/schemas/admin/domains/:id` | super-admin | `{ tenant_id? }` (cascading reassignment) and/or `{ display_name? }` |
 
 Both endpoints require the `super-admin` role (custom claim). The reassignment

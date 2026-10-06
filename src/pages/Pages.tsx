@@ -1173,6 +1173,13 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                   : `Diese Firmen werden auch von Veranstaltungen außerhalb dieser Domain genutzt und blockieren die Verschiebung: ${registry.blocking_company_names!.join(', ')}. Verschiebe diese Veranstaltungen (oder ihre Domain) zuerst in den Ziel-Arbeitsbereich.`}
               </p>
             )}
+            {(registry.blocking_product_names?.length ?? 0) > 0 && (
+              <p className="text-xs text-destructive">
+                {language === 'en'
+                  ? `These products block the move — their page lives outside this domain or they are used by events outside it: ${registry.blocking_product_names!.join(', ')}. Move the affected domain or events first.`
+                  : `Diese Produkte blockieren die Verschiebung — ihre Seite liegt außerhalb dieser Domain oder sie werden von Veranstaltungen außerhalb genutzt: ${registry.blocking_product_names!.join(', ')}. Verschiebe zuerst die betroffene Domain bzw. die Veranstaltungen.`}
+              </p>
+            )}
             {moveError && (
               <p className="text-xs text-destructive whitespace-pre-wrap">{moveError}</p>
             )}

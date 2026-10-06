@@ -450,7 +450,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     method: 'GET',
     path: '/api/schemas/admin/domains',
     summary: 'List page domains (TLDs) with ownership and naming data',
-    description: 'Super-admin registry view over public.page_domains: every registered frontend origin with its owning tenant, arbitrary display name, schema usage, an ownership_consistent flag (true when all schemas on the domain belong to the owning tenant) and the migration-scope preview (page_count, product_count, event_count, company_count, blocking_company_names) that powers the dashboard move dialog.',
+    description: 'Super-admin registry view over public.page_domains: every registered frontend origin with its owning tenant, arbitrary display name, schema usage, an ownership_consistent flag (true when all schemas on the domain belong to the owning tenant) and the migration-scope preview (page_count, product_count, event_count, company_count, blocking_company_names, blocking_product_names) that powers the dashboard move dialog.',
     auth: 'bearer-required',
     mountsAt: '/api/schemas',
     sourceFile: 'api/routes/schemas.ts',
@@ -471,11 +471,12 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     "product_count": 5,
     "event_count": 4,
     "company_count": 2,
-    "blocking_company_names": []
+    "blocking_company_names": [],
+    "blocking_product_names": []
   }
 ] }`,
     }],
-    notes: ['Requires the super-admin role (custom claim).', 'Rows are created at registration time; display_name falls back to the domain URL.', 'The migration-scope counts mirror exactly what the reassignment RPC moves; blocking_company_names lists companies whose events span domains and would abort the move.'],
+    notes: ['Requires the super-admin role (custom claim).', 'Rows are created at registration time; display_name falls back to the domain URL.', 'The migration-scope counts mirror exactly what the reassignment RPC moves (page-linked and event-referenced products, companies assigned to moved events); blocking_company_names/blocking_product_names list entities whose events span domains or whose page lives outside the domain — they would abort the move.'],
     tables: ['page_domains', 'page_schemas'],
   },
   {

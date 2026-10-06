@@ -37,6 +37,12 @@ test('Page domains is an ordered migration creating the registry, RLS and the gu
   // guard against companies also referenced by events outside the move.
   assert.match(migration, /update public\.companies[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /is also referenced by events outside this domain/);
+  // Products referenced by the moved events follow too — including products
+  // without a canonical page — with pre-checks for cross-domain page links
+  // and outside-event references.
+  assert.match(migration, /Product "%" is linked to a page outside this domain/);
+  assert.match(migration, /Product "%" is also referenced by events outside this domain/);
+  assert.match(migration, /update public\.mentorbooking_products[\s\S]*?or id in \([\s\S]*?select distinct e\.product_id/);
   assert.match(migration, /update public\.page_domains[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /grant execute on function public\.reassign_page_domain_tenant\(uuid, uuid\) to authenticated/);
 
@@ -70,6 +76,7 @@ test('Admin endpoints are super-admin-only and map to the registry surfaces', ()
   assert.match(domainsRoute, /product_count:/);
   assert.match(domainsRoute, /company_count:/);
   assert.match(domainsRoute, /blocking_company_names:/);
+  assert.match(domainsRoute, /blocking_product_names:/);
   const patchRoute = routes.slice(routes.indexOf("schemas.patch('/admin/domains/:id'"));
   assert.match(patchRoute, /requireAppRole\(c, 'super-admin'\)/);
   // The RPC must be invoked with the user's bearer token so is_super_admin()
@@ -94,6 +101,7 @@ test('The dashboard exposes super-admin TLD management on the /pages cards', () 
   assert.match(pages, /handleConfirmMove/);
   assert.match(pages, /Migration scope/);
   assert.match(pages, /blocking_company_names/);
+  assert.match(pages, /blocking_product_names/);
   assert.doesNotMatch(pages.slice(pages.indexOf('handleOwnerChange'), pages.indexOf('handleConfirmMove')), /window\.confirm/);
   // Display name wins, the raw domain stays visible as description
   assert.match(pages, /registry\?\.display_name\s*\|\|/);

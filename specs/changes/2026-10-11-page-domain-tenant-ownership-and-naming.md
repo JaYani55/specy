@@ -42,8 +42,9 @@ own. This change introduces a first-class `public.page_domains` registry with:
   reach the database session for the in-function `is_super_admin()` guard;
   display-name update; 409 for blocked cascades). The GET endpoint additionally
   returns a migration-scope preview per domain (`page_count`, `product_count`,
-  `event_count`, `company_count`, `blocking_company_names`) mirroring exactly
-  what the RPC moves.
+  `event_count`, `company_count`, `blocking_company_names`,
+  `blocking_product_names`) mirroring exactly what the RPC moves — including
+  event-referenced products without a canonical page.
 - `src/types/pagebuilder.ts` — `TLDRegistryEntry` type; `TLDGroup.domain_registry`.
 - `src/services/pageService.ts` — `getAdminPageDomains()`,
   `updateAdminPageDomain(id, patch)`; `groupSchemasByTLD` accepts a registry map.
@@ -63,10 +64,11 @@ New table `public.page_domains` with `updated_at` trigger and RLS; new SECURITY
 DEFINER function `public.reassign_page_domain_tenant` (granted to
 `authenticated`; guarded by `is_super_admin()` from the JWT). The cascade moves
 `page_schemas`, `pages`, `schema_frontend_targets`, `page_content_templates`,
-`mentorbooking_products`, `mentorbooking_events`, the **companies assigned to
-the moved events** (with a pre-check blocking moves when a company is also
-referenced by events outside the domain) and the registry row in one
-transaction. The `enforce_event_page_link` constraint trigger on `pages` is
+`mentorbooking_products`, `mentorbooking_events`, the **companies and
+(event-referenced, possibly pageless) products** assigned to the moved events
+(with pre-checks blocking moves when a company/product is also referenced by
+events outside the domain or a product's page lives outside it) and the
+registry row in one transaction. The `enforce_event_page_link` constraint trigger on `pages` is
 temporarily disabled inside the transaction to resolve the ordering paradox
 with the event BEFORE trigger; ALTER TABLE is transactional, so a rollback
 re-enables it automatically. The catalogue guard triggers reject direct event-

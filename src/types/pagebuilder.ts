@@ -336,6 +336,8 @@ export interface TLDRegistryEntry {
   company_count?: number;
   /** Companies also referenced by events OUTSIDE the domain — these block the move */
   blocking_company_names?: string[];
+  /** Products whose canonical page is outside the domain or referenced by outside events — these block the move */
+  blocking_product_names?: string[];
 }
 
 // --- Agent Log Types ---
