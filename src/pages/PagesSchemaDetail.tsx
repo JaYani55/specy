@@ -54,7 +54,7 @@ import type { SchemaSpecBundle } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
-import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getExpectedSlugStructure, getExplicitPreviewSlugStructure, isPreviewConfigured, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -648,6 +648,16 @@ const PagesSchemaDetail: React.FC = () => {
             </span>
           </div>
           <div>
+            <span className="font-medium">{language === 'en' ? 'Preview' : 'Vorschau'}:</span>{' '}
+            <span className="text-muted-foreground">
+              {isPreviewConfigured(schema)
+                ? `${language === 'en' ? 'Set' : 'Gesetzt'} — ${getExplicitPreviewSlugStructure(schema)}`
+                : language === 'en'
+                  ? 'Not set — no preview slug structure configured; add a detail-page target with a host path containing ":slug".'
+                  : 'Nicht gesetzt — keine Vorschau-Slug-Struktur konfiguriert; hinterlege ein Detailseiten-Ziel mit „:slug“ im Host-Pfad.'}
+            </span>
+          </div>
+          <div>
             <span className="font-medium">{language === 'en' ? 'Route base path' : 'Routen-Basispfad'}:</span>{' '}
             <span className="text-muted-foreground">{integrationRequirements.route_base_path || '/'}</span>
           </div>
@@ -748,14 +758,14 @@ const PagesSchemaDetail: React.FC = () => {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        {schema.frontend_url && getDetailPageTarget(schema) && page.status === 'published' && (
+                        {isPreviewConfigured(schema) && page.status === 'published' && (
                           <Button
                             variant="ghost"
                             size="icon"
                             asChild
                           >
                             <a
-                              href={buildSchemaPageUrl(schema.frontend_url, getDetailPageTarget(schema)?.host_path || getExpectedSlugStructure(schema), page.slug)}
+                              href={buildSchemaPageUrl(schema.frontend_url, getExplicitPreviewSlugStructure(schema)!, page.slug)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >

@@ -1,9 +1,11 @@
+// Relative specifier (instead of the '@/…' alias) so the module stays directly
+// importable from Node-based unit tests without an alias resolver.
 import {
   DEFAULT_SCHEMA_INTEGRATION_REQUIREMENTS,
   type PageSchema,
   type SchemaIntegrationRequirements,
   type SchemaFrontendTarget,
-} from '@/types/pagebuilder';
+} from '../types/pagebuilder.ts';
 
 const SLUG_TOKEN = ':slug';
 
@@ -81,6 +83,26 @@ export const buildSchemaPageUrl = (
   slugStructure: string,
   pageSlug: string,
 ): string => `${frontendUrl.replace(/\/$/, '')}${buildSchemaPagePath(slugStructure, pageSlug)}`;
+
+/**
+ * The preview slug structure is only defined when it has been explicitly set:
+ * an enabled detail-page frontend target whose host_path contains the ":slug"
+ * token. There is no implicit fallback to the schema's slug_structure or the
+ * frontend contract's required_slug_structure; schemas without this explicit
+ * configuration have no preview at all and remain fully usable without one.
+ */
+export const getExplicitPreviewSlugStructure = (
+  schema: Pick<PageSchema, 'frontend_targets'>,
+): string | null => {
+  const target = (schema.frontend_targets ?? []).find((candidate) =>
+    candidate.enabled && candidate.kind === 'detail-page',
+  ) ?? null;
+  return target && target.host_path.includes(SLUG_TOKEN) ? target.host_path : null;
+};
+
+export const isPreviewConfigured = (
+  schema: Pick<PageSchema, 'frontend_url' | 'frontend_targets'>,
+): boolean => Boolean(schema.frontend_url && getExplicitPreviewSlugStructure(schema));
 
 export const getDetailPageTarget = (
   schema: Pick<PageSchema, 'slug_structure' | 'integration_requirements' | 'frontend_targets'>,

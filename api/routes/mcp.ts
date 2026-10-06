@@ -89,6 +89,7 @@ const BUILT_IN_MCP_TOOLS = [
   'specy_pages_schemas_update_system_data',
   'specy_pages_schemas_update_definition',
   'specy_pages_schemas_replace_frontend_targets',
+  'specy_pages_schemas_preview',
   'specy_products_list',
   'specy_products_create',
   'specy_products_get',
@@ -103,6 +104,7 @@ const AUTHENTICATED_MCP_TOOLS = new Set([
   'specy_pages_schemas_list', 'specy_pages_schemas_get', 'specy_pages_schemas_list_pages',
   'specy_pages_schemas_get_page', 'specy_pages_schemas_create_page', 'specy_pages_schemas_update_page',
   'specy_pages_schemas_update_system_data', 'specy_pages_schemas_update_definition', 'specy_pages_schemas_replace_frontend_targets',
+  'specy_pages_schemas_preview',
   'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive', 'specy_products_delete',
 ]);
 
@@ -248,7 +250,8 @@ async function createMcpServerWithTools(
             '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, ordinary page tools, schema-management tools, and specy_products_* aggregate tools.',
             '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
-            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details; it creates a linked draft event page. Product schemas use specy_products_create/get/update/publish/archive.'
+            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details; it creates a linked draft event page. Product schemas use specy_products_create/get/update/publish/archive.',
+            '10. Page previews are optional and only exist when the preview slug structure is explicitly set: an enabled detail-page frontend target whose host_path contains ":slug" (e.g. "/blog/:slug") plus a registered frontend_url. Schemas work fully without previews. Set the structure at frontend registration or later with specy_pages_schemas_replace_frontend_targets; inspect or resolve a preview URL with specy_pages_schemas_preview, which fails with preview_not_configured when the structure has not been set.'
           ],
           how_to_authenticate: {
             mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
@@ -272,6 +275,7 @@ async function createMcpServerWithTools(
             'CRITICAL: An anonymous tools/list is not sufficient for schema work. Authenticate first, then call tools/list again and verify the private tools are present.',
             'new_schema intentionally creates schemas in pending state with no registration code.',
             'start_schema_registration can generate a registration code programmatically. A registered frontend URL can be corrected later through specy_pages_schemas_update_system_data; use the unhook workflow to disconnect a frontend.',
+            'Preview is opt-in per schema: it requires an enabled detail-page frontend target whose host_path explicitly contains the ":slug" token. Never guess or fall back to the schema slug_structure for previews; when the structure is unset, preview resolution returns preview_not_configured and the schema simply has no preview.',
             'Published public MCP entries are visible without auth; published closed entries require a valid OAuth 2.1 bearer token.',
             'Password-based login was removed; normal MCP clients use client-managed OAuth through the HTTP challenge.',
           ],
@@ -998,6 +1002,75 @@ async function createMcpServerWithTools(
         } catch (error) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error instanceof Error ? error.message : 'Frontend-target update failed.' }, null, 2) }] };
         }
+      },
+    );
+
+    server.tool(
+      'specy_pages_schemas_preview',
+      '[specy-pages > schemas] Inspect the preview configuration or resolve a website preview URL. Preview requires an explicitly set preview slug structure (enabled detail-page frontend target whose host_path contains ":slug") and a registered frontend_url. Schemas work without previews; this tool fails with preview_not_configured when the structure has not been set.',
+      {
+        schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list'),
+        page_id: z.string().uuid().optional().describe('Page UUID from specy_pages_schemas_list_pages. Omit to only report the preview configuration.'),
+      },
+      async ({ schema_slug, page_id }) => {
+        const { data: schema, error: schemaError } = await supabase
+          .from('page_schemas')
+          .select('id, api_slug, slug, tenant_id, frontend_url, integration_requirements')
+          .eq('api_slug', schema_slug)
+          .single();
+        if (schemaError || !schema) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Schema "${schema_slug}" not found.` }, null, 2) }] };
+        }
+
+        const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);
+        const detailTarget = targets.find((target) => target.enabled && target.kind === 'detail-page') ?? null;
+        const previewSlugStructure = detailTarget && detailTarget.host_path.includes(':slug') ? detailTarget.host_path : null;
+        const previewConfigured = Boolean(schema.frontend_url && previewSlugStructure);
+
+        const configuration = {
+          preview_configured: previewConfigured,
+          frontend_url: schema.frontend_url,
+          preview_slug_structure: previewSlugStructure,
+          detail_target: detailTarget
+            ? { target_key: detailTarget.target_key, host_path: detailTarget.host_path, supports_preview: detailTarget.supports_preview, enabled: detailTarget.enabled }
+            : null,
+          how_to_set_previews: [
+            'A preview only exists when the preview slug structure has been explicitly set.',
+            'Register the frontend with an enabled detail-page target whose host_path contains ":slug" (e.g. "/blog/:slug"), or update targets with specy_pages_schemas_replace_frontend_targets.',
+            'A registered frontend_url is also required; correct it with specy_pages_schemas_update_system_data when needed.',
+            'Schemas remain fully usable without previews; there is no implicit fallback to the schema slug_structure.',
+          ],
+        };
+
+        if (!page_id) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify(configuration, null, 2) }] };
+        }
+
+        if (!previewConfigured) {
+          return mcpToolFailure('Preview not available: the preview slug structure has not been explicitly set. Add an enabled detail-page frontend target whose host_path contains ":slug" and a registered frontend_url. The schema works without previews.', 409, { code: 'preview_not_configured', configuration });
+        }
+
+        const { data: page, error: pageError } = await supabase
+          .from('pages')
+          .select('id, slug, name, status, is_draft')
+          .eq('schema_id', schema.id)
+          .eq('id', page_id)
+          .single();
+        if (pageError || !page) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Page not found in the requested schema.' }, null, 2) }] };
+        }
+
+        const previewUrl = `${String(schema.frontend_url).replace(/\/$/, '')}${previewSlugStructure!.replace(':slug', page.slug)}`;
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              ...configuration,
+              page: { id: page.id, slug: page.slug, name: page.name, status: page.status, is_draft: page.is_draft },
+              preview_url: previewUrl,
+            }, null, 2),
+          }],
+        };
       },
     );
   }

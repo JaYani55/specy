@@ -162,7 +162,7 @@ const generateRegistrationCode = (): string => {
 export const getSchemas = async (tenantId?: string | null): Promise<PageSchema[]> => {
   let query = supabase
     .from('page_schemas')
-    .select('*, tenants:tenant_id(slug)')
+    .select('*, tenants:tenant_id(slug), schema_frontend_targets(id, schema_id, tenant_id, target_key, kind, host_path, placement_key, supports_preview, is_primary, sort_order, enabled)')
     .neq('registration_status', 'archived')
     .order('is_default', { ascending: false })
     .order('created_at', { ascending: true });
@@ -171,9 +171,16 @@ export const getSchemas = async (tenantId?: string | null): Promise<PageSchema[]
 
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => {
-    const schema = row as PageSchema & { tenants?: { slug?: string } | Array<{ slug?: string }> | null };
+    const schema = row as PageSchema & {
+      tenants?: { slug?: string } | Array<{ slug?: string }> | null;
+      schema_frontend_targets?: SchemaFrontendTarget[] | null;
+    };
     const tenant = Array.isArray(schema.tenants) ? schema.tenants[0] : schema.tenants;
-    return { ...schema, tenant_slug: tenant?.slug ?? null };
+    return {
+      ...schema,
+      tenant_slug: tenant?.slug ?? null,
+      frontend_targets: schema.schema_frontend_targets ?? [],
+    };
   });
 };
 

@@ -76,7 +76,9 @@ Example (presentation-only metadata, not part of an entry's `content`):
 
 Hints are non-executable and cannot override content keys, types, required/nullable rules, or enum values. Malformed/unknown hints are ignored. `meta_description` remains API/agent context and is never shown as editing help. The technical Schema Editor currently does not expose a form for `editor_config`; MCP/REST schema-definition updates can supply it, and the PageBuilder has useful defaults without it.
 
-The normal content-manager view hides type badges, raw keys where a readable label can be derived, URL-slug controls, schema/domain details, JSON import, and raw incompatible values. Administrator-only advanced controls retain URL management, plugin entity actions, JSON import, and technical diagnostics. Optional values are activated by key presence, so `false`, `0`, `null`, empty strings, arrays and objects remain distinct from absent values. Removing an optional field is explicit.
+The normal content-manager view hides type badges, raw keys where a readable label can be derived, URL-slug controls, schema/domain details, JSON import, and raw incompatible values. Administrator-only advanced controls retain URL management, plugin entity actions, JSON import, and technical diagnostics.
+
+Page preview links require an **explicitly set preview slug structure** — an enabled `detail-page` frontend target whose `host_path` contains the `:slug` token plus a registered `frontend_url`. There is no implicit fallback to the schema slug structure; schemas work without previews and the preview view errors out with guidance when the structure is unset. See the [PageBuilder feature contract](../features/page-builder.md#preview-explicit-slug-structure). Optional values are activated by key presence, so `false`, `0`, `null`, empty strings, arrays and objects remain distinct from absent values. Removing an optional field is explicit.
 
 ### Legacy compatibility editor
 

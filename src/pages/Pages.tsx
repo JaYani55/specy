@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Plus, FileText, Globe, Clock, CheckCircle2, AlertCircle,
+  Plus, FileText, Globe, Clock, CheckCircle2, AlertCircle, Eye, EyeOff,
   Loader2, Copy, ExternalLink, Sparkles, ArrowRight, ChevronDown, ChevronRight, Play, Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +23,7 @@ import AgentLogs from '@/components/pagebuilder/AgentLogs';
 import { API_URL } from '@/lib/apiUrl';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
+import { isPreviewConfigured } from '@/utils/schemaRouting';
 
 const statusConfig: Record<string, { label: { en: string; de: string }; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
   pending: { label: { en: 'Pending', de: 'Ausstehend' }, variant: 'secondary', icon: Clock },
@@ -673,6 +674,20 @@ Available MCP tools:
                               {language === 'en' ? 'Default' : 'Standard'}
                             </Badge>
                           )}
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] h-5 border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400"
+                            title={language === 'en'
+                              ? (isPreviewConfigured(schema) ? 'An explicit preview slug structure is set for this schema.' : 'No preview slug structure set for this schema.')
+                              : (isPreviewConfigured(schema) ? 'Für dieses Schema ist eine explizite Vorschau-Slug-Struktur gesetzt.' : 'Für dieses Schema ist keine Vorschau-Slug-Struktur gesetzt.')}
+                          >
+                            {isPreviewConfigured(schema)
+                              ? <Eye className="h-2.5 w-2.5 mr-1" />
+                              : <EyeOff className="h-2.5 w-2.5 mr-1" />}
+                            {isPreviewConfigured(schema)
+                              ? (language === 'en' ? 'Preview set' : 'Vorschau gesetzt')
+                              : (language === 'en' ? 'No preview' : 'Keine Vorschau')}
+                          </Badge>
                           <Badge variant={status.variant} className="flex items-center gap-1 text-[10px]">
                             <StatusIcon className={`h-2.5 w-2.5 ${isWaiting ? 'animate-spin' : ''}`} />
                             {status.label[language]}
@@ -913,6 +928,20 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                             {language === 'en' ? 'Default' : 'Standard'}
                           </Badge>
                         )}
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] h-5"
+                          title={language === 'en'
+                            ? (isPreviewConfigured(schema) ? 'An explicit preview slug structure is set for this schema.' : 'No preview slug structure set for this schema.')
+                            : (isPreviewConfigured(schema) ? 'Für dieses Schema ist eine explizite Vorschau-Slug-Struktur gesetzt.' : 'Für dieses Schema ist keine Vorschau-Slug-Struktur gesetzt.')}
+                        >
+                          {isPreviewConfigured(schema)
+                            ? <Eye className="h-2.5 w-2.5 mr-1" />
+                            : <EyeOff className="h-2.5 w-2.5 mr-1" />}
+                          {isPreviewConfigured(schema)
+                            ? (language === 'en' ? 'Preview set' : 'Vorschau gesetzt')
+                            : (language === 'en' ? 'No preview' : 'Keine Vorschau')}
+                        </Badge>
                       </div>
                     </CardContent>
                   </Card>

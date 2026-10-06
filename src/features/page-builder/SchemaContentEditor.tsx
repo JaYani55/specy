@@ -51,7 +51,7 @@ import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeB
 import { StandaloneContentBlockEditor } from '@/components/pagebuilder/StandaloneContentBlockEditor';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
-import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getDetailPageTarget, getExplicitPreviewSlugStructure } from '@/utils/schemaRouting';
 import { PageContentTemplateControls } from './PageContentTemplateControls';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
 import { ProductEventsPanel } from '@/components/products/ProductEventsPanel';
@@ -1085,13 +1085,17 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
     }
   };
 
-  // ── Build preview URL from schema config
-  const previewUrl =
-    savedSlug && schema.frontend_url && getDetailPageTarget(schema)
-      ? buildSchemaPageUrl(schema.frontend_url, getDetailPageTarget(schema)?.host_path || getExpectedSlugStructure(schema), savedSlug)
-      : null;
-
+  // ── Build preview URL from schema config. The preview slug structure must be
+  // explicitly set (enabled detail-page target with a ":slug" host_path);
+  // there is no implicit fallback. Without it the editor works normally but the
+  // preview view errors out with guidance on how to set the structure.
   const detailTarget = getDetailPageTarget(schema);
+  const previewSlugStructure = getExplicitPreviewSlugStructure(schema);
+  const previewConfigured = Boolean(schema.frontend_url && previewSlugStructure);
+  const previewUrl =
+    savedSlug && previewConfigured && previewSlugStructure
+      ? buildSchemaPageUrl(schema.frontend_url, previewSlugStructure, savedSlug)
+      : null;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
@@ -1169,9 +1173,9 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
                       className="font-mono text-sm"
                     />
                   </div>
-                  {schema.frontend_url && detailTarget ? (
+                  {schema.frontend_url && previewSlugStructure ? (
                     <p className="text-xs text-muted-foreground">
-                      <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, detailTarget.host_path, pageSlug || 'example-slug')}</span>
+                      <span className="font-mono">{buildSchemaPageUrl(schema.frontend_url, previewSlugStructure, pageSlug || 'example-slug')}</span>
                     </p>
                   ) : schema.frontend_url && schema.frontend_targets?.some((target) => target.kind === 'collection-slot' && target.enabled) ? (
                     <p className="text-xs text-muted-foreground">
@@ -1390,9 +1394,17 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
                     Vorschau ansehen
                   </a>
                 </Button>
+              ) : !previewSlugStructure ? (
+                <span className="text-xs text-destructive" role="alert">
+                  {language === 'en'
+                    ? 'Preview unavailable: no preview slug structure set. Add an enabled detail-page target with a host path containing ":slug" in the schema settings.'
+                    : 'Vorschau nicht verfügbar: Keine Vorschau-Slug-Struktur gesetzt. Hinterlege in den Schema-Einstellungen ein aktiviertes Detailseiten-Ziel mit „:slug“ im Host-Pfad.'}
+                </span>
               ) : (
                 <span className="text-xs text-amber-700 dark:text-amber-400">
-                  Kein Frontend registriert — Vorschau nach Registrierung verfügbar.
+                  {language === 'en'
+                    ? 'No frontend URL registered — preview available after registration.'
+                    : 'Kein Frontend registriert — Vorschau nach Registrierung verfügbar.'}
                 </span>
               )}
             </div>

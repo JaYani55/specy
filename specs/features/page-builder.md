@@ -74,6 +74,26 @@ Example presentation metadata (kept outside both schema field JSON and entry con
 - Schema-scoped page content templates store only the page content JSON. Loading one replaces the editor content and activates optional fields present in the template, while leaving the page title, slug, publication state, and any event schedule unchanged.
 - Revalidation failures leave the saved content intact. The feedback displays a concise status and keeps endpoint, HTTP status, target path, and upstream error details collapsed until the operator opens the details disclosure.
 
+## Preview (explicit slug structure)
+
+Page previews are **opt-in** and require an **explicitly set preview slug structure**:
+
+- An enabled `detail-page` frontend target whose `host_path` contains the `:slug` token (e.g. `/blog/:slug`). This `host_path` is the preview slug structure.
+- A registered `frontend_url` on the schema.
+
+There is **no implicit fallback**: neither the schema's `slug_structure` nor the frontend contract's `required_slug_structure` is used to synthesize a preview URL. The database constraint on `schema_frontend_targets` already guarantees that `detail-page` targets contain `:slug` exactly once.
+
+Behavior when the preview slug structure has **not** been set:
+
+- The whole pages feature works normally. Saving, publishing, revalidation, and collection slots are unaffected — previews are an additive layer.
+- The PageBuilder save feedback shows an explicit error state (`Preview unavailable: no preview slug structure set …`) with guidance instead of a preview button.
+- The published-page eye button on the schema detail page is withheld.
+- The preview tool `specy_pages_schemas_preview` (MCP) fails with code `preview_not_configured`.
+
+Preview state is surfaced on the `/pages` menu: every schema card shows a `Preview set`/`Vorschau gesetzt` or `No preview`/`Keine Vorschau` badge, and the schema detail page shows the configured structure (or the unset state) in the Frontend Contract card. Preview URLs are always built from the explicit detail-page target: `${frontend_url}${host_path with :slug replaced}`.
+
+To set a preview: define a `detail-page` frontend target during frontend registration, or update targets later through `specy_pages_schemas_replace_frontend_targets` (MCP) or the Schema Editor; correct a `frontend_url` through `specy_pages_schemas_update_system_data`.
+
 ## Legacy boundary
 
 The old `/pagebuilder/:legacyProductId` route and fixed Hero/CTA/Cards/Features/FAQ form exist only for historical product pages that have no schema association. A missing page link produces a safe recovery message rather than creating a page by looking up a global `service-product` slug. `saveLegacyProductPage()` rejects schema-bound pages. Legacy content conversion/backfill remains a separate migration phase; existing data is not silently rewritten.
