@@ -78,8 +78,11 @@ Example presentation metadata (kept outside both schema field JSON and entry con
 
 Page previews are **opt-in** and require an **explicitly set preview slug structure**:
 
-- An enabled `detail-page` frontend target whose `host_path` contains the `:slug` token (e.g. `/blog/:slug`). This `host_path` is the preview slug structure.
+- A dedicated preview target — an enabled `detail-page` frontend target with `supports_preview: true` whose `host_path` contains the `:slug` token (e.g. `/preview/:slug`). For legacy schemas with a single detail target, that target's `host_path` is the preview slug structure.
+- When `integration_requirements.preview_slug_structure` is set (a separate non-public preview route), **only** a dedicated `supports_preview: true` target resolves previews, and it must exactly match that structure (exempt from `route_base_path`).
 - A registered `frontend_url` on the schema.
+
+There is **no implicit fallback**: neither the schema's `slug_structure` nor the frontend contract's `required_slug_structure` is used to synthesize a preview URL. The database constraint on `schema_frontend_targets` already guarantees that `detail-page` targets contain `:slug` exactly once. A public detail route (`supports_preview: false`, matching `required_slug_structure`) and a non-public preview route can be registered side by side; the full validation rule chain and an error catalog are documented in [frontend-targets.md](frontend-targets.md).
 
 There is **no implicit fallback**: neither the schema's `slug_structure` nor the frontend contract's `required_slug_structure` is used to synthesize a preview URL. The database constraint on `schema_frontend_targets` already guarantees that `detail-page` targets contain `:slug` exactly once.
 

@@ -1,4 +1,4 @@
-import { createSupabaseAdminClient, type Env } from './supabase';
+import { createSupabaseAdminClient, type Env } from './supabase.ts';
 
 const REVALIDATION_SECRET_NAMESPACE = 'page-revalidation';
 const MAIL_SECRET_NAMESPACE = 'mail';

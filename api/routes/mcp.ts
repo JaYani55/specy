@@ -251,7 +251,7 @@ async function createMcpServerWithTools(
             '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
             '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details; it creates a linked draft event page. Product schemas use specy_products_create/get/update/publish/archive.',
-            '10. Page previews are optional and only exist when the preview slug structure is explicitly set: an enabled detail-page frontend target whose host_path contains ":slug" (e.g. "/blog/:slug") plus a registered frontend_url. Schemas work fully without previews. Set the structure at frontend registration or later with specy_pages_schemas_replace_frontend_targets; inspect or resolve a preview URL with specy_pages_schemas_preview, which fails with preview_not_configured when the structure has not been set.'
+            '10. Page previews are optional and only exist when the preview slug structure is explicitly set: an enabled detail-page frontend target whose host_path contains ":slug" (e.g. "/blog/:slug") plus a registered frontend_url. Schemas work fully without previews. For a separate non-public preview route alongside the public detail route, set integration_requirements.preview_slug_structure via specy_pages_schemas_update_definition and register a supports_preview target with specy_pages_schemas_replace_frontend_targets. Inspect or resolve a preview URL with specy_pages_schemas_preview, which fails with preview_not_configured when no preview structure is configured.'
           ],
           how_to_authenticate: {
             mode: 'MCP client-managed OAuth 2.1 Authorization Code + PKCE',
@@ -850,7 +850,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_update_definition',
-      '[specy-pages > schemas] Update the schema definition and non-secret schema metadata using optimistic revision checks. This never rewrites page content.',
+      '[specy-pages > schemas] Update the schema definition and non-secret schema metadata using optimistic revision checks. integration_requirements accepts preview_slug_structure (separate non-public preview route template containing :slug exactly once) among other keys; unknown integration_requirements keys are accepted and silently ignored. Changing integration_requirements bumps definition_revision. This never rewrites page content.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API identifier (api_slug).'),
         expected_revision: z.number().int().min(1).describe('definition_revision returned by specy_pages_schemas_get.'),
@@ -975,7 +975,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_replace_frontend_targets',
-      '[specy-pages > schemas] Replace a schema frontend target registry after correcting collection or detail route metadata.',
+      '[specy-pages > schemas] Replace a schema frontend target registry after correcting collection or detail route metadata. Validation rules: (1) target_keys are unique; exactly one enabled primary target is required. (2) detail-page targets must contain ":slug" exactly once. (3) Each detail target without supports_preview must exactly match required_slug_structure and stay under route_base_path. (4) Detail targets with supports_preview: true must exactly match integration_requirements.preview_slug_structure when it is set (route_base_path exempt) — set it via specy_pages_schemas_update_definition. (5) Enabled detail targets must have unique host_paths; a public detail route and a separate preview route can coexist. Errors name the offending target.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
         targets: z.array(z.object({
@@ -1005,7 +1005,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_preview',
-      '[specy-pages > schemas] Inspect the preview configuration or resolve a website preview URL. Preview requires an explicitly set preview slug structure (enabled detail-page frontend target whose host_path contains ":slug") and a registered frontend_url. Schemas work without previews; this tool fails with preview_not_configured when the structure has not been set.',
+      '[specy-pages > schemas] Inspect the preview configuration or resolve a website preview URL. Preview requires an explicitly set preview slug structure and a registered frontend_url. The structure comes from either a dedicated preview target (enabled detail-page target with supports_preview: true) or — for legacy single-detail schemas — the only enabled detail-page target. When integration_requirements.preview_slug_structure is set, only a dedicated supports_preview target resolves previews. Schemas work without previews; this tool fails with preview_not_configured when no preview structure is configured.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list'),
         page_id: z.string().uuid().optional().describe('Page UUID from specy_pages_schemas_list_pages. Omit to only report the preview configuration.'),
@@ -1021,20 +1021,35 @@ async function createMcpServerWithTools(
         }
 
         const targets = await getSchemaFrontendTargets(env, schema.id, authToken ?? undefined);
-        const detailTarget = targets.find((target) => target.enabled && target.kind === 'detail-page') ?? null;
-        const previewSlugStructure = detailTarget && detailTarget.host_path.includes(':slug') ? detailTarget.host_path : null;
+        const detailTargets = targets.filter((target) => target.enabled && target.kind === 'detail-page');
+        const normalizedRequirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
+        // With an explicit preview_slug_structure, only a dedicated
+        // preview-capable target (supports_preview: true) resolves previews.
+        // Legacy single-detail schemas fall back to their only detail target.
+        const dedicatedPreviewTarget = detailTargets.find((target) => target.supports_preview) ?? null;
+        const previewTarget = normalizedRequirements.preview_slug_structure
+          ? dedicatedPreviewTarget
+          : (dedicatedPreviewTarget ?? detailTargets[0] ?? null);
+        const publicDetailTarget = detailTargets.find((target) => !target.supports_preview && target !== previewTarget)
+          ?? (detailTargets.length === 1 ? detailTargets[0] : null);
+        const previewSlugStructure = previewTarget?.host_path ?? null;
         const previewConfigured = Boolean(schema.frontend_url && previewSlugStructure);
 
         const configuration = {
           preview_configured: previewConfigured,
           frontend_url: schema.frontend_url,
           preview_slug_structure: previewSlugStructure,
-          detail_target: detailTarget
-            ? { target_key: detailTarget.target_key, host_path: detailTarget.host_path, supports_preview: detailTarget.supports_preview, enabled: detailTarget.enabled }
+          required_slug_structure: normalizedRequirements.required_slug_structure,
+          detail_target: publicDetailTarget
+            ? { target_key: publicDetailTarget.target_key, host_path: publicDetailTarget.host_path, supports_preview: publicDetailTarget.supports_preview, enabled: publicDetailTarget.enabled }
+            : null,
+          preview_target: previewTarget
+            ? { target_key: previewTarget.target_key, host_path: previewTarget.host_path, supports_preview: previewTarget.supports_preview, enabled: previewTarget.enabled }
             : null,
           how_to_set_previews: [
             'A preview only exists when the preview slug structure has been explicitly set.',
-            'Register the frontend with an enabled detail-page target whose host_path contains ":slug" (e.g. "/blog/:slug"), or update targets with specy_pages_schemas_replace_frontend_targets.',
+            'Simplest: register an enabled detail-page target whose host_path contains ":slug" (e.g. "/preview/:slug") with supports_preview: true, or update targets with specy_pages_schemas_replace_frontend_targets.',
+            'For a separate preview route alongside a public detail route: set integration_requirements.preview_slug_structure (e.g. "/preview/:slug") via specy_pages_schemas_update_definition, then register the public detail target (supports_preview: false, matching required_slug_structure) and the preview target (supports_preview: true, matching preview_slug_structure; exempt from route_base_path).',
             'A registered frontend_url is also required; correct it with specy_pages_schemas_update_system_data when needed.',
             'Schemas remain fully usable without previews; there is no implicit fallback to the schema slug_structure.',
           ],
@@ -1045,7 +1060,7 @@ async function createMcpServerWithTools(
         }
 
         if (!previewConfigured) {
-          return mcpToolFailure('Preview not available: the preview slug structure has not been explicitly set. Add an enabled detail-page frontend target whose host_path contains ":slug" and a registered frontend_url. The schema works without previews.', 409, { code: 'preview_not_configured', configuration });
+          return mcpToolFailure('Preview not available: no explicitly set preview slug structure resolves previews. Register an enabled detail-page target whose host_path contains ":slug" (for a dedicated preview route: set integration_requirements.preview_slug_structure and a supports_preview: true target) and a registered frontend_url. The schema works without previews.', 409, { code: 'preview_not_configured', configuration });
         }
 
         const { data: page, error: pageError } = await supabase

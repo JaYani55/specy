@@ -22,6 +22,15 @@ export interface SchemaIntegrationRequirementsRecord {
   page_target?: SchemaPageTargetInput | null;
   canonical_frontend_url?: string | null;
   required_slug_structure?: string | null;
+  /**
+   * Optional separate route template for non-public preview targets
+   * (`supports_preview: true`). When set, preview-capable detail targets are
+   * validated against this structure instead of `required_slug_structure` and
+   * are exempt from the `route_base_path` namespace check. Unknown requirement
+   * keys are silently accepted and ignored — only the keys listed here are
+   * evaluated by any tool.
+   */
+  preview_slug_structure?: string | null;
   route_base_path?: string | null;
   route_ownership?: 'isolated' | 'shared-layout-only' | 'may-modify-existing' | null;
   allow_temporary_frontend_urls?: boolean | null;
@@ -35,6 +44,7 @@ export interface NormalizedSchemaIntegrationRequirements {
   page_target: SchemaPageTargetInput | null;
   canonical_frontend_url: string | null;
   required_slug_structure: string | null;
+  preview_slug_structure: string | null;
   route_base_path: string | null;
   route_ownership: 'isolated' | 'shared-layout-only' | 'may-modify-existing';
   allow_temporary_frontend_urls: boolean;
@@ -75,6 +85,9 @@ export const normalizeSchemaIntegrationRequirements = (
   required_slug_structure: normalizeNullable(requirements?.required_slug_structure)
     ? normalizeSchemaSlugStructure(requirements?.required_slug_structure as string)
     : null,
+  preview_slug_structure: normalizeNullable(requirements?.preview_slug_structure)
+    ? normalizeSchemaSlugStructure(requirements?.preview_slug_structure as string)
+    : null,
   route_base_path: normalizeNullable(requirements?.route_base_path)
     ? normalizeRouteBasePath(requirements?.route_base_path as string)
     : null,
@@ -96,6 +109,7 @@ export const normalizeSchemaIntegrationRequirements = (
 export const validateSlugStructure = (
   value: string,
   requirements?: SchemaIntegrationRequirementsRecord | null,
+  options?: { exemptFromBasePath?: boolean },
 ): SlugStructureValidationResult => {
   const normalized = normalizeSchemaSlugStructure(value);
 
@@ -123,7 +137,7 @@ export const validateSlugStructure = (
     };
   }
 
-  if (normalizedRequirements.route_base_path) {
+  if (!options?.exemptFromBasePath && normalizedRequirements.route_base_path) {
     const requiredPrefix = normalizedRequirements.route_base_path === '/'
       ? '/'
       : `${normalizedRequirements.route_base_path}/`;
@@ -192,11 +206,29 @@ export const validateFrontendTarget = (
     kind: SchemaFrontendTargetKind;
     host_path: string;
     placement_key?: string | null;
+    supports_preview?: boolean;
   },
   requirements?: SchemaIntegrationRequirementsRecord | null,
 ): FrontendTargetValidationResult => {
   if (target.kind === 'detail-page') {
-    return validateSlugStructure(target.host_path, requirements);
+    const normalizedRequirements = normalizeSchemaIntegrationRequirements(requirements);
+    const isPreviewTarget = target.supports_preview === true;
+
+    // Preview-capable detail targets validate against the separate
+    // preview_slug_structure when one is explicitly set. The preview route is
+    // internal (not linked, noindex) and therefore exempt from the public
+    // route_base_path namespace check.
+    if (isPreviewTarget && normalizedRequirements.preview_slug_structure) {
+      return validateSlugStructure(target.host_path, {
+        ...requirements,
+        required_slug_structure: normalizedRequirements.preview_slug_structure,
+        route_base_path: null,
+      });
+    }
+
+    return validateSlugStructure(target.host_path, requirements, {
+      exemptFromBasePath: isPreviewTarget && Boolean(normalizedRequirements.preview_slug_structure) && !normalizedRequirements.required_slug_structure,
+    });
   }
 
   const pathResult = validateCollectionHostPath(target.host_path);

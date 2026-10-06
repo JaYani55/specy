@@ -23,6 +23,10 @@ describe('frontend-target replacement contract', () => {
 
   it('replacement validates inputs and enforces exactly one primary target', () => {
     assert.match(registrationLib, /Targets must define exactly one enabled primary target/);
-    assert.match(registrationLib, /Registration currently supports at most one enabled detail-page target/);
+    // The single-detail-target rule was relaxed: a public detail route and a
+    // separate non-public preview route (supports_preview: true) coexist, with
+    // unique host_path per schema enforced instead.
+    assert.match(registrationLib, /duplicate enabled detail-page host_path/);
+    assert.doesNotMatch(registrationLib, /at most one enabled detail-page target/);
   });
 });

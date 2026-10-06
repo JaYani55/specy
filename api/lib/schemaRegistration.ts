@@ -1,10 +1,10 @@
-import { createSupabaseAdminClient, createSupabaseClient, type Env } from './supabase';
-import { validateOutboundHttpUrl } from './urlSafety';
+import { createSupabaseAdminClient, createSupabaseClient, type Env } from './supabase.ts';
+import { validateOutboundHttpUrl } from './urlSafety.ts';
 import {
   buildRevalidationSecretName,
   upsertManagedSecret,
   getRevalidationSecretNamespace,
-} from './managedSecrets';
+} from './managedSecrets.ts';
 import {
   isFrontendUrlAllowed,
   normalizeSchemaIntegrationRequirements,
@@ -13,7 +13,7 @@ import {
   validateSlugStructure,
   type SchemaContentScope,
   validateCollectionHostPath,
-} from './schemaRouting';
+} from './schemaRouting.ts';
 
 export type SchemaFrontendTargetKind = 'collection-slot' | 'detail-page';
 
@@ -94,30 +94,51 @@ function validateTargetKey(value: string): boolean {
 export function validateSchemaFrontendTargetInputs(
   targets: SchemaFrontendTargetInput[],
   requirements: SchemaIntegrationRequirementsRecord | null,
-): { ok: true; targets: SchemaFrontendTargetInput[] } | { ok: false; error: string } {
+): { ok: true; targets: SchemaFrontendTargetInput[] } | { ok: false; error: string; errors?: string[] } {
   const seenKeys = new Set<string>();
+  const seenDetailPaths = new Set<string>();
   let primaryCount = 0;
-  let detailCount = 0;
   const normalizedTargets: SchemaFrontendTargetInput[] = [];
+  const errors: string[] = [];
+
+  const normalizedRequirements = normalizeSchemaIntegrationRequirements(requirements);
+  if (normalizedRequirements.preview_slug_structure
+    && (normalizedRequirements.preview_slug_structure.match(/:slug/g) || []).length !== 1) {
+    return {
+      ok: false,
+      error: `integration_requirements.preview_slug_structure must include :slug exactly once (got "${normalizedRequirements.preview_slug_structure}").`,
+    };
+  }
 
   for (const target of targets) {
     if (!validateTargetKey(target.target_key) || seenKeys.has(target.target_key)) {
-      return { ok: false, error: `Invalid or duplicate target_key: ${target.target_key}` };
+      errors.push(`Invalid or duplicate target_key: ${target.target_key}`);
+      continue;
     }
     seenKeys.add(target.target_key);
 
     const validation = validateFrontendTarget(target, requirements);
     if (!validation.ok || !validation.normalized) {
-      return { ok: false, error: validation.error || `Invalid target: ${target.target_key}` };
+      errors.push(`target "${target.target_key}" (${target.host_path}): ${validation.error || 'Invalid target'}`);
+      continue;
     }
-    if (target.kind === 'detail-page' && target.enabled !== false) detailCount += 1;
+    if (target.kind === 'detail-page' && target.enabled !== false) {
+      if (seenDetailPaths.has(validation.normalized)) {
+        errors.push(`target "${target.target_key}": duplicate enabled detail-page host_path "${validation.normalized}"`);
+        continue;
+      }
+      seenDetailPaths.add(validation.normalized);
+    }
     if (target.is_primary && target.enabled !== false) primaryCount += 1;
 
     normalizedTargets.push({
       ...target,
       host_path: validation.normalized,
       placement_key: target.kind === 'collection-slot' ? target.placement_key ?? null : null,
-      supports_preview: target.kind === 'detail-page' && target.supports_preview !== false,
+      // The flag is honored as supplied: false marks the public detail route,
+      // true marks the non-public preview route. Legacy single-detail
+      // registrations without the flag stay preview-capable by fallback.
+      supports_preview: target.kind === 'detail-page' ? Boolean(target.supports_preview) : false,
       is_primary: target.is_primary ?? false,
       sort_order: target.sort_order ?? normalizedTargets.length,
       enabled: target.enabled !== false,
@@ -125,10 +146,13 @@ export function validateSchemaFrontendTargetInputs(
   }
 
   if (normalizedTargets.length > 0 && primaryCount !== 1) {
-    return { ok: false, error: 'Targets must define exactly one enabled primary target' };
+    errors.push('Targets must define exactly one enabled primary target');
   }
-  if (detailCount > 1) {
-    return { ok: false, error: 'Registration currently supports at most one enabled detail-page target' };
+  if (errors.length > 0) {
+    const hint = normalizedRequirements.preview_slug_structure
+      ? 'Rules: detail-page targets without supports_preview must match required_slug_structure and stay under route_base_path; supports_preview targets must match preview_slug_structure (base path exempt); collection slots must not contain :slug; exactly one enabled primary target.'
+      : 'Rules: detail-page targets must contain :slug exactly once and match required_slug_structure, staying under route_base_path. Set integration_requirements.preview_slug_structure (via specy_pages_schemas_update_definition) to register a separate non-public preview route with a supports_preview target.';
+    return { ok: false, error: `${errors.join(' | ')} — ${hint}`, errors };
   }
 
   return { ok: true, targets: normalizedTargets };
@@ -328,7 +352,12 @@ export async function replaceSchemaFrontendTargets(
   if (schemaError || !schema) return { status: 404, body: { error: `Schema "${slug}" not found` } };
 
   const validation = validateSchemaFrontendTargetInputs(targets, schema.integration_requirements);
-  if (!validation.ok) return { status: 400, body: { error: validation.error } };
+  if (!validation.ok) {
+    return {
+      status: 400,
+      body: { error: validation.error, ...(validation.errors ? { errors: validation.errors } : {}) },
+    };
+  }
 
   const admin = await createSupabaseAdminClient(env);
   const { error: rpcError } = await admin.rpc('replace_schema_frontend_targets', {

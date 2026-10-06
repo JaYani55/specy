@@ -68,6 +68,25 @@ export function parseSchemaDefinitionPatch(input: unknown): SchemaDefinitionPatc
   }
   if (Object.prototype.hasOwnProperty.call(input, 'integration_requirements')) {
     if (!isRecord(input.integration_requirements)) return { ok: false, error: 'integration_requirements must be a JSON object.' };
+    // preview_slug_structure is the explicit non-public preview route template.
+    // Unknown keys are accepted and ignored; this key is evaluated by target
+    // validation and the preview tool.
+    const previewStructure = input.integration_requirements.preview_slug_structure;
+    if (previewStructure !== undefined && previewStructure !== null) {
+      if (typeof previewStructure !== 'string' || !previewStructure.trim()) {
+        return { ok: false, error: 'integration_requirements.preview_slug_structure must be a route template string or null.' };
+      }
+      const normalized = previewStructure.trim().replace(/\/+$/, '') || '/';
+      if (!normalized.startsWith('/')) {
+        return { ok: false, error: 'integration_requirements.preview_slug_structure must start with /.' };
+      }
+      if ((normalized.match(/:slug/g) || []).length !== 1) {
+        return { ok: false, error: 'integration_requirements.preview_slug_structure must include :slug exactly once.' };
+      }
+      if (/\s/.test(normalized)) {
+        return { ok: false, error: 'integration_requirements.preview_slug_structure must not contain whitespace.' };
+      }
+    }
     patch.integration_requirements = input.integration_requirements;
   }
   if (Object.prototype.hasOwnProperty.call(input, 'tenant_id')) {

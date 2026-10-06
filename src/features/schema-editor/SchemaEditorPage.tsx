@@ -1363,7 +1363,6 @@ const SchemaEditor: React.FC = () => {
                     ...item,
                     kind: value as SchemaFrontendTargetKind,
                     placement_key: value === 'collection-slot' ? (item.placement_key || item.target_key) : null,
-                    supports_preview: value === 'detail-page',
                   } : item))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1398,7 +1397,20 @@ const SchemaEditor: React.FC = () => {
                   <Checkbox checked={target.enabled !== false} onCheckedChange={(checked) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: Boolean(checked) } : item))} />
                   {language === 'en' ? 'Enabled' : 'Aktiv'}
                 </label>
+                {target.kind === 'detail-page' && (
+                  <label className="flex items-center gap-2">
+                    <Checkbox checked={Boolean(target.supports_preview)} onCheckedChange={(checked) => setFrontendTargets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, supports_preview: Boolean(checked) } : item))} />
+                    {language === 'en' ? 'Preview target' : 'Vorschau-Ziel'}
+                  </label>
+                )}
               </div>
+              {target.kind === 'detail-page' && (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'en'
+                    ? 'Preview targets (supports_preview) resolve against preview_slug_structure when set and are exempt from the public route base path.'
+                    : 'Vorschau-Ziele (supports_preview) lösen gegen preview_slug_structure auf, wenn gesetzt, und sind vom öffentlichen Routen-Basispfad ausgenommen.'}
+                </p>
+              )}
             </div>
           ))}
           <Button type="button" variant="outline" onClick={() => setFrontendTargets((current) => [...current, {

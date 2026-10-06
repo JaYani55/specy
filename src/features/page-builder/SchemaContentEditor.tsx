@@ -51,7 +51,7 @@ import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeB
 import { StandaloneContentBlockEditor } from '@/components/pagebuilder/StandaloneContentBlockEditor';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
-import { buildSchemaPageUrl, getDetailPageTarget, getExplicitPreviewSlugStructure } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getExplicitPreviewSlugStructure } from '@/utils/schemaRouting';
 import { PageContentTemplateControls } from './PageContentTemplateControls';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
 import { ProductEventsPanel } from '@/components/products/ProductEventsPanel';
@@ -1089,7 +1089,6 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
   // explicitly set (enabled detail-page target with a ":slug" host_path);
   // there is no implicit fallback. Without it the editor works normally but the
   // preview view errors out with guidance on how to set the structure.
-  const detailTarget = getDetailPageTarget(schema);
   const previewSlugStructure = getExplicitPreviewSlugStructure(schema);
   const previewConfigured = Boolean(schema.frontend_url && previewSlugStructure);
   const previewUrl =

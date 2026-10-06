@@ -135,6 +135,7 @@ export const MIGRATION_ORDER_CORE = [
   '202610050003_product_object_api_independent_from_pages.sql',
   '202610050004_product_schema_reassignment.sql',
   '202610060001_catalogue_schema_unification.sql',
+  '202610060002_separate_preview_slug_structure.sql',
 ];
 
 /**

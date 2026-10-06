@@ -180,6 +180,8 @@ export interface SchemaIntegrationRequirements {
   page_target?: SchemaPageTarget | null;
   canonical_frontend_url: string | null;
   required_slug_structure: string | null;
+  /** Optional separate route template for non-public preview targets (supports_preview: true). */
+  preview_slug_structure?: string | null;
   route_base_path: string | null;
   route_ownership: SchemaRouteOwnership;
   allow_temporary_frontend_urls: boolean;

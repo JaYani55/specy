@@ -87,30 +87,44 @@ export const buildSchemaPageUrl = (
 /**
  * The preview slug structure is only defined when it has been explicitly set:
  * an enabled detail-page frontend target whose host_path contains the ":slug"
- * token. There is no implicit fallback to the schema's slug_structure or the
- * frontend contract's required_slug_structure; schemas without this explicit
- * configuration have no preview at all and remain fully usable without one.
+ * token. A dedicated preview target is the enabled detail-page target with
+ * `supports_preview: true`; when `integration_requirements.preview_slug_structure`
+ * is set, only such a dedicated target resolves previews. Legacy single-detail
+ * schemas fall back to their only detail target. There is no implicit fallback
+ * to the schema's slug_structure or the frontend contract's
+ * required_slug_structure; schemas without explicit preview configuration have
+ * no preview at all and remain fully usable without one.
  */
 export const getExplicitPreviewSlugStructure = (
-  schema: Pick<PageSchema, 'frontend_targets'>,
+  schema: Pick<PageSchema, 'integration_requirements' | 'frontend_targets'>,
 ): string | null => {
-  const target = (schema.frontend_targets ?? []).find((candidate) =>
+  const detailTargets = (schema.frontend_targets ?? []).filter((candidate) =>
     candidate.enabled && candidate.kind === 'detail-page',
-  ) ?? null;
-  return target && target.host_path.includes(SLUG_TOKEN) ? target.host_path : null;
+  );
+  const requirements = normalizeSchemaIntegrationRequirements(schema.integration_requirements);
+  const dedicatedPreviewTarget = detailTargets.find((candidate) => candidate.supports_preview) ?? null;
+  const previewTarget = requirements.preview_slug_structure
+    ? dedicatedPreviewTarget
+    : (dedicatedPreviewTarget ?? detailTargets[0] ?? null);
+  return previewTarget && previewTarget.host_path.includes(SLUG_TOKEN) ? previewTarget.host_path : null;
 };
 
 export const isPreviewConfigured = (
-  schema: Pick<PageSchema, 'frontend_url' | 'frontend_targets'>,
+  schema: Pick<PageSchema, 'frontend_url' | 'integration_requirements' | 'frontend_targets'>,
 ): boolean => Boolean(schema.frontend_url && getExplicitPreviewSlugStructure(schema));
 
+/**
+ * The public detail target used to build published-page URLs. With a dual
+ * configuration this is the non-preview detail target; legacy single-detail
+ * schemas resolve to their only detail target.
+ */
 export const getDetailPageTarget = (
   schema: Pick<PageSchema, 'slug_structure' | 'integration_requirements' | 'frontend_targets'>,
 ): SchemaFrontendTarget | null => {
-  const target = schema.frontend_targets?.find((candidate) =>
+  const detailTargets = (schema.frontend_targets ?? []).filter((candidate) =>
     candidate.enabled && candidate.kind === 'detail-page',
   );
-  return target ?? null;
+  return detailTargets.find((candidate) => !candidate.supports_preview) ?? detailTargets[0] ?? null;
 };
 
 export const getCollectionSlotTargets = (
