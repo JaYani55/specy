@@ -115,33 +115,7 @@ const EventDetail = () => {
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [selectedMentorNames, setSelectedMentorNames] = useState<{name: string}[]>([]);
   const [eventPagePath, setEventPagePath] = useState<string | null>(null);
-  const [productPagePath, setProductPagePath] = useState<string | null>(null);
   const [legacyEventCustomFieldDefinitions, setLegacyEventCustomFieldDefinitions] = useState<TenantCustomFieldDefinitions>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    setProductPagePath(null);
-    const loadProductPage = async () => {
-      if (!activeTenantId || !productDetails?.product_page_id) return;
-      try {
-        const { data: page, error } = await supabase.from('pages')
-          .select('id, schema_id, tenant_id')
-          .eq('id', productDetails.product_page_id)
-          .eq('tenant_id', activeTenantId)
-          .maybeSingle();
-        if (error) throw error;
-        if (!page) return;
-        const schema = await getSchema(page.schema_id);
-        if (!cancelled && schema.tenant_id === activeTenantId && isCatalogueSchema(schema.entity_kind)) {
-          setProductPagePath(`${getSchemaConsolePath(schema)}/edit/${page.id}`);
-        }
-      } catch (error) {
-        console.error('Could not load product page link:', error);
-      }
-    };
-    void loadProductPage();
-    return () => { cancelled = true; };
-  }, [activeTenantId, productDetails?.product_page_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,12 +305,7 @@ const EventDetail = () => {
         <div className="mb-4 flex flex-wrap justify-end gap-2">
           {event.product_id && (permissions.canManageProducts || permissions.canViewAdminData) && (
             <Button variant="outline" onClick={() => navigate(`/products/manage/${event.product_id}`)}>
-              <Package className="mr-2 h-4 w-4" />Produkt öffnen
-            </Button>
-          )}
-          {productPagePath && permissions.canManageProducts && (
-            <Button variant="outline" onClick={() => navigate(productPagePath)}>
-              <ExternalLink className="mr-2 h-4 w-4" />Produktseite bearbeiten
+              <Package className="mr-2 h-4 w-4" />Produkt bearbeiten
             </Button>
           )}
           {eventPagePath && permissions.canEditEvents && (

@@ -1,36 +1,55 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpRight, Loader2, Package, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Loader2, Package, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { deleteProduct, fetchProducts, type Product as LegacyProduct } from '@/services/events/productService';
-import { AdminCard, AdminPageLayout } from '@/components/admin/ui';
+import { fetchMentorGroups, type MentorGroup } from '@/services/mentorGroupService';
+import { AdminCard, AdminPageLayout, EditButton, DeleteButton } from '@/components/admin/ui';
+import { getIconByName } from '@/constants/pillaricons';
+import { Badge } from '@/components/ui/badge';
+import { DeleteProductDialog } from '@/components/events/DeleteProductDialog';
 import { TenantCustomFieldsDialog } from '@/components/products/TenantCustomFieldsDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 export default function ProductCatalogue() {
   const navigate = useNavigate();
+  const { language, theme } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
   const permissions = usePermissions();
   const [products, setProducts] = useState<LegacyProduct[]>([]);
+  const [mentorGroups, setMentorGroups] = useState<MentorGroup[]>([]);
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<LegacyProduct | null>(null);
+  const activeTenantRef = useRef(activeTenantId);
+  activeTenantRef.current = activeTenantId;
 
   const load = useCallback(async () => {
     if (!activeTenantId) {
       setProducts([]);
+      setMentorGroups([]);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
-      setProducts(await fetchProducts(activeTenantId));
+      const [fetchedProducts, fetchedGroups] = await Promise.all([
+        fetchProducts(activeTenantId),
+        fetchMentorGroups(activeTenantId),
+      ]);
+      if (activeTenantRef.current !== activeTenantId) return;
+      setProducts(fetchedProducts);
+      setMentorGroups(fetchedGroups);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Produkte konnten nicht geladen werden.');
     } finally {
-      setIsLoading(false);
+      if (activeTenantRef.current === activeTenantId) setIsLoading(false);
     }
   }, [activeTenantId]);
 
@@ -40,14 +59,44 @@ export default function ProductCatalogue() {
   const visibleProducts = useMemo(() => products.filter((product) =>
     product.name.toLocaleLowerCase('de').includes(normalizedQuery)), [products, normalizedQuery]);
 
-  const removeProduct = async (product: LegacyProduct) => {
-    if (!activeTenantId || !window.confirm(`„${product.name}“ und alle zugehörigen Veranstaltungen sowie Archivdaten dauerhaft löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) return;
+  const getGroupNames = (groupIds?: number[]) => {
+    if (!groupIds?.length) return [];
+    return groupIds.map((id) => {
+      const group = mentorGroups.find((entry) => entry.id === id);
+      return group ? group.name : `Unbekannt (${id})`;
+    });
+  };
+
+  const formatSalary = (product: LegacyProduct) => {
+    if (!product.salary_type || product.salary_type === 'Standard') return 'Standard';
+    if (product.salary_type === 'Fixpreis') {
+      return `${product.salary !== undefined ? `${product.salary.toFixed(2)}€` : '-'} ${language === 'en' ? '(fixed)' : '(fix)'}`;
+    }
+    if (product.salary_type === 'Stundensatz') {
+      return `${product.salary !== undefined ? `${product.salary.toFixed(2)}€/h` : '-/h'}`;
+    }
+    return '-';
+  };
+
+  const confirmDeleteProduct = (product: LegacyProduct) => {
+    setProductToDelete(product);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteProduct = async () => {
+    const product = productToDelete;
+    if (!product || !activeTenantId) return;
+    setIsDeleting(true);
     try {
       await deleteProduct(product.id, activeTenantId);
       toast.success('Produkt und zugehörige Veranstaltungen wurden gelöscht.');
+      setDeleteDialogOpen(false);
+      setProductToDelete(null);
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Produkt konnte nicht gelöscht werden.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -79,19 +128,129 @@ export default function ProductCatalogue() {
           {isLoading ? (
             <AdminCard className="flex min-h-48 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin" /></AdminCard>
           ) : visibleProducts.length ? (
-            <div className="divide-y rounded-lg border">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {visibleProducts.map((product) => (
-                <div key={product.id} className="flex items-center gap-3 p-4 hover:bg-muted/40">
-                  <button type="button" className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left" onClick={() => navigate(`/products/manage/${product.id}`)}>
-                    <span className="min-w-0"><span className="block truncate font-medium">{product.name}</span><span className="block truncate text-sm text-muted-foreground">{product.description_de || 'Keine Kurzbeschreibung'}</span></span>
-                    <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                  {permissions.canManageProducts && (
-                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => void removeProduct(product)} aria-label={`„${product.name}“ dauerhaft löschen`}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
+                <AdminCard
+                  key={product.id}
+                  className="relative overflow-hidden cursor-pointer group"
+                  clickable
+                  onClick={() => navigate(`/products/manage/${product.id}`)}
+                >
+                  <div
+                    className="h-28 rounded-t-lg flex items-center justify-center relative overflow-hidden"
+                    style={{ background: product.gradient || 'linear-gradient(to right bottom, #3b82f6, #60a5fa, #93c5fd)' }}
+                  >
+                    <img
+                      src={getIconByName(product.icon_name || 'balloon', theme === 'dark')}
+                      alt={product.name}
+                      className="w-12 h-12 transition-transform duration-200 group-hover:scale-110"
+                    />
+                    <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors duration-200" />
+                  </div>
+
+                  <div className="p-5 flex flex-col flex-1">
+                    <div className="mb-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="text-lg font-semibold mb-1 text-foreground group-hover:text-primary transition-colors duration-200">
+                          {product.name}
+                        </h3>
+                        <ArrowUpRight className="h-4 w-4 mt-1 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+                        {product.description_de || (language === 'en' ? 'No short description' : 'Keine Kurzbeschreibung')}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={product.product_page_id ? 'secondary' : 'outline'} className="text-xs">
+                          {product.product_page_id
+                            ? (language === 'en' ? 'Product page connected' : 'Produktseite verbunden')
+                            : (language === 'en' ? 'No product page' : 'Keine Produktseite')}
+                        </Badge>
+                        {product.is_mentor_product && (
+                          <Badge variant="secondary" className="text-xs">
+                            {language === 'en' ? 'Staff product' : 'Mitarbeiter-Produkt'}
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 bg-green-500 rounded-full shrink-0" />
+                        <span className="text-sm font-medium text-muted-foreground">
+                          {language === 'en' ? 'Compensation:' : 'Vergütung:'}
+                        </span>
+                        <span className="text-sm text-foreground">{formatSalary(product)}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 bg-purple-500 rounded-full shrink-0" />
+                        <span className="text-sm font-medium text-muted-foreground">
+                          {language === 'en' ? 'Staff:' : 'Mitarbeiter:'}
+                        </span>
+                        <span className="text-sm text-foreground">
+                          {product.min_amount_mentors ?? 1}
+                          {product.max_amount_mentors ? ` - ${product.max_amount_mentors}` : ''}
+                        </span>
+                      </div>
+
+                      {product.description_effort && (
+                        <div className="flex items-start gap-2">
+                          <span className="w-2 h-2 bg-orange-500 rounded-full shrink-0 mt-1.5" />
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium text-muted-foreground">
+                              {language === 'en' ? 'Effort:' : 'Aufwand:'}
+                            </span>
+                            <p className="text-sm text-foreground line-clamp-2">{product.description_effort}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-start gap-2">
+                        <span className="w-2 h-2 bg-red-500 rounded-full shrink-0 mt-1.5" />
+                        <div className="min-w-0">
+                          <span className="text-sm font-medium text-muted-foreground">
+                            {language === 'en' ? 'Required traits:' : 'Erforderliche Eigenschaften:'}
+                          </span>
+                          <p className="text-sm text-foreground truncate">
+                            {product.assigned_groups?.length
+                              ? getGroupNames(product.assigned_groups).join(', ')
+                              : (language === 'en' ? 'None' : 'Keine')}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {permissions.canManageProducts && (
+                      <div className="mt-4 pt-4 border-t border-border">
+                        <div className="flex gap-2">
+                          <EditButton
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => navigate(`/products/manage/${product.id}`)}
+                          >
+                            {language === 'en' ? 'Edit' : 'Bearbeiten'}
+                          </EditButton>
+                          <DeleteButton
+                            size="sm"
+                            className="px-3"
+                            onClick={() => confirmDeleteProduct(product)}
+                          >
+                            <span className="sr-only">
+                              {language === 'en'
+                                ? `Delete ${product.name} and all related events permanently`
+                                : `„${product.name}“ und alle zugehörigen Veranstaltungen dauerhaft löschen`}
+                            </span>
+                          </DeleteButton>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="text-xs text-muted-foreground/60 text-center mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                      {language === 'en' ? 'Click to view details' : 'Klicken für Details'}
+                    </div>
+                  </div>
+                </AdminCard>
               ))}
             </div>
           ) : (
@@ -99,6 +258,14 @@ export default function ProductCatalogue() {
           )}
         </div>
       )}
+
+      <DeleteProductDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onDelete={handleDeleteProduct}
+        isDeleting={isDeleting}
+        ProductName={productToDelete?.name ?? ''}
+      />
     </AdminPageLayout>
   );
 }

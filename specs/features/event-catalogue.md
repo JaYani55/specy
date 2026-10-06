@@ -8,16 +8,21 @@ This is not the broader event/staff/CRM rebuild. Existing scheduling events and 
 
 ## Dashboard flow
 
-- `/create-event` retains the current product, staff, company, date/time, and scheduling fields. The product selector uses only products from the active workspace.
-- **Public event page** is optional. The schema picker shows only event-classified `page-collection` schemas owned by the active workspace. Without a selection, event creation remains private and creates no page.
+- `/create-event` retains the current product, staff, date/time, and scheduling fields. The product selector uses only products from the active workspace.
+- **Company is optional and lives as a subsection under Staff.** An existing CRM company can be selected or a new name typed; saving without a company entry stores no company link. Staff selection offers only the workspace's staff registry entries (`staff` table, the same directory as `/admin/all-mentors`); login/tenant accounts are not selectable.
+- **Public event page** is optional. The schema picker shows only event-classified `page-collection` schemas owned by the active workspace and preselects the first available schema so a new event defaults to a public page whenever a catalogue is configured; the operator may still switch to **Keine öffentliche Seite**. Without a selection, event creation remains private and creates no page.
 - Event creation can be opened from a Product's related-events panel. The form starts with that Product selected and, when no public page is created, returns to the originating Product view. A public page still opens in the PageBuilder after creation.
 - With a schema selected, the dashboard asks for a public page title and event timezone. The timezone defaults to the browser's IANA timezone but is displayed for the operator to confirm/change; it is not silently treated as UTC.
 - The event and its canonical `pages` record are created atomically via `create_event_page_aggregate`. The new page is a draft and the dashboard opens it in the canonical PageBuilder route.
 - `pages.content` contains developer-defined presentation/editorial content. Operational date, time, duration, mode, product selection, and scheduling data stay on `mentorbooking_events`.
 - The PageBuilder edits page name, slug, and schema content through event-specific aggregate RPCs. Its top-level content-template controls can save a reusable template for this schema and load one onto another event page; templates copy page content only, never the event title, slug, publication state, or operational schedule. Publication is explicit and independent of the event's operational scheduling status. Event edits retain the page link; public schedule data is resolved from the event row rather than copied into page JSON.
-- Event detail/edit screens link back to the public page editor and associated Product. Event custom values appear under **Weitere Veranstaltungsangaben** and remain separate from event page content. For Product-associated Events, available fields are defined by that Product and stored in `mentorbooking_events.custom_fields`; for Events without a Product, legacy workspace-wide definitions remain a compatibility fallback. Deleting an event removes its linked page in the same caller-scoped transaction; deleting a linked page directly is restricted.
+- Event detail/edit screens link back to the public page editor and associated Product. The event detail screen offers **Produkt bearbeiten**, which opens the product edit screen `/products/manage/:productId`; it no longer offers a direct **Produktseite bearbeiten** shortcut into the Product PageBuilder. Event custom values appear under **Weitere Veranstaltungsangaben** and remain separate from event page content. For Product-associated Events, available fields are defined by that Product and stored in `mentorbooking_events.custom_fields`; for Events without a Product, legacy workspace-wide definitions remain a compatibility fallback. Deleting an event removes its linked page in the same caller-scoped transaction; deleting a linked page directly is restricted.
 
 Event page creation currently happens when creating a new event. Converting/attaching a page to an existing legacy event is not included in this MVP.
+
+### Editor form UX
+
+The event form (`EventForm` and its sections) shows a help tooltip on the label of every field whose entry is still missing (date, time, duration, staff members, required staff count, public page title, event timezone, optional company) explaining what entry is expected. The tooltip appears on hover/focus of the amber indicator and disappears once the entry is provided. The event editor no longer renders the plugin `knowledgeBase.entity.actions` row (KB Sync), so plugin KB actions are limited to page/form/object entities.
 
 ## Tenant and database invariants
 

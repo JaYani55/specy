@@ -36,6 +36,7 @@ import { DateTimeSection } from "./EventFormSections/DateTimeSection";
 import { AdditionalInfoAndLinkSection } from "./EventFormSections/AdditionalInfoAndLinkSection";
 import { LockAndMentorCountSection } from "./EventFormSections/LockAndMentorCountSection";
 import { FooterSection } from "./EventFormSections/FooterSection";
+import { MissingEntryTooltipLabel } from "./EventFormSections/MissingEntryTooltipLabel";
 import { Users, Building2, CalendarDays, Info } from "lucide-react";
 import { toast } from 'sonner';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
@@ -45,7 +46,7 @@ import { isCatalogueSchema } from '@/utils/schemaKinds';
 
 const formSchema = zod.object({
   company_id: zod.string().optional(),
-  company: zod.string().trim().min(1, { message: "Company name is required" }),
+  company: zod.string().trim().optional(),
   date: zod.string().min(1, { message: "Date is required" }),
   time: zod.string().min(1, { message: "Time is required" }),
   duration_minutes: zod.number().min(1, { message: "Duration is required" }),
@@ -265,6 +266,11 @@ export const EventForm: React.FC<EventFormProps> = ({
         form.setValue('event_schema_id', undefined, { shouldDirty: true });
         form.setValue('event_page_name', '', { shouldDirty: true });
       }
+      // Preselect the first available event catalogue so new events default
+      // to a public page whenever a schema is configured for the workspace.
+      if (mode === 'create' && !selectedSchemaId && eligibleSchemas.length > 0) {
+        form.setValue('event_schema_id', eligibleSchemas[0].id, { shouldDirty: true });
+      }
     }).catch((error) => {
       console.error('Could not load event schemas for the active workspace:', error);
       if (!cancelled) setEventSchemas([]);
@@ -421,14 +427,28 @@ export const EventForm: React.FC<EventFormProps> = ({
                   <>
                     {mode === 'create' && <FormField control={form.control} name="event_page_name" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{language === 'en' ? 'Public page title' : 'Titel der öffentlichen Seite'}</FormLabel>
+                        <MissingEntryTooltipLabel
+                          label={language === 'en' ? 'Public page title' : 'Titel der öffentlichen Seite'}
+                          missingText={!(field.value || '').trim()
+                            ? language === 'en'
+                              ? 'The public page title is missing. Please enter the title under which the event page will be published.'
+                              : 'Der Titel der öffentlichen Seite fehlt. Bitte gib den Titel ein, unter dem die Veranstaltungsseite veröffentlicht wird.'
+                            : null}
+                        />
                         <FormControl><Input {...field} value={field.value || ''} placeholder={language === 'en' ? 'Event title' : 'Veranstaltungstitel'} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />}
                     <FormField control={form.control} name="timezone" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{language === 'en' ? 'Event timezone (IANA)' : 'Zeitzone der Veranstaltung (IANA)'}</FormLabel>
+                        <MissingEntryTooltipLabel
+                          label={language === 'en' ? 'Event timezone (IANA)' : 'Zeitzone der Veranstaltung (IANA)'}
+                          missingText={!(field.value || '').trim()
+                            ? language === 'en'
+                              ? 'The event timezone is missing. Please confirm the IANA timezone used for public delivery.'
+                              : 'Die Zeitzone der Veranstaltung fehlt. Bitte bestätige die IANA-Zeitzone für die öffentliche Auslieferung.'
+                            : null}
+                        />
                         <FormControl><Input {...field} value={field.value || ''} placeholder="Europe/Berlin" /></FormControl>
                         <FormMessage />
                         <p className="text-xs text-muted-foreground">{language === 'en' ? 'Confirm the timezone used for the event; it is included in public delivery.' : 'Bestätige die Zeitzone der Veranstaltung; sie wird öffentlich mit ausgeliefert.'}</p>
@@ -438,7 +458,7 @@ export const EventForm: React.FC<EventFormProps> = ({
                 )}
               </section>
             )}
-            {/* Staff Section */}
+            {/* Staff Section with optional Company subsection */}
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Users className="h-6 w-6 text-primary" />
@@ -449,18 +469,17 @@ export const EventForm: React.FC<EventFormProps> = ({
                 isLoading={isLoading}
                 language={language}
               />
-            </div>
-            {/* Company Section */}
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Building2 className="h-6 w-6 text-primary" />
-                <span className="font-semibold text-xl">{language === "en" ? "Company" : "Unternehmen"}</span>
+              <div className="mt-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <Building2 className="h-5 w-5 text-primary" />
+                  <span className="font-semibold text-lg">{language === "en" ? "Company (optional)" : "Unternehmen (optional)"}</span>
+                </div>
+                <CompanySection
+                  form={form}
+                  isLoading={isLoading}
+                  language={language}
+                />
               </div>
-              <CompanySection
-                form={form}
-                isLoading={isLoading}
-                language={language}
-              />
             </div>
             {/* Date & Time Section */}
             <div>

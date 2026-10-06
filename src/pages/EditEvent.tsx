@@ -19,7 +19,6 @@ import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
 import { getSchema, triggerRevalidation, type RevalidationResult } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { isCatalogueSchema } from '@/utils/schemaKinds';
-import EntityActionsRow from '@/components/entity-actions/EntityActionsRow';
 
 type EventFormInitialValues = NonNullable<React.ComponentProps<typeof EventForm>["initialValues"]>;
 
@@ -285,11 +284,14 @@ const EditEvent = () => {
       const staffMembers = values.staff_members && values.staff_members.length > 0
         ? values.staff_members
         : [];
-      const companyRecord = await ensureCompanyRecord({
-        companyId: values.company_id,
-        companyName: values.company,
-        tenantId: activeTenantId,
-      });
+      const companyName = values.company?.trim() ?? '';
+      const companyRecord = companyName
+        ? await ensureCompanyRecord({
+            companyId: values.company_id,
+            companyName,
+            tenantId: activeTenantId,
+          })
+        : null;
       const endTime = calculateEndTime(values.time, values.duration_minutes);
       const currentEvent = getEventById(id);
 
@@ -306,8 +308,8 @@ const EditEvent = () => {
       const { data: updatedEvent, error } = await supabase
         .from('mentorbooking_events')
         .update({
-          company_id: companyRecord.id,
-          company: companyRecord.name,
+          company_id: companyRecord?.id ?? null,
+          company: companyRecord?.name ?? '',
           date: values.date,
           time: values.time,
           end_time: endTime,
@@ -502,14 +504,6 @@ const EditEvent = () => {
         isLoading={isLoading}
         mode="edit"
       />
-
-      {id && eventData?.tenant_id && (
-        <EntityActionsRow
-          entityType="event"
-          entityId={id}
-          tenantId={eventData.tenant_id}
-        />
-      )}
     </div>
   );
 };

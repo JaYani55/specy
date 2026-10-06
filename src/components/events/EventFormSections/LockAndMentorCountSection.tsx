@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchStaffTraits, StaffTraitDefinition } from "@/services/staffRegistryService";
+import { MissingEntryTooltipLabel } from "./MissingEntryTooltipLabel";
 
 export function LockAndMentorCountSection({ form, selectedProduct, language, isLoading }) {
   const minMentors = selectedProduct?.min_amount_mentors ?? 1;
@@ -58,9 +59,14 @@ export function LockAndMentorCountSection({ form, selectedProduct, language, isL
         name="required_staff_count"
         render={() => (
           <FormItem>
-            <FormLabel>
-              {language === "en" ? "Required Staff Count" : "Benötigte Mitarbeiteranzahl"}
-            </FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Required Staff Count" : "Benötigte Mitarbeiteranzahl"}
+              missingText={!value
+                ? language === "en"
+                  ? "The required staff count is missing. Please specify how many staff members are needed."
+                  : "Die benötigte Mitarbeiteranzahl fehlt. Bitte gib an, wie viele Mitarbeiter benötigt werden."
+                : null}
+            />
             <div className="flex flex-wrap gap-2 items-center">
               {!showCustom && (
                 <>

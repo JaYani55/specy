@@ -1,9 +1,13 @@
 import React from "react";
-import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
+import { FormField, FormItem, FormControl, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { CompanyCombobox } from "../CompanyCombobox";
+import { MissingEntryTooltipLabel } from "./MissingEntryTooltipLabel";
 
 export function CompanySection({ form, isLoading, language }) {
+  const company = (form.watch("company") || '').trim();
+  const missing = company.length === 0;
+
   return (
     <div className="space-y-4">
       <FormField
@@ -11,9 +15,14 @@ export function CompanySection({ form, isLoading, language }) {
         name="company_id"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>
-              {language === "en" ? "Existing Company" : "Bestehendes Unternehmen"}
-            </FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Existing Company (optional)" : "Bestehendes Unternehmen (optional)"}
+              missingText={missing
+                ? language === "en"
+                  ? "Optional: select an existing company or enter a company name below. You can also save the event without a company."
+                  : "Optional: wähle ein bestehendes Unternehmen aus oder gib unten einen Unternehmensnamen ein. Du kannst die Veranstaltung auch ohne Unternehmen speichern."
+                : null}
+            />
             <FormControl>
               <CompanyCombobox
                 value={field.value || ""}
@@ -33,9 +42,14 @@ export function CompanySection({ form, isLoading, language }) {
         name="company"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>
-              {language === "en" ? "Company Name" : "Unternehmensname"}
-            </FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Company Name (optional)" : "Unternehmensname (optional)"}
+              missingText={missing
+                ? language === "en"
+                  ? "Optional: enter a company name if the event belongs to a company. A new CRM company record is created automatically when you save."
+                  : "Optional: gib einen Unternehmensnamen ein, wenn die Veranstaltung zu einem Unternehmen gehört. Beim Speichern wird automatisch ein neuer CRM-Firmeneintrag angelegt."
+                : null}
+            />
             <FormControl>
               <Input
                 {...field}
@@ -48,11 +62,6 @@ export function CompanySection({ form, isLoading, language }) {
                 }}
               />
             </FormControl>
-            <p className="text-sm text-muted-foreground">
-              {language === "en"
-                ? "Select an existing company or type a new one. A new CRM company record will be created automatically when you save."
-                : "Wählen Sie ein bestehendes Unternehmen aus oder geben Sie ein neues ein. Beim Speichern wird automatisch ein neuer CRM-Firmeneintrag angelegt."}
-            </p>
             <FormMessage />
           </FormItem>
         )}

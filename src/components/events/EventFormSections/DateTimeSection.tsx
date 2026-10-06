@@ -1,9 +1,14 @@
 import React from "react";
-import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
+import { FormField, FormItem, FormControl, FormMessage } from "@/components/ui/form";
 import { TimePicker } from "../time-picker";
 import { DurationPicker } from "../duration-picker";
+import { MissingEntryTooltipLabel } from "./MissingEntryTooltipLabel";
 
 export function DateTimeSection({ form, endTime, language, isLoading = false }) {
+  const date = form.watch("date");
+  const time = form.watch("time");
+  const duration = form.watch("duration_minutes");
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <FormField
@@ -11,7 +16,14 @@ export function DateTimeSection({ form, endTime, language, isLoading = false }) 
         name="date"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{language === "en" ? "Date" : "Datum"}</FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Date" : "Datum"}
+              missingText={!date
+                ? language === "en"
+                  ? "The event date is missing. Please choose the date on which the event takes place."
+                  : "Das Datum der Veranstaltung fehlt. Bitte wähle das Datum, an dem die Veranstaltung stattfindet."
+                : null}
+            />
             <FormControl>
               <input
                 type="date"
@@ -29,7 +41,14 @@ export function DateTimeSection({ form, endTime, language, isLoading = false }) 
         name="time"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{language === "en" ? "Start Time" : "Startzeit"}</FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Start Time" : "Startzeit"}
+              missingText={!time
+                ? language === "en"
+                  ? "The start time is missing. Please choose when the event starts."
+                  : "Die Startzeit fehlt. Bitte wähle, wann die Veranstaltung beginnt."
+                : null}
+            />
             <FormControl>
               <TimePicker value={field.value} onChange={field.onChange} disabled={isLoading} />
             </FormControl>
@@ -42,7 +61,14 @@ export function DateTimeSection({ form, endTime, language, isLoading = false }) 
         name="duration_minutes"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{language === "en" ? "Duration (min)" : "Dauer (Minuten)"}</FormLabel>
+            <MissingEntryTooltipLabel
+              label={language === "en" ? "Duration (min)" : "Dauer (Minuten)"}
+              missingText={!duration
+                ? language === "en"
+                  ? "The duration is missing. Please specify how long the event lasts in minutes."
+                  : "Die Dauer fehlt. Bitte gib an, wie lange die Veranstaltung in Minuten dauert."
+                : null}
+            />
             <FormControl>
               <DurationPicker value={field.value} onChange={field.onChange} disabled={isLoading} />
             </FormControl>

@@ -61,11 +61,14 @@ const CreateEvent = () => {
       const staffMembers = values.staff_members && values.staff_members.length > 0
         ? values.staff_members
         : user?.id ? [user.id] : [];
-      const companyRecord = await ensureCompanyRecord({
-        companyId: values.company_id,
-        companyName: values.company,
-        tenantId: activeTenantId,
-      });
+      const companyName = values.company?.trim() ?? '';
+      const companyRecord = companyName
+        ? await ensureCompanyRecord({
+            companyId: values.company_id,
+            companyName,
+            tenantId: activeTenantId,
+          })
+        : null;
 
       let createdRecord: { id: string; tenant_id: string } | null = null;
       let publicPage: { page_id: string; editor_path: string } | null = null;
@@ -79,8 +82,8 @@ const CreateEvent = () => {
           schema_id: schema.id,
           expected_definition_revision: schema.definition_revision ?? 1,
           event: {
-            company: companyRecord.name,
-            company_id: companyRecord.id,
+            company: companyRecord?.name ?? '',
+            company_id: companyRecord?.id ?? null,
             date: values.date,
             time: values.time,
             end_time: endTime,
@@ -113,8 +116,8 @@ const CreateEvent = () => {
         const { data: createdRecords, error } = await supabase
           .from('mentorbooking_events')
           .insert({
-            company: companyRecord.name,
-            company_id: companyRecord.id,
+            company: companyRecord?.name ?? '',
+            company_id: companyRecord?.id ?? null,
             date: values.date,
             time: values.time,
             end_time: endTime,

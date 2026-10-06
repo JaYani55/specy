@@ -9,8 +9,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useActiveWorkspace } from "@/contexts/ActiveWorkspaceContext";
+import { fetchStaffDirectory, fetchStaffRecord } from "@/services/staffRegistryService";
 
 interface Staff {
   user_id: string;
@@ -31,6 +32,7 @@ export function StaffCombobox({
   maxSelection 
 }: StaffComboboxProps) {
   const { language } = useTheme();
+  const { activeTenantId } = useActiveWorkspace();
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState("");
@@ -44,7 +46,7 @@ export function StaffCombobox({
     if (open) {
       loadStaff();
     }
-  }, [open]);
+  }, [open, activeTenantId]);
   
   // Load selected staff when value changes
   React.useEffect(() => {
@@ -55,87 +57,34 @@ export function StaffCombobox({
     }
   }, [value]);
   
-  // Function to load all staff (coaches and other staff roles)
+  // Function to load all staff from the workspace staff registry.
+  // Only registry staff entries are offered; login/tenant accounts are not selectable.
   const loadStaff = async () => {
     setLoading(true);
     try {
-      const { data: roleData, error: roleError } = await supabase
-        .from('roles')
-        .select('id, name')
-        .in('name', ['staff', 'mentoringmanagement', 'super-admin']);
-
-      if (roleError) {
-        setLoading(false);
-        return;
-      }
-
-      if (!roleData?.length) {
-        setStaff([]);
-        setLoading(false);
-        return;
-      }
-
-      const staffRoleIds = roleData.map(role => role.id);
-      const { data: userRolesData, error: userRolesError } = await supabase
-        .from('user_roles')
-        .select('user_id')
-        .in('role_id', staffRoleIds);
-
-      if (userRolesError) {
-        setLoading(false);
-        return;
-      }
-
-      if (!userRolesData?.length) {
-        setStaff([]);
-        setLoading(false);
-        return;
-      }
-
-      const staffUserIds = [...new Set(userRolesData.map(item => item.user_id))];
-      const { data: profiles, error: profilesError } = await supabase
-        .from('user_profile')
-        .select('user_id, Username')
-        .in('user_id', staffUserIds)
-        .order('Username');
-
-      if (profilesError) {
-        setLoading(false);
-        return;
-      }
-
-      const transformedData = profiles.map(profile => ({
-        user_id: profile.user_id,
-        Username: profile.Username || 'Unknown'
-      }));
-
-      setStaff(transformedData);
+      const staffRecords = await fetchStaffDirectory(activeTenantId);
+      setStaff(staffRecords.map((record) => ({
+        user_id: record.id,
+        Username: record.displayName || 'Unknown',
+      })));
     } catch (err) {
-      // silent
+      console.error('Error loading staff registry:', err);
     } finally {
       setLoading(false);
     }
   };
   
-  // Function to load specific staff by IDs
+  // Function to load specific staff by registry IDs
   const loadStaffByIds = async (ids: string[]) => {
     try {
-      const { data: profileData, error: profileError } = await supabase
-        .from('user_profile')
-        .select('user_id, Username')
-        .in('user_id', ids);
-
-      if (profileError) {
-        return;
-      }
-
-      if (profileData) {
-        const staffData = profileData.map(profile => ({
-          user_id: profile.user_id,
-          Username: profile.Username || 'Unknown'
+      const results = await Promise.all(ids.map((id) => fetchStaffRecord(id, activeTenantId)));
+      const staffData = results
+        .filter((record): record is NonNullable<typeof record> => Boolean(record))
+        .map((record) => ({
+          user_id: record.id,
+          Username: record.displayName || 'Unknown',
         }));
-        setSelectedStaff(staffData);
-      }
+      setSelectedStaff(staffData);
     } catch (err) {
       // silent
     }

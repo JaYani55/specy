@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, Brain } from 'lucide-react';
 
 interface EntityActionsRowProps {
-  entityType: 'page' | 'form' | 'object' | 'event';
+  entityType: 'page' | 'form' | 'object';
   entityId: string;
   tenantId?: string | null;
 }

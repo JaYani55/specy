@@ -8,7 +8,7 @@ Implemented: tenant-scoped list/get/create/update/publish/unpublish/archive; sch
 
 ## Dashboard entry points
 
-`/products/manage` is the Products overview. It lists the event-planning products of the active workspace in one searchable page. **Produkt anlegen** uses the compatible legacy form; **Weitere Verwaltung** opens `/products/manage/legacy`. `/products` redirects to this overview. `/products/manage/:productId` opens a legacy Product detail/editor.
+`/products/manage` is the Products overview. It lists the event-planning products of the active workspace in one searchable page as a card grid matching the legacy product-management styling: gradient banner with the product icon, name, short description, and an inline data overview (product-page connection badge, staff-product badge, compensation, required staff range, effort, required trait groups). **Produkt anlegen** uses the compatible legacy form; deletion uses the shared permanent-delete confirmation dialog; **Weitere Verwaltung** opens `/products/manage/legacy`. `/products` redirects to this overview. `/products/manage/:productId` opens a legacy Product detail/editor.
 
 The separate Website-product UI (`/products/schemas`) has been retired: the route now redirects to `/products/manage`, and the overview no longer shows a Website-Produkte section or a Website-Produkt anlegen action. The intended product workflow is: create a product, connect it to a schema (its canonical Product page via `product_page_id`), create events for the product, and the event workflow generates the event pages.
 
