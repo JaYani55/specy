@@ -21,7 +21,7 @@ import {
 import { registerPluginMcpTools } from '../lib/mcpHooks';
 import type { VerifiedAuthSession } from '../lib/auth';
 import { getPublicUrlConfig } from '../lib/systemConfig';
-import { completeSchemaRegistration, type SchemaFrontendTargetInput } from '../lib/schemaRegistration';
+import { completeSchemaRegistration, replaceSchemaFrontendTargets, type SchemaFrontendTargetInput } from '../lib/schemaRegistration';
 import { validateSchemaContentContract, type SchemaContentContractInput } from '../lib/schemaRegistration';
 import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 import { serializeMcpError } from '../lib/apiError';
@@ -990,15 +990,13 @@ async function createMcpServerWithTools(
         })).describe('Complete replacement target list; use server paths, never browser fragments.'),
       },
       async ({ schema_slug, targets }) => {
+        // In-process call to the same shared logic as the REST route. The MCP
+        // server must not self-fetch its own public URL: Worker-to-self HTTP
+        // subrequests through the Cloudflare proxy can fail with 522 even while
+        // the API is healthy.
         try {
-          const response = await fetch(`${baseUrl}/api/schemas/${encodeURIComponent(schema_slug)}/frontend-targets`, {
-            method: 'PUT',
-            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ targets }),
-          });
-          const result = await response.json().catch(() => ({})) as Record<string, unknown>;
-          if (!response.ok) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: result.error || `Frontend-target update failed (${response.status}).` }, null, 2) }] };
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+          const result = await replaceSchemaFrontendTargets(env, schema_slug, targets, authToken!);
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result.body, null, 2) }] };
         } catch (error) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error instanceof Error ? error.message : 'Frontend-target update failed.' }, null, 2) }] };
         }

@@ -304,6 +304,51 @@ export async function getSchemaFrontendTargets(
   return data ?? [];
 }
 
+/**
+ * Shared frontend-target replacement used by the REST route
+ * (`PUT /api/schemas/:slug/frontend-targets`) and the MCP tool
+ * (`specy_pages_schemas_replace_frontend_targets`). Both must go through the
+ * same validation and atomic RPC; the MCP surface must never self-fetch its own
+ * public URL over HTTP, because Worker-to-self subrequests through the
+ * Cloudflare proxy can fail with 522 while the API itself is healthy.
+ */
+export async function replaceSchemaFrontendTargets(
+  env: Env,
+  slug: string,
+  targets: SchemaFrontendTargetInput[],
+  token: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const client = await createSupabaseClient(env, token);
+  const { data: schema, error: schemaError } = await client
+    .from('page_schemas')
+    .select('id, slug, api_slug, tenant_id, integration_requirements')
+    .eq('api_slug', slug)
+    .single();
+
+  if (schemaError || !schema) return { status: 404, body: { error: `Schema "${slug}" not found` } };
+
+  const validation = validateSchemaFrontendTargetInputs(targets, schema.integration_requirements);
+  if (!validation.ok) return { status: 400, body: { error: validation.error } };
+
+  const admin = await createSupabaseAdminClient(env);
+  const { error: rpcError } = await admin.rpc('replace_schema_frontend_targets', {
+    target_schema_id: schema.id,
+    target_targets: validation.targets,
+  });
+
+  if (rpcError) return { status: 500, body: { error: rpcError.message } };
+
+  const replaced = await getSchemaFrontendTargets(env, schema.id, token);
+  return {
+    status: 200,
+    body: {
+      success: true,
+      schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug },
+      targets: replaced,
+    },
+  };
+}
+
 export function buildTargetRevalidationPath(target: {
   kind: SchemaFrontendTargetKind;
   host_path: string;

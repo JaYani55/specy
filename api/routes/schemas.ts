@@ -18,7 +18,7 @@ import {
   buildTargetRevalidationPath,
   completeSchemaRegistration,
   getSchemaFrontendTargets,
-  validateSchemaFrontendTargetInputs,
+  replaceSchemaFrontendTargets,
   type SchemaRegistrationPayload,
   type SchemaFrontendTargetInput,
 } from '../lib/schemaRegistration';
@@ -1362,28 +1362,8 @@ schemas.put('/:slug/frontend-targets', async (c) => {
     return c.json({ error: 'targets must be an array' }, 400);
   }
 
-  const client = await createSupabaseClient(c.env, auth.token);
-  const { data: schema, error: schemaError } = await client
-    .from('page_schemas')
-    .select('id, slug, api_slug, tenant_id, integration_requirements')
-    .eq('api_slug', slug)
-    .single();
-
-  if (schemaError || !schema) return c.json({ error: `Schema "${slug}" not found` }, 404);
-
-  const validation = validateSchemaFrontendTargetInputs(body.targets, schema.integration_requirements);
-  if (!validation.ok) return c.json({ error: validation.error }, 400);
-
-  const admin = await createSupabaseAdminClient(c.env);
-  const { error: rpcError } = await admin.rpc('replace_schema_frontend_targets', {
-    target_schema_id: schema.id,
-    target_targets: validation.targets,
-  });
-
-  if (rpcError) return c.json({ error: rpcError.message }, 500);
-
-  const targets = await getSchemaFrontendTargets(c.env, schema.id, auth.token);
-  return c.json({ success: true, schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug }, targets });
+  const result = await replaceSchemaFrontendTargets(c.env, slug, body.targets, auth.token);
+  return c.json(result.body, result.status as ContentfulStatusCode);
 });
 
 // PATCH /api/schemas/:slug/system-data — repair non-secret schema integration metadata.
