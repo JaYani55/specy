@@ -62,8 +62,10 @@ The manifest is derived from the authoritative `page_schemas` row and enabled `s
 - `data.supported_includes` is allow-listed by entity kind: service products support `entity`; event pages support `entity`, `event`, and `product`; ordinary pages support none.
 - `data.available` is false and collection/detail URLs are null only when an entity-specific public delivery contract is unavailable.
 - Public collection and detail endpoints expose only registered schemas and pages with `status = 'published'`.
+- Stateless draft delivery: a caller presenting the schema's registered revalidation secret as `Authorization: Bearer <secret>` **and** passing `include_drafts=true` (alias `preview=1`) additionally receives draft pages from the collection and detail endpoints (`drafts_included: true` in the response). Anonymous callers never see drafts. This lets the frontend render non-public preview routes (e.g. `/preview/:slug`) statelessly without caching.
 - `published_at` represents the latest transition into `published` and is returned by public page delivery.
 - Revalidation is a CMS/operator-triggered request. The CMS sends one request per enabled target with `path` and the bare page `slug` query parameters plus `Authorization: Bearer <secret>`.
+- Backend ISR push: the CMS automatically fires revalidation on every page create/update and publication transition — **drafts included** — via the REST page routes and the MCP page tools. The request body carries a JSON payload `{ schema_slug, page_id, slug, status, event, preview_path?, content? }` (legacy frontends that expect only query parameters keep working; a 401 is retried with `?secret=` for backward compatibility). The dashboard may additionally trigger revalidation client-side; POSTs are idempotent.
 - `revalidation.supports_new_routes` is currently `null` (unknown), not a promise. Registration/health checks do not prove that a static frontend can generate new routes. An acknowledgement-only endpoint is not equivalent to ISR.
 
 ## Endpoint contract
@@ -80,7 +82,13 @@ The revalidation handler receives one request per target:
 ```text
 POST /api/revalidate?path=/blog/example&slug=example
 Authorization: Bearer <registered-secret>
+Content-Type: application/json
+
+{ "schema_slug": "events", "page_id": "…", "slug": "example", "status": "draft",
+  "event": "updated", "preview_path": "/preview/example", "content": { … } }
 ```
+
+`preview_path` is present when the schema has an enabled `supports_preview` target; `content` carries the page JSON so the frontend can cache drafts if desired (push model). The stateless pull model uses the draft delivery above instead.
 
 ## Backward compatibility
 

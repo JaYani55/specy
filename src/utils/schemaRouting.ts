@@ -40,6 +40,7 @@ export const normalizeSchemaIntegrationRequirements = (
       : null,
     schema_identification_hint: normalizeNullable(merged.schema_identification_hint),
     registration_notes: normalizeNullable(merged.registration_notes),
+    preview_slug_structure: normalizeNullable(merged.preview_slug_structure),
   };
 };
 

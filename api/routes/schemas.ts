@@ -30,6 +30,13 @@ import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schem
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
 import { validateSchemaContent } from '../lib/schemaContentValidation';
 import { sanitizeRevalidationDiagnostic } from '../lib/revalidationDiagnostics';
+import {
+  isRevalidationSecretValid,
+  pageRevalidationEventName,
+  triggerPageRevalidation,
+  type PageRevalidationOutcome,
+  type PageRevalidationTriggerInput,
+} from '../lib/schemaRevalidation';
 import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import {
   applyDefaultPublicEventInclude,
@@ -557,6 +564,45 @@ async function migrateLegacyRevalidationSecret(env: Env, schema: SchemaSecretSta
   };
 }
 
+/**
+ * Backend-side ISR push after page writes (create/update/publish, drafts
+ * included). Reads the schema's revalidation configuration with the admin
+ * client and fires one POST per enabled frontend target. Never throws and
+ * never blocks the write operation; failures are reported in the response.
+ */
+async function pushPageRevalidation(env: Env, schemaId: string, input: PageRevalidationTriggerInput): Promise<PageRevalidationOutcome | null> {
+  const admin = await createSupabaseAdminClient(env);
+  const { data: revalSchema } = await admin
+    .from('page_schemas')
+    .select('id, api_slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status, slug_structure')
+    .eq('id', schemaId)
+    .maybeSingle();
+  if (!revalSchema) return null;
+  return await triggerPageRevalidation(env, revalSchema, input);
+}
+
+/**
+ * Stateless draft delivery check ("Variante B"): the request may read draft
+ * content when it carries the schema's revalidation secret as a Bearer token
+ * and asks for drafts (include_drafts=true or preview=1).
+ */
+async function hasDraftDeliveryAccess(
+  env: Env,
+  c: { req: { header: (name: string) => string | undefined } },
+  schemaId: string,
+): Promise<boolean> {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  if (!token) return false;
+  const admin = await createSupabaseAdminClient(env);
+  const { data: secretRow } = await admin
+    .from('page_schemas')
+    .select('revalidation_secret, revalidation_secret_name')
+    .eq('id', schemaId)
+    .maybeSingle();
+  if (!secretRow) return false;
+  return await isRevalidationSecretValid(env, secretRow, token);
+}
+
 async function getSchemaSecretStatus(
   env: Env,
   slug: string,
@@ -978,7 +1024,15 @@ schemas.post('/:slug/pages', async (c) => {
     .select('id, slug, name, status, content, schema_id, tenant_id, domain_url, updated_at, published_at')
     .single();
   if (pageError || !page) return c.json({ error: pageError?.message || 'Failed to create page.' }, pageError?.code === '23505' ? 409 : 500);
-  return c.json({ success: true, page }, 201);
+  // ISR push: also for draft pages, so the frontend can (re)build preview routes.
+  const revalidation = await pushPageRevalidation(c.env, schema.id, {
+    page_id: page.id,
+    page_slug: page.slug,
+    status: page.status as 'draft' | 'published',
+    event: 'created',
+    content: (page.content ?? null) as Record<string, unknown> | null,
+  });
+  return c.json({ success: true, page, ...(revalidation ? { revalidation } : {}) }, 201);
 });
 
 schemas.get('/:slug/pages', async (c) => {
@@ -1013,8 +1067,13 @@ schemas.get('/:slug/pages', async (c) => {
     .from('pages')
     .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
-    .eq('status', 'published')
     .order('updated_at', { ascending: false });
+  // Draft delivery ("Variante B"): a frontend presenting the schema's
+  // revalidation secret as a Bearer token may fetch drafts (stateless preview
+  // rendering). Anonymous and user-session callers only see published pages.
+  const draftsAuthorized = (c.req.query('include_drafts') === 'true' || c.req.query('preview') === '1')
+    && await hasDraftDeliveryAccess(c.env, c, schema.id);
+  pageQuery = draftsAuthorized ? pageQuery.in('status', ['published', 'draft']) : pageQuery.eq('status', 'published');
   if (schema.tenant_id) pageQuery = pageQuery.eq('tenant_id', schema.tenant_id);
   const { data, error } = await pageQuery;
 
@@ -1115,6 +1174,7 @@ schemas.get('/:slug/pages', async (c) => {
       targets,
     },
     pages: publicPages,
+    drafts_included: draftsAuthorized,
   });
 });
 
@@ -1150,6 +1210,7 @@ schemas.patch('/:slug/pages/:pageId', async (c) => {
     }
     if (input.name !== undefined && (typeof input.name !== 'string' || !input.name.trim())) return c.json({ error: 'name must be a non-empty string.' }, 400);
     if (input.slug !== undefined && (typeof input.slug !== 'string' || !input.slug.trim())) return c.json({ error: 'slug must be a non-empty string.' }, 400);
+    const { data: eventPageBefore } = await client.from('pages').select('id, slug, status').eq('id', c.req.param('pageId')).maybeSingle();
     try {
       const page = await updateEventPageAggregate(client, schema, c.req.param('pageId'), {
         tenant_id: input.tenant_id,
@@ -1160,7 +1221,15 @@ schemas.patch('/:slug/pages/:pageId', async (c) => {
         ...(typeof input.slug === 'string' ? { slug: input.slug } : {}),
         ...(typeof input.status === 'string' ? { status: input.status as 'draft' | 'published' | 'archived' } : {}),
       });
-      return c.json({ success: true, page });
+      const aggregatePage = page as { id?: string; slug?: string; status?: string; content?: Record<string, unknown> | null };
+      const revalidation = await pushPageRevalidation(c.env, schema.id, {
+        page_id: c.req.param('pageId'),
+        page_slug: aggregatePage.slug ?? '',
+        status: (aggregatePage.status ?? 'draft') as 'draft' | 'published' | 'archived',
+        event: pageRevalidationEventName(eventPageBefore?.status, aggregatePage.status ?? 'draft'),
+        content: (aggregatePage.content ?? null) as Record<string, unknown> | null,
+      });
+      return c.json({ success: true, page, ...(revalidation ? { revalidation } : {}) });
     } catch (error) {
       if (error instanceof EventPageAggregateError) {
         return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status as ContentfulStatusCode);
@@ -1212,7 +1281,17 @@ schemas.patch('/:slug/pages/:pageId', async (c) => {
     .eq('id', pageId).eq('schema_id', schema.id).eq('tenant_id', currentPage.tenant_id)
     .select('id, slug, name, status, content, schema_id, tenant_id, domain_url, updated_at, published_at').single();
   if (error || !page) return c.json({ error: error?.message || 'Page update failed.' }, 500);
-  return c.json({ success: true, page });
+  // ISR push: drafts and publication transitions alike, so the frontend can
+  // (re)build preview and public routes from API-driven updates.
+  const nextStatus = (page.status ?? 'draft') as 'draft' | 'published' | 'archived';
+  const revalidation = await pushPageRevalidation(c.env, schema.id, {
+    page_id: page.id,
+    page_slug: page.slug,
+    status: nextStatus,
+    event: pageRevalidationEventName(currentPage.status, nextStatus),
+    content: (page.content ?? null) as Record<string, unknown> | null,
+  });
+  return c.json({ success: true, page, ...(revalidation ? { revalidation } : {}) });
 });
 
 schemas.get('/:slug/pages/:pageSlug', async (c) => {
@@ -1243,13 +1322,18 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     .from('pages')
     .select('id, slug, name, status, content, domain_url, updated_at, published_at')
     .eq('schema_id', schema.id)
-    .eq('slug', pageSlug)
-    .eq('status', 'published');
+    .eq('slug', pageSlug);
+  // Draft delivery ("Variante B"): with the schema's revalidation secret as a
+  // Bearer token and include_drafts=true/preview=1, a draft page is served so
+  // the frontend can render the preview route statelessly.
+  const draftsAuthorized = (c.req.query('include_drafts') === 'true' || c.req.query('preview') === '1')
+    && await hasDraftDeliveryAccess(c.env, c, schema.id);
+  pageQuery = draftsAuthorized ? pageQuery : pageQuery.eq('status', 'published');
   if (schema.tenant_id) pageQuery = pageQuery.eq('tenant_id', schema.tenant_id);
   const { data: page, error } = await pageQuery.maybeSingle();
 
   if (error) return c.json({ error: error.message }, 500);
-  if (!page) return c.json({ error: 'Published page not found' }, 404);
+  if (!page) return c.json({ error: draftsAuthorized ? 'Page not found' : 'Published page not found' }, 404);
 
   let deliveredPage: Record<string, unknown> = page as Record<string, unknown>;
   // Catalogue pages are classified by their linked aggregate: event first, then product.
@@ -1320,7 +1404,7 @@ schemas.get('/:slug/pages/:pageSlug', async (c) => {
     }
   }
 
-  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind, supported_includes: entityKind === 'event' || entityKind === 'service-product' ? ['entity', 'event', 'product'] : [] }, page: deliveredPage });
+  return c.json({ schema: { slug: schema.api_slug, schema_slug: schema.slug, api_slug: schema.api_slug, name: schema.name, entity_kind: entityKind, supported_includes: entityKind === 'event' || entityKind === 'service-product' ? ['entity', 'event', 'product'] : [] }, page: deliveredPage, drafts_included: draftsAuthorized });
 });
 
 // POST /api/schemas/:slug/register — Frontend registration callback

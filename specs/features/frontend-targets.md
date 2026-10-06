@@ -55,19 +55,37 @@ side by side:
 ```
 
 - Public URLs are built from the non-preview detail target (published pages only).
-- Preview URLs are built **only** from the preview target and emitted by the
-  backend (`specy_pages_schemas_preview`); the frontend route itself must be
-  noindex, unlinked, and serve drafts (frontend responsibility, not the CMS's).
+- Preview URLs are built **only** from the preview target and emitted by the backend (`specy_pages_schemas_preview`) — **draft pages only**. Published pages always resolve the public detail route (`url_kind: 'public'`), never the preview route. The frontend route itself must be noindex, unlinked, and serve drafts (frontend responsibility, not the CMS's).
 - Setting `preview_slug_structure` requires a `definition_revision` bump
   (`integration_requirements` changes bump the optimistic revision), so
   concurrent `specy_pages_schemas_update_definition` calls conflict instead of
   overwriting.
+
+## Draft delivery & backend ISR push
+
+Two equivalent models deliver draft/preview content to a registered frontend:
+
+- **Pull (stateless, preferred):** the pages API serves drafts when the request
+  carries the schema's revalidation secret as `Authorization: Bearer <secret>`
+  and asks for drafts (`include_drafts=true`, alias `preview=1`) on
+  `GET /api/schemas/:slug/pages` and `GET /api/schemas/:slug/pages/:pageSlug`
+  (`drafts_included: true` in the response). Anonymous callers only ever see
+  published pages.
+- **Push (ISR-style):** after every page create/update and publication
+  transition — drafts included — the backend POSTs to the registered
+  `revalidation_endpoint` (one request per enabled target, Bearer secret,
+  legacy `path`/`slug` query parameters, JSON payload `{ schema_slug, page_id,
+  slug, status, event, preview_path?, content? }`) so the frontend can rebuild
+  preview and public routes. Fired from the REST page routes and the MCP page
+  tools; the dashboard additionally triggers client-side (POSTs are
+  idempotent).
 
 ## Preview resolution order (`specy_pages_schemas_preview` / dashboard)
 
 1. With `preview_slug_structure` set → **only** the enabled `detail-page` target with `supports_preview: true`.
 2. Without it → the enabled `detail-page` target with `supports_preview: true`, else (legacy fallback) the single enabled `detail-page` target.
 3. Otherwise → **no preview** (`preview_not_configured`). There is never an implicit fallback to `slug_structure` or `required_slug_structure`; schemas work fully without previews.
+4. **Draft pages only:** `specy_pages_schemas_preview` resolves the preview URL for drafts (`url_kind: 'preview'`). Published pages resolve the public detail route (`url_kind: 'public'`), failing with `public_route_not_configured` when no public detail target exists.
 
 ## `integration_requirements` keys actually evaluated
 
@@ -93,6 +111,7 @@ effect before it was implemented; it does now).
 | `target "X" (path): slug_structure must stay under the configured base path Y` | rule 4 namespace violation | keep public routes under `route_base_path`; preview targets are exempt only when `preview_slug_structure` is set |
 | `target "X": duplicate enabled detail-page host_path "P"` | rule 6 | give each detail target a distinct host_path |
 | `integration_requirements.preview_slug_structure must include :slug exactly once` | malformed preview template | fix the template in `update_definition` |
+| `public_route_not_configured` | preview tool called for a published page but no public detail target exists | register a public detail target (rule 4) |
 | `Targets must define exactly one enabled primary target` | zero or multiple primaries | mark exactly one enabled target `is_primary: true` |
 | `Frontend-target update failed (5xx)` | transient backend/proxy failure | safe to retry the same call; target replacement is a full atomic replacement |
 

@@ -51,7 +51,7 @@ import type { PageRecord, PageSchema, SchemaFieldDefinition, ContentBlock, CodeB
 import { StandaloneContentBlockEditor } from '@/components/pagebuilder/StandaloneContentBlockEditor';
 import { ImageUploader } from '@/components/pagebuilder/ImageUploader';
 import { JsonImporter } from './JsonImporter';
-import { buildSchemaPageUrl, getExplicitPreviewSlugStructure } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getDetailPageTarget, getExplicitPreviewSlugStructure } from '@/utils/schemaRouting';
 import { PageContentTemplateControls } from './PageContentTemplateControls';
 import { TenantCustomFieldsEditor } from '@/components/products/CustomFieldsEditor';
 import { ProductEventsPanel } from '@/components/products/ProductEventsPanel';
@@ -1085,15 +1085,21 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
     }
   };
 
-  // ── Build preview URL from schema config. The preview slug structure must be
-  // explicitly set (enabled detail-page target with a ":slug" host_path);
-  // there is no implicit fallback. Without it the editor works normally but the
-  // preview view errors out with guidance on how to set the structure.
+  // ── Build preview/public URLs from the schema config. The preview slug
+  // structure must be explicitly set (enabled detail-page target with a
+  // ":slug" host_path); there is no implicit fallback. Preview slugs resolve
+  // draft pages only — published entries use the public detail route.
   const previewSlugStructure = getExplicitPreviewSlugStructure(schema);
   const previewConfigured = Boolean(schema.frontend_url && previewSlugStructure);
+  const isPublishedPage = publicationStatus === 'published';
   const previewUrl =
     savedSlug && previewConfigured && previewSlugStructure
       ? buildSchemaPageUrl(schema.frontend_url, previewSlugStructure, savedSlug)
+      : null;
+  const publicSlugStructure = getDetailPageTarget(schema)?.host_path ?? null;
+  const publicUrl =
+    savedSlug && isPublishedPage && schema.frontend_url && publicSlugStructure
+      ? buildSchemaPageUrl(schema.frontend_url, publicSlugStructure, savedSlug)
       : null;
 
   return (
@@ -1386,7 +1392,32 @@ export const SchemaContentEditor: React.FC<SchemaContentEditorProps> = ({
                   /{savedSlug}
                 </code>
               </span>
-              {previewUrl ? (
+              {isPublishedPage ? (
+                <div className="flex items-center gap-2">
+                  {publicUrl ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="flex items-center">
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        {language === 'en' ? 'Open published page' : 'Veröffentlichte Seite öffnen'}
+                      </a>
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {language === 'en'
+                        ? 'No public detail route configured — set an enabled detail-page target in the schema settings.'
+                        : 'Keine öffentliche Detailroute konfiguriert — hinterlege ein aktiviertes Detailseiten-Ziel in den Schema-Einstellungen.'}
+                    </span>
+                  )}
+                  {previewUrl && (
+                    <Button variant="ghost" size="sm" asChild>
+                      <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="flex items-center">
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        {language === 'en' ? 'Preview' : 'Vorschau'}
+                      </a>
+                    </Button>
+                  )}
+                </div>
+              ) : previewUrl ? (
                 <Button variant="outline" size="sm" asChild>
                   <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="flex items-center">
                     <ExternalLink className="h-4 w-4 mr-2" />

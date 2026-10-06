@@ -1211,6 +1211,26 @@ const SchemaEditor: React.FC = () => {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="preview-slug-structure" className="text-base font-semibold">
+                {language === 'en' ? 'Preview Slug Structure' : 'Vorschau-Slug-Struktur'}
+              </Label>
+              <Input
+                id="preview-slug-structure"
+                value={integrationRequirements.preview_slug_structure || ''}
+                onChange={(event) => setIntegrationRequirements((current) => ({
+                  ...current,
+                  preview_slug_structure: event.target.value || null,
+                }))}
+                placeholder="/preview/:slug"
+              />
+              <p className="text-xs text-muted-foreground">
+                {language === 'en'
+                  ? 'Separate non-public preview route (must contain :slug exactly once). Preview targets with supports_preview resolve against this structure and are exempt from the public route base path.'
+                  : 'Separate, nicht öffentliche Vorschau-Route (muss :slug genau einmal enthalten). Vorschau-Ziele mit supports_preview lösen gegen diese Struktur auf und sind vom öffentlichen Routen-Basispfad ausgenommen.'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="route-base-path" className="text-base font-semibold">
                 {language === 'en' ? 'Route Base Path' : 'Routen-Basispfad'}
               </Label>
@@ -1409,6 +1429,15 @@ const SchemaEditor: React.FC = () => {
                   {language === 'en'
                     ? 'Preview targets (supports_preview) resolve against preview_slug_structure when set and are exempt from the public route base path.'
                     : 'Vorschau-Ziele (supports_preview) lösen gegen preview_slug_structure auf, wenn gesetzt, und sind vom öffentlichen Routen-Basispfad ausgenommen.'}
+                  {target.supports_preview && integrationRequirements.preview_slug_structure && target.host_path.includes(':slug') && (
+                    <>
+                      {' '}
+                      <span className="font-medium">
+                        {language === 'en' ? 'Preview slug:' : 'Vorschau-Slug:'}{' '}
+                        <code className="font-mono">{integrationRequirements.preview_slug_structure}</code>
+                      </span>
+                    </>
+                  )}
                 </p>
               )}
             </div>

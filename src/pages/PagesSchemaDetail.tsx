@@ -54,7 +54,7 @@ import type { SchemaSpecBundle } from '@/types/specs';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
-import { buildSchemaPageUrl, getExpectedSlugStructure, getExplicitPreviewSlugStructure, isPreviewConfigured, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
+import { buildSchemaPageUrl, getDetailPageTarget, getExpectedSlugStructure, getExplicitPreviewSlugStructure, isPreviewConfigured, normalizeSchemaIntegrationRequirements } from '@/utils/schemaRouting';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 
 const statusBadgeVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -758,14 +758,31 @@ const PagesSchemaDetail: React.FC = () => {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        {isPreviewConfigured(schema) && page.status === 'published' && (
+                        {isPreviewConfigured(schema) && page.status === 'draft' && (
                           <Button
                             variant="ghost"
                             size="icon"
                             asChild
+                            title={language === 'en' ? 'Open preview' : 'Vorschau öffnen'}
                           >
                             <a
                               href={buildSchemaPageUrl(schema.frontend_url, getExplicitPreviewSlugStructure(schema)!, page.slug)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        )}
+                        {page.status === 'published' && getDetailPageTarget(schema)?.host_path && schema.frontend_url && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            asChild
+                            title={language === 'en' ? 'Open published page' : 'Veröffentlichte Seite öffnen'}
+                          >
+                            <a
+                              href={buildSchemaPageUrl(schema.frontend_url, getDetailPageTarget(schema)!.host_path, page.slug)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >

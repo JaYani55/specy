@@ -38,6 +38,11 @@ import {
 import { parseCreateServiceProductInput, parseUpdateServiceProductInput } from '../lib/productAggregates';
 import { createEventPageAggregate, EventPageAggregateError, parseEventPageCreateInput, updateEventPageAggregate } from '../lib/eventPageAggregates';
 import { normalizeSchemaPageSlug } from '../lib/schemaPages';
+import {
+  pageRevalidationEventName,
+  triggerPageRevalidation,
+  type PageRevalidationTriggerInput,
+} from '../lib/schemaRevalidation';
 import { validateSchemaSystemDataPatch } from '../lib/schemaSystemData';
 import { parseSchemaDefinitionPatch, updateSchemaDefinition } from '../lib/schemaDefinition';
 import { isPublicObjectReadable } from '../lib/objectVisibility';
@@ -143,6 +148,27 @@ function mcpToolFailure(message: string, httpStatus: number, extra: Record<strin
     structuredContent: payload,
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
   };
+}
+
+/**
+ * Backend-side ISR push after MCP page writes (see api/lib/schemaRevalidation.ts).
+ * Never blocks the tool result; failures are reported in the `revalidation`
+ * response field. The dashboard additionally triggers revalidation client-side
+ * — revalidation POSTs are idempotent for the frontend.
+ */
+async function pushMcpPageRevalidation(env: Env, schemaId: string, input: PageRevalidationTriggerInput) {
+  try {
+    const admin = await createSupabaseAdminClient(env);
+    const { data: revalSchema } = await admin
+      .from('page_schemas')
+      .select('id, api_slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status, slug_structure')
+      .eq('id', schemaId)
+      .maybeSingle();
+    if (!revalSchema) return null;
+    return await triggerPageRevalidation(env, revalSchema, input);
+  } catch {
+    return null;
+  }
 }
 
 function buildSpecToolDescription(spec: DiscoverableSpecSummary): string {
@@ -727,6 +753,13 @@ async function createMcpServerWithTools(
               page: { id: aggregate.page_id, slug: aggregate.page_slug, name, status: aggregate.page_status, schema_id: schema.id, tenant_id: schema.tenant_id, content },
               editor_url: `${baseUrl}${cmsPath}/edit/${aggregate.page_id}`,
               next_step: 'Open the event page in PageBuilder, complete schema-required content, then explicitly publish it.',
+              ...(await pushMcpPageRevalidation(env, schema.id, {
+                page_id: aggregate.page_id,
+                page_slug: aggregate.page_slug,
+                status: (aggregate.page_status ?? 'draft') as 'draft' | 'published',
+                event: 'created',
+                content,
+              })),
             }, null, 2) }] };
           } catch (error) {
             if (error instanceof EventPageAggregateError) return mcpToolFailure(error.message, error.status, error.code ? { code: error.code } : {});
@@ -765,7 +798,14 @@ async function createMcpServerWithTools(
           .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
           .single();
         if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Failed to create page.' }, null, 2) }] };
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+        const revalidation = await pushMcpPageRevalidation(env, schema.id, {
+          page_id: page.id,
+          page_slug: page.slug,
+          status: (page.status ?? 'draft') as 'draft' | 'published',
+          event: 'created',
+          content: (page.content ?? null) as Record<string, unknown> | null,
+        });
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page, ...(revalidation ? { revalidation } : {}) }, null, 2) }] };
       },
     );
 
@@ -802,7 +842,16 @@ async function createMcpServerWithTools(
               ...(slug !== undefined ? { slug } : {}),
               ...(status !== undefined ? { status } : {}),
             });
-            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+            const aggregatePage = page as { slug?: string; status?: string; content?: Record<string, unknown> | null };
+            const { data: eventPageBefore } = await supabase.from('pages').select('id, slug, status').eq('id', page_id).maybeSingle();
+            const revalidation = await pushMcpPageRevalidation(env, schema.id, {
+              page_id,
+              page_slug: aggregatePage.slug ?? eventPageBefore?.slug ?? '',
+              status: (aggregatePage.status ?? 'draft') as 'draft' | 'published' | 'archived',
+              event: pageRevalidationEventName(eventPageBefore?.status, aggregatePage.status ?? 'draft'),
+              content: (aggregatePage.content ?? null) as Record<string, unknown> | null,
+            });
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page, ...(revalidation ? { revalidation } : {}) }, null, 2) }] };
           } catch (error) {
             if (error instanceof EventPageAggregateError) return mcpToolFailure(error.message, error.status, error.code ? { code: error.code } : {});
             return mcpToolFailure(error instanceof Error ? error.message : 'Event page update failed.', 500);
@@ -816,11 +865,12 @@ async function createMcpServerWithTools(
         }
         const { data: currentPage, error: pageError } = await supabase
           .from('pages')
-          .select('id, slug')
+          .select('id, slug, status')
           .eq('schema_id', schema.id)
           .eq('id', page_id)
           .single();
         if (pageError || !currentPage) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: pageError?.message || 'Page not found in the requested schema.' }, null, 2) }] };
+        const previousStatus = currentPage.status as string | undefined;
 
         const patch: Record<string, unknown> = {};
         if (content !== undefined) patch.content = content;
@@ -844,7 +894,15 @@ async function createMcpServerWithTools(
           .select('id, slug, name, status, is_draft, content, schema_id, tenant_id, domain_url, updated_at, published_at')
           .single();
         if (error || !page) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error?.message || 'Failed to update page.' }, null, 2) }] };
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page }, null, 2) }] };
+        const nextStatus = (page.status ?? 'draft') as 'draft' | 'published' | 'archived';
+        const revalidation = await pushMcpPageRevalidation(env, schema.id, {
+          page_id: page.id,
+          page_slug: page.slug,
+          status: nextStatus,
+          event: pageRevalidationEventName(previousStatus, nextStatus),
+          content: (page.content ?? null) as Record<string, unknown> | null,
+        });
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, page, ...(revalidation ? { revalidation } : {}) }, null, 2) }] };
       },
     );
 
@@ -1005,7 +1063,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_preview',
-      '[specy-pages > schemas] Inspect the preview configuration or resolve a website preview URL. Preview requires an explicitly set preview slug structure and a registered frontend_url. The structure comes from either a dedicated preview target (enabled detail-page target with supports_preview: true) or — for legacy single-detail schemas — the only enabled detail-page target. When integration_requirements.preview_slug_structure is set, only a dedicated supports_preview target resolves previews. Schemas work without previews; this tool fails with preview_not_configured when no preview structure is configured.',
+      '[specy-pages > schemas] Inspect the preview configuration or resolve the URL for a page. Draft pages resolve the non-public preview URL (url_kind: "preview"); published pages resolve the public detail URL (url_kind: "public") — never the preview route. Preview requires an explicitly set preview slug structure and a registered frontend_url. The structure comes from either a dedicated preview target (enabled detail-page target with supports_preview: true) or — for legacy single-detail schemas — the only enabled detail-page target. When integration_requirements.preview_slug_structure is set, only a dedicated supports_preview target resolves previews. Schemas work without previews; this tool fails with preview_not_configured when no preview structure is configured.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug) from the schema list'),
         page_id: z.string().uuid().optional().describe('Page UUID from specy_pages_schemas_list_pages. Omit to only report the preview configuration.'),
@@ -1073,6 +1131,34 @@ async function createMcpServerWithTools(
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Page not found in the requested schema.' }, null, 2) }] };
         }
 
+        const isPublished = page.status === 'published';
+        // Preview slugs resolve draft pages only. Published entries must use
+        // the public detail route — never the non-public preview route.
+        if (isPublished) {
+          const publicSlugStructure = publicDetailTarget?.host_path
+            ?? normalizedRequirements.required_slug_structure
+            ?? null;
+          if (!publicSlugStructure || !publicSlugStructure.includes(':slug')) {
+            return mcpToolFailure(
+              'No public detail route is configured for this schema. Register an enabled detail-page target without supports_preview whose host_path contains ":slug" and matches required_slug_structure (specy_pages_schemas_replace_frontend_targets).',
+              409,
+              { code: 'public_route_not_configured', configuration },
+            );
+          }
+          const publicUrl = `${String(schema.frontend_url).replace(/\/$/, '')}${publicSlugStructure.replace(':slug', page.slug)}`;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                ...configuration,
+                page: { id: page.id, slug: page.slug, name: page.name, status: page.status, is_draft: page.is_draft },
+                url_kind: 'public',
+                public_url: publicUrl,
+              }, null, 2),
+            }],
+          };
+        }
+
         const previewUrl = `${String(schema.frontend_url).replace(/\/$/, '')}${previewSlugStructure!.replace(':slug', page.slug)}`;
         return {
           content: [{
@@ -1080,6 +1166,7 @@ async function createMcpServerWithTools(
             text: JSON.stringify({
               ...configuration,
               page: { id: page.id, slug: page.slug, name: page.name, status: page.status, is_draft: page.is_draft },
+              url_kind: 'preview',
               preview_url: previewUrl,
             }, null, 2),
           }],
