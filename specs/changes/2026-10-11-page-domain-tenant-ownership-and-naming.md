@@ -20,7 +20,8 @@ own. This change introduces a first-class `public.page_domains` registry with:
   RLS (select for tenant members/null-owner rows; write super-admin only),
   `reassign_page_domain_tenant(uuid, uuid)` SECURITY DEFINER RPC with
   in-function super-admin check and atomic cascade, plus idempotent backfill of
-  pre-existing domains.
+  pre-existing domains (first non-null tenant id — uuid has no `min()`
+  aggregate).
 - `specs/features/page-domains.md` — feature documentation (registry lifecycle,
   reassignment semantics, ordering paradox, RLS, API surface).
 - `specs/changes/2026-10-11-page-domain-tenant-ownership-and-naming.md` — this

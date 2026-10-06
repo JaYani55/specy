@@ -185,7 +185,10 @@ grant execute on function public.reassign_page_domain_tenant(uuid, uuid) to auth
 -- super-admin panel covers pre-existing TLDs. Display names stay null (the
 -- domain URL remains the shown name until a super-admin renames it).
 insert into public.page_domains (domain_url, tenant_id)
-  select frontend_url, min(tenant_id)
+  select frontend_url,
+    -- uuid has no min()/max() aggregate: pick the first non-null tenant id
+    -- deterministically instead.
+    (array_agg(tenant_id) filter (where tenant_id is not null))[1]
   from public.page_schemas
   where frontend_url is not null
   group by frontend_url

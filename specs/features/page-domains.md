@@ -29,7 +29,7 @@ display name and (via per-schema tenant labels) who owns the schemas.
 | Event | Behavior |
 |---|---|
 | **Frontend registration** (`POST /api/schemas/:slug/register`) | After the schema is marked `registered`, the API ensures a `page_domains` row for the origin. Ownership is only assigned when the row does not exist yet — re-registration never steals a TLD a super-admin has already assigned or renamed. |
-| **Backfill** (`migrations/202610110001_page_domains.sql`) | Pre-existing domains are inserted with `min(tenant_id)` of their registered schemas; `display_name` stays null. |
+| **Backfill** (`migrations/202610110001_page_domains.sql`) | Pre-existing domains are inserted with the first non-null `tenant_id` of their registered schemas (uuid has no `min()` aggregate); `display_name` stays null. |
 | **Unhook** (`POST /api/schemas/:slug/unhook`) | The registry row is deliberately kept so ownership and display name survive a re-registration cycle. Rows with zero registered schemas remain visible to super-admins (`schema_count: 0`). |
 
 ## Tenant reassignment (super-admin)
