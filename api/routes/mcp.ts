@@ -354,7 +354,7 @@ async function createMcpServerWithTools(
     );
     server.tool(
       'specy_products_create',
-      '[specy-products] Atomically create a draft product aggregate and its canonical schema page. Use a tenant-owned service-product page-collection schema.',
+      '[specy-products] Atomically create a draft product aggregate and its canonical schema page. Use a tenant-owned catalogue schema (entity_kind event, content_scope page-collection).',
       {
         tenant_id: z.string().uuid(),
         schema_id: z.string().uuid(),
@@ -563,7 +563,7 @@ async function createMcpServerWithTools(
         }
       }
       if (schema.entity_kind === 'service-product') {
-        return mcpToolFailure('Use specy_products_create for service-product schemas.', 409, { code: 'aggregate_operation_required' });
+        return mcpToolFailure('This page belongs to a catalogue aggregate — use specy_products_create (product) or the event workflow (event).', 409, { code: 'aggregate_operation_required' });
       }
       if (schema.entity_kind && schema.entity_kind !== 'page') {
         return mcpToolFailure(`Unsupported page entity kind: ${schema.entity_kind}.`, 409, { code: 'aggregate_operation_required' });
@@ -786,7 +786,7 @@ async function createMcpServerWithTools(
           }
         }
         if (schema.entity_kind === 'service-product') {
-          return mcpToolFailure('Use specy_products_create for service-product schemas.', 409, { code: 'aggregate_operation_required' });
+          return mcpToolFailure('This page belongs to a catalogue aggregate — use specy_products_create (product) or the event workflow (event).', 409, { code: 'aggregate_operation_required' });
         }
         if (schema.entity_kind && schema.entity_kind !== 'page') {
           return mcpToolFailure(`Unsupported page entity kind: ${schema.entity_kind}.`, 409, { code: 'aggregate_operation_required' });

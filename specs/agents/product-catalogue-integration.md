@@ -7,7 +7,7 @@ Service-product schema upload/classification and the product aggregate workflow 
 ## Frontend-first setup
 
 1. Use OAuth 2.1 MCP and explicitly select a tenant. Never infer MCP workspace from browser state.
-2. Upload/create a tenant-owned page-collection schema with `entity_kind: "service-product"` and the developer's field map. The schema contract is arbitrary entry JSON plus separately stored `editor_config` hints.
+2. Upload/create a tenant-owned page-collection schema with `entity_kind: "event"` (the unified catalogue kind since the catalogue unification; the legacy `service-product` kind is migrated to `event` and is no longer eligible for product creation) and the developer's field map. The schema contract is arbitrary entry JSON plus separately stored `editor_config` hints.
 3. Read back the schema UUID, tenant-local slug, stable `api_slug`, `definition_revision`, editor config, and frontend targets. Definition changes use `specy_pages_schemas_update_definition` with the expected revision.
 4. Register the frontend using the existing target registration contract. A product schema's collection is a collection of individual product entries.
 5. Create a draft aggregate with `specy_products_create`, passing the schema's current `definition_revision`; do not use generic `create_page` for classified schemas.
@@ -34,7 +34,7 @@ Schema definition `definition_revision` and product aggregate `version` are dist
 
 Product schema reassignment is available through authenticated `PATCH /api/products/:id/schema` (and the matching MCP update contract), with `tenant_id`, `expected_version`, `schema_id`, and `expected_definition_revision`. It only accepts another eligible Product schema in the same workspace, preserves the page content, and returns a published page to draft for review. There is not yet a dedicated MCP schema-reassignment tool. The dedicated `/products/schemas` dashboard overview that exposed this operation has been retired; the route redirects to `/products/manage`.
 
-Generic page writes remain disallowed for service-product schemas, which use `specy_products_*`. For event schemas, `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` dispatch to the event aggregate workflow when the caller supplies the required tenant, schema revision, event fields, and page revision. Ordinary page schemas continue using generic page operations.
+Generic page writes remain disallowed for catalogue pages, which belong to an aggregate: product canonical pages are managed through `specy_products_*`; for event pages, `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` dispatch to the event aggregate workflow when the caller supplies the required tenant, schema revision, event fields, and page revision. Ordinary page schemas continue using generic page operations. Catalogue eligibility is `entity_kind = 'event'` with `content_scope = 'page-collection'`.
 
 ## Public page relation
 

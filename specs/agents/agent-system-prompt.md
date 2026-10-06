@@ -359,7 +359,7 @@ If `revalidation_secret` is missing, registration must not be attempted. Generat
 
 Creates a page/content record for a schema.
 
-Use it for ordinary `page-collection` schemas. For a schema classified as `event`, the same pages-post tool also creates an operational event plus its linked draft event page atomically; include explicit `tenant_id`, `expected_definition_revision`, and the `event` details object. Event pages are always created as drafts and published separately. For `service-product` schemas, use `specy_products_create` / `POST /api/products` instead.
+Use it for ordinary `page-collection` schemas. For a schema classified as `event` (the unified catalogue kind — catalogue schemas hold both product canonical pages and event pages), the same pages-post tool also creates an operational event plus its linked draft event page atomically; include explicit `tenant_id`, `expected_definition_revision`, and the `event` details object. Event pages are always created as drafts and published separately. Product aggregates are created with `specy_products_create` / `POST /api/products` against a catalogue schema — never with generic page creation.
 
 Before calling it:
 
@@ -438,7 +438,7 @@ For a new website or frontend:
 10. Deploy the frontend.
 11. Call `check_health`.
 12. Call `register_frontend` with the code, deployed URL, secret, endpoint, and targets.
-13. Create ordinary page content with `specy_pages_schemas_create_page`; for event schemas include the explicit tenant, current definition revision, public page fields, and operational event details. Use the product aggregate tools for service-product schemas.
+13. Create ordinary page content with `specy_pages_schemas_create_page`; for catalogue (`event`) schemas include the explicit tenant, current definition revision, public page fields, and operational event details. Use the product aggregate tools for product aggregates.
 14. Verify the registered schema and content through the schema API or `specy_pages_schemas_get` / `specy_pages_schemas_list_pages`.
 
 The frontend owns layout, component names, DOM structure, anchors, and client-side navigation. Specy owns schema definitions, content records, publication state, target contracts, and registration metadata.

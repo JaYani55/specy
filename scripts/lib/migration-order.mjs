@@ -141,6 +141,14 @@ export const MIGRATION_ORDER_CORE = [
   // mentorbooking_products/events and the multi-tenant helpers
   // (is_super_admin/is_tenant_member), so it must run after all of them.
   '202610110001_page_domains.sql',
+  // Repair: re-asserts the canonical catalogue product-aggregate RPC
+  // definitions (unified 'event' eligibility). The runner only re-applies
+  // checksum-drifted migrations, so a database that recorded the unification
+  // without effect keeps the pre-unification 'service-product' check forever —
+  // making specy_products_create impossible. Same remedy as
+  // 202609290001_repair_current_user_roles_json_claims.sql. Must stay the
+  // LAST migration defining these RPCs.
+  '202610120001_repair_catalogue_product_aggregate_rpcs.sql',
 ];
 
 /**
