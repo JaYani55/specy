@@ -249,6 +249,7 @@ async function createMcpServerWithTools(
    * slugs can match multiple workspaces after migrations. This returns a
    * clear, actionable error instead.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const resolveSchemaForTool = async <T = any>(
     schemaSlug: string,
     projection: string,
