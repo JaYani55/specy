@@ -44,10 +44,9 @@ import {
 import { getSchemaSpecBundle } from '@/services/specService';
 import { RevalidationFeedback } from '@/components/revalidation/RevalidationFeedback';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { archiveServiceProduct, deleteServiceProduct, getServiceProductByPage, setServiceProductPublication } from '@/services/productService';
+import { archiveServiceProduct, deleteServiceProduct, setServiceProductPublication } from '@/services/productService';
 import { supabase } from '@/lib/supabase';
-import { isCatalogueSchema } from '@/utils/schemaKinds';
-import { getEventPageAggregateByPage, setEventPagePublication } from '@/services/events/eventPageService';
+import { setEventPagePublication } from '@/services/events/eventPageService';
 import { getVisibleTenantNameMap } from '@/services/tenantService';
 import { SchemaWaitingScreen } from '@/components/pagebuilder/SchemaWaitingScreen';
 import type { PageSchema, PageRecord } from '@/types/pagebuilder';
@@ -145,52 +144,64 @@ const PagesSchemaDetail: React.FC = () => {
     }
   };
 
+  /**
+   * Ownership beats schema classification: a page's canonical product/event
+   * aggregate may sit on a schema of any kind (catalogue unification moved
+   * some products onto ordinary page schemas). The FKs on the aggregates
+   * RESTRICT page delete and lock publication, so every page delete/status
+   * change must resolve the owner by page id, not by schema kind.
+   */
+  const resolvePageOwner = async (pageId: string): Promise<{
+    product: { integration_id: string; version: number; tenant_id: string | null } | null;
+    event: { id: string; tenant_id: string | null } | null;
+  }> => {
+    const { data: product, error: productError } = await supabase
+      .from('mentorbooking_products')
+      .select('integration_id, version, tenant_id')
+      .eq('product_page_id', pageId)
+      .is('retired_at', null)
+      .maybeSingle();
+    if (productError) throw new Error(productError.message);
+
+    const { data: event, error: eventError } = await supabase
+      .from('mentorbooking_events')
+      .select('id, tenant_id')
+      .eq('page_id', pageId)
+      .maybeSingle();
+    if (eventError) throw new Error(eventError.message);
+
+    return {
+      product: product ?? null,
+      event: event ?? null,
+    };
+  };
+
   const handleDeletePage = async () => {
     if (!deletePageId) return;
     try {
-      if (schema.entity_kind === 'service-product') {
-        if (!schema.tenant_id) throw new Error('Produktschema ohne Workspace-Zuordnung.');
-        // A linked product owns this page as its canonical page; deleting the page
-        // therefore deletes the product aggregate (product, events, page, mirror).
-        const { data: linkedProduct, error: linkedProductError } = await supabase
-          .from('mentorbooking_products')
-          .select('integration_id, version')
-          .eq('product_page_id', deletePageId)
-          .eq('tenant_id', schema.tenant_id)
-          .is('retired_at', null)
-          .maybeSingle();
-        if (linkedProductError) throw new Error(linkedProductError.message);
-        if (linkedProduct) {
-          if (!permissions.canManageProducts) throw new Error(language === 'en' ? 'You are not allowed to delete products.' : 'Du darfst keine Produkte löschen.');
-          await deleteServiceProduct({
-            id: linkedProduct.integration_id as string,
-            tenant_id: schema.tenant_id,
-            expected_version: Number(linkedProduct.version ?? 1),
-          });
-        } else {
-          await deletePage(deletePageId);
-        }
-      } else if (schema.entity_kind === 'event') {
-        if (!schema.tenant_id) throw new Error('Veranstaltungsschema ohne Workspace-Zuordnung.');
+      const { product, event } = await resolvePageOwner(deletePageId);
+      if (event) {
         // A page linked to an event is RESTRICTed in the database; deleting the
         // page therefore deletes the linked event first.
-        const { data: linkedEvent, error: linkedEventError } = await supabase
+        if (!permissions.canDeleteEvents) throw new Error(language === 'en' ? 'You are not allowed to delete events.' : 'Du darfst keine Veranstaltungen löschen.');
+        const { error: eventDeleteError } = await supabase
           .from('mentorbooking_events')
-          .select('id')
-          .eq('page_id', deletePageId)
-          .eq('tenant_id', schema.tenant_id)
-          .maybeSingle();
-        if (linkedEventError) throw new Error(linkedEventError.message);
-        if (linkedEvent) {
-          if (!permissions.canDeleteEvents) throw new Error(language === 'en' ? 'You are not allowed to delete events.' : 'Du darfst keine Veranstaltungen löschen.');
-          const { error: eventDeleteError } = await supabase
-            .from('mentorbooking_events')
-            .delete()
-            .eq('id', linkedEvent.id as string)
-            .eq('tenant_id', schema.tenant_id);
-          if (eventDeleteError) throw new Error(eventDeleteError.message);
-        }
+          .delete()
+          .eq('id', event.id);
+        if (eventDeleteError) throw new Error(eventDeleteError.message);
         await deletePage(deletePageId);
+      } else if (product) {
+        // A linked product owns this page as its canonical page; deleting the
+        // page therefore deletes the product aggregate (product, events, page,
+        // mirror). The product's own workspace is used — the schema may be
+        // unassigned.
+        if (!permissions.canManageProducts) throw new Error(language === 'en' ? 'You are not allowed to delete products.' : 'Du darfst keine Produkte löschen.');
+        if (!product.tenant_id) throw new Error(language === 'en' ? 'The product page has no workspace assignment.' : 'Die Produktseite hat keine Workspace-Zuordnung.');
+        await deleteServiceProduct({
+          id: product.integration_id as string,
+          tenant_id: product.tenant_id,
+          expected_version: Number(product.version ?? 1),
+        });
       } else {
         await deletePage(deletePageId);
       }
@@ -207,40 +218,31 @@ const PagesSchemaDetail: React.FC = () => {
     const currentPage = pages.find((page) => page.id === pageId) ?? null;
 
     try {
-      if (schema.entity_kind === 'service-product') {
-        if (!schema.tenant_id) throw new Error('Produktschema ohne Workspace-Zuordnung.');
-        const product = await getServiceProductByPage(pageId, schema.tenant_id);
+      // Publication status follows the page's owning aggregate (event first,
+      // then product), regardless of the schema's classification — the
+      // aggregate owns the publication state of its canonical page.
+      const { product, event } = await resolvePageOwner(pageId);
+      if (event) {
+        if (!currentPage) throw new Error(language === 'en' ? 'Page revision unavailable; reload and retry.' : 'Seitenrevision nicht verfügbar; neu laden und erneut versuchen.');
+        await setEventPagePublication({
+          event_id: event.id,
+          tenant_id: event.tenant_id as string,
+          expected_definition_revision: schema.definition_revision ?? 1,
+          expected_page_updated_at: currentPage.updated_at,
+          status,
+        });
+      } else if (product) {
+        if (!product.tenant_id) throw new Error(language === 'en' ? 'The product page has no workspace assignment.' : 'Die Produktseite hat keine Workspace-Zuordnung.');
         if (status === 'archived') {
-          await archiveServiceProduct({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version });
+          await archiveServiceProduct({ id: product.integration_id as string, tenant_id: product.tenant_id, expected_version: Number(product.version ?? 1) });
         } else {
-          await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
-        }
-      } else if (isCatalogueSchema(schema.entity_kind)) {
-        if (!schema.tenant_id || !currentPage) throw new Error('Katalogseite ohne Workspace oder Seitenrevision.');
-        // Catalogue pages are classified by their linked aggregate: event first,
-        // then the product that owns the page.
-        const { data: linkedEvent, error: linkedEventError } = await supabase
-          .from('mentorbooking_events')
-          .select('id')
-          .eq('page_id', pageId)
-          .eq('tenant_id', schema.tenant_id)
-          .maybeSingle();
-        if (linkedEventError) throw new Error(linkedEventError.message);
-        if (linkedEvent) {
-          await setEventPagePublication({
-            event_id: linkedEvent.id as string,
-            tenant_id: schema.tenant_id,
+          await setServiceProductPublication({
+            id: product.integration_id as string,
+            tenant_id: product.tenant_id,
+            expected_version: Number(product.version ?? 1),
             expected_definition_revision: schema.definition_revision ?? 1,
-            expected_page_updated_at: currentPage.updated_at,
             status,
           });
-        } else {
-          const product = await getServiceProductByPage(pageId, schema.tenant_id);
-          if (status === 'archived') {
-            await archiveServiceProduct({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version });
-          } else {
-            await setServiceProductPublication({ id: product.id, tenant_id: schema.tenant_id, expected_version: product.version, expected_definition_revision: schema.definition_revision ?? 1, status });
-          }
         }
       } else {
         await updatePageStatus(pageId, status);
@@ -275,8 +277,8 @@ const PagesSchemaDetail: React.FC = () => {
             : 'Seitenstatus gespeichert, aber das Frontend konnte nicht aktualisiert werden.');
         }
       }
-    } catch {
-      toast.error(language === 'en' ? 'Failed to update status' : 'Fehler beim Aktualisieren');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (language === 'en' ? 'Failed to update status' : 'Fehler beim Aktualisieren'));
     }
   };
 

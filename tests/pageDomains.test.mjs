@@ -126,6 +126,18 @@ test('Unused schemas can be permanently deleted by super-admins, with guards', (
   assert.match(pagesDetail, /permissions\.canViewAdminData && \(/);
   assert.match(pagesDetail, /disabled=\{pages\.length > 0\}/);
   assert.match(apiCatalog, /id: 'schema-delete'/);
+  // Page delete and publication status resolve the owning aggregate by page
+  // id — independent of the schema's classification — so product/event-owned
+  // pages on ordinary or unassigned schemas are handled through their
+  // aggregate service instead of tripping the RESTRICT foreign keys.
+  assert.match(pagesDetail, /const resolvePageOwner = async \(pageId: string\)/);
+  assert.match(pagesDetail, /eq\('product_page_id', pageId\)[\s\S]*?is\('retired_at', null\)/);
+  assert.match(pagesDetail, /eq\('page_id', pageId\)/);
+  assert.match(pagesDetail, /await resolvePageOwner\(deletePageId\)/);
+  assert.match(pagesDetail, /await resolvePageOwner\(pageId\)[\s\S]*?await setEventPagePublication/);
+  assert.match(pagesDetail, /tenant_id: product\.tenant_id/);
+  // Real error messages surface instead of a generic failure toast.
+  assert.match(pagesDetail, /error instanceof Error \? error\.message : \(language === 'en' \? 'Failed to update status'/);
 });
 
 test('Both admin endpoints are registered in the API catalog and feature docs', () => {

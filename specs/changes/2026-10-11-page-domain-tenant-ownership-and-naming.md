@@ -52,7 +52,15 @@ own. This change introduces a first-class `public.page_domains` registry with:
   (previously an unused soft-archive helper).
 - `src/pages/PagesSchemaDetail.tsx` — destructive **Schema löschen** action
   (super-admin, disabled while pages are attached) with confirmation dialog;
-  navigates back to `/pages` after deletion.
+  navigates back to `/pages` after deletion. Page **delete and publication
+  status now resolve the owning aggregate by page id** (`resolvePageOwner`:
+  event first, then non-retired product) instead of by schema classification —
+  product/event-owned pages on ordinary or unassigned schemas are handled
+  through their aggregate service, using the aggregate's own workspace. This
+  fixes `mentorbooking_products_page_id_fkey` violations when deleting a page
+  whose schema kind does not advertise the ownership, and failed
+  publish/unpublish on such pages. Real error messages surface instead of a
+  generic failure toast.
 - `src/pages/Pages.tsx` — TLD cards show display-name title with raw domain as
   description; super-admin-only workspace select that opens a migration-scope
   **move dialog** (no browser confirm): scope list (schemas/pages/events/

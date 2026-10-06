@@ -184,7 +184,10 @@ Guards:
 - **Schemas with pages cannot be deleted** — the FK would silently detach the
   pages from their content contract. Delete the pages first (deleting a
   product/event page removes its aggregate with it, see the schema console's
-  page-delete flow).
+  page-delete flow). Ownership is resolved **by page id**, not by schema kind:
+  after the catalogue unification a product/event can own a page on an
+  ordinary (or unassigned) schema, and delete/publication routes through the
+  owning aggregate's service with the aggregate's own workspace.
 
 On success the managed revalidation secret is removed; frontend targets,
 schema specs and content templates cascade; `page_schema_templates` and
