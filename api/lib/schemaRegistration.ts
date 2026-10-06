@@ -283,6 +283,8 @@ export async function completeSchemaRegistration(
     return { status: 500 as const, body: { error: 'Failed to complete registration' } };
   }
 
+  await ensurePageDomainRow(admin, validatedFrontendUrl.url.origin, schema.tenant_id ?? null);
+
   await admin.from('schema_frontend_targets').delete().eq('schema_id', schema.id);
   const { error: targetError } = await admin.from('schema_frontend_targets').insert(
     targets.map((target) => ({ ...target, schema_id: schema.id, tenant_id: schema.tenant_id })),
@@ -307,6 +309,34 @@ export async function completeSchemaRegistration(
       requirements: normalizedRequirements,
     },
   };
+}
+
+/**
+ * Registers the frontend origin in the page-domain (TLD) registry so
+ * super-admins can manage its ownership and display name. Ownership is only
+ * assigned when the row does not exist yet — a re-registration must never
+ * steal a TLD that a super-admin has already assigned or renamed.
+ */
+async function ensurePageDomainRow(
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  domainUrl: string,
+  tenantId: string | null,
+): Promise<void> {
+  const { data: existing } = await admin
+    .from('page_domains')
+    .select('id')
+    .eq('domain_url', domainUrl)
+    .maybeSingle();
+  if (existing) return;
+
+  // A unique violation from a concurrent registration is benign — the row
+  // exists, which is all this helper guarantees.
+  const { error } = await admin
+    .from('page_domains')
+    .insert({ domain_url: domainUrl, tenant_id: tenantId });
+  if (error && error.code !== '23505') {
+    throw new Error(`Failed to record page domain: ${error.message}`);
+  }
 }
 
 export async function getSchemaFrontendTargets(

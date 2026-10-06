@@ -136,6 +136,11 @@ export const MIGRATION_ORDER_CORE = [
   '202610050004_product_schema_reassignment.sql',
   '202610060001_catalogue_schema_unification.sql',
   '202610060002_separate_preview_slug_structure.sql',
+  // Page-domain (TLD) registry — tenant ownership + display names. Needs
+  // page_schemas, schema_frontend_targets, pages, page_content_templates,
+  // mentorbooking_products/events and the multi-tenant helpers
+  // (is_super_admin/is_tenant_member), so it must run after all of them.
+  '202610110001_page_domains.sql',
 ];
 
 /**

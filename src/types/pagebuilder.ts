@@ -313,6 +313,21 @@ export interface TLDGroup {
   latency_ms?: number;
   /** All schemas registered to this TLD */
   schemas: PageSchema[];
+  /** Page-domain registry row (super-admin management), when known */
+  domain_registry?: TLDRegistryEntry | null;
+}
+
+/** A row of the page-domain (TLD) registry managed by super-admins. */
+export interface TLDRegistryEntry {
+  id: string;
+  domain_url: string;
+  /** Owning tenant — moved via the cascading reassignment RPC */
+  tenant_id: string | null;
+  /** Arbitrary display name; falls back to the domain URL */
+  display_name: string | null;
+  schema_count: number;
+  /** Whether the registered schemas all belong to the owning tenant */
+  ownership_consistent: boolean;
 }
 
 // --- Agent Log Types ---

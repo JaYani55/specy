@@ -5,6 +5,7 @@ import {
   type PageSchemaTemplate,
   type PageRecord,
   type TLDGroup,
+  type TLDRegistryEntry,
   type SchemaIntegrationRequirements,
   type SchemaEntityKind,
   type SchemaFrontendTarget,
@@ -656,8 +657,13 @@ export const updatePageStatus = async (
 /**
  * Groups schemas by their frontend_url (TLD).
  * Schemas without a frontend_url go into a group with domain = null.
+ * Optionally enriches each group with its page-domain registry entry
+ * (super-admin ownership/naming data), keyed by the domain origin.
  */
-export const groupSchemasByTLD = (schemas: PageSchema[]): TLDGroup[] => {
+export const groupSchemasByTLD = (
+  schemas: PageSchema[],
+  registryByDomain?: Map<string, TLDRegistryEntry>,
+): TLDGroup[] => {
   const map = new Map<string, PageSchema[]>();
 
   for (const schema of schemas) {
@@ -678,6 +684,7 @@ export const groupSchemasByTLD = (schemas: PageSchema[]): TLDGroup[] => {
       domain: key,
       health: 'unknown',
       schemas: map.get(key)!,
+      domain_registry: registryByDomain?.get(key) ?? null,
     });
   }
 
@@ -691,6 +698,55 @@ export const groupSchemasByTLD = (schemas: PageSchema[]): TLDGroup[] => {
   }
 
   return groups;
+};
+
+/**
+ * Super-admin only: list the page-domain (TLD) registry with owning tenant,
+ * display name and schema usage. Requires the `super-admin` role (custom
+ * claim) — the API enforces this server-side.
+ */
+export const getAdminPageDomains = async (): Promise<TLDRegistryEntry[]> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/admin/domains`, {
+    method: 'GET',
+    headers: await createAuthenticatedHeaders({ Accept: 'application/json' }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? 'Failed to load page domains');
+  }
+  const data = await response.json() as { domains?: TLDRegistryEntry[] };
+  return data.domains ?? [];
+};
+
+/**
+ * Super-admin only: move a TLD's ownership to another tenant (atomic,
+ * cascading) and/or set an arbitrary display name (empty string resets to
+ * the domain URL as the shown name).
+ */
+export const updateAdminPageDomain = async (
+  domainId: string,
+  patch: { tenant_id?: string; display_name?: string | null },
+): Promise<void> => {
+  if (!API_URL) {
+    throw new Error('API URL not configured');
+  }
+
+  const response = await fetch(`${API_URL}/api/schemas/admin/domains/${domainId}`, {
+    method: 'PATCH',
+    headers: await createAuthenticatedHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? 'Failed to update page domain');
+  }
 };
 
 /**

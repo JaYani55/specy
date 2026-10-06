@@ -3,25 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, FileText, Globe, Clock, CheckCircle2, AlertCircle, Eye, EyeOff,
   Loader2, Copy, ExternalLink, Sparkles, ArrowRight, ChevronDown, ChevronRight, Play, Trash2,
+  Building2, Pencil,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { getSchemas, groupSchemasByTLD, checkDomainHealthDirect, startSchemaRegistration, unhookSchema } from '@/services/pageService';
-import type { PageSchema, TLDGroup } from '@/types/pagebuilder';
+import { getSchemas, groupSchemasByTLD, checkDomainHealthDirect, startSchemaRegistration, unhookSchema, getAdminPageDomains, updateAdminPageDomain } from '@/services/pageService';
+import type { PageSchema, TLDGroup, TLDRegistryEntry } from '@/types/pagebuilder';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFeatureFlags } from '@/contexts/FeatureFlagsContext';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { toast } from 'sonner';
 import AgentLogs from '@/components/pagebuilder/AgentLogs';
 import { API_URL } from '@/lib/apiUrl';
-import { getVisibleTenantNameMap } from '@/services/tenantService';
+import { getVisibleTenantNameMap, getVisibleTenants } from '@/services/tenantService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { isPreviewConfigured } from '@/utils/schemaRouting';
 
@@ -774,11 +780,18 @@ interface TLDSectionProps {
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   defaultOpen?: boolean;
+  /** Super-admin TLD management: owner reassignment + arbitrary display name */
+  isAdmin?: boolean;
+  tenantOptions: Array<{ id: string; name: string }>;
+  onUpdateDomain: (domainId: string, patch: { tenant_id?: string; display_name?: string | null }) => Promise<void>;
 }
 
-const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, onNavigate, onRefresh, defaultOpen = true }) => {
+const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, onNavigate, onRefresh, defaultOpen = true, isAdmin = false, tenantOptions, onUpdateDomain }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isUnhooking, setIsUnhooking] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
 
   const handleUnhook = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -800,6 +813,45 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
   };
   const schemaCount = group.schemas.length;
   const registeredCount = group.schemas.filter(s => s.registration_status === 'registered').length;
+
+  const registry = group.domain_registry;
+  const displayTitle = registry?.display_name
+    || (group.domain ? group.domain.replace(/^https?:\/\//, '') : null);
+
+  const handleOwnerChange = async (tenantId: string) => {
+    if (!registry || tenantId === registry.tenant_id) return;
+    const targetName = tenantOptions.find(t => t.id === tenantId)?.name ?? tenantId;
+    if (!window.confirm(
+      language === 'en'
+        ? `Move "${registry.domain_url}" to workspace "${targetName}"? All schemas registered on this domain, their pages, frontend targets and linked aggregates are moved atomically. Linked aggregates that cannot follow (e.g. events whose company stays in the old workspace) abort the move.`
+        : `"${registry.domain_url}" in den Arbeitsbereich "${targetName}" verschieben? Alle auf dieser Domain registrierten Schemas, ihre Seiten, Frontend-Ziele und verknüpften Aggregate werden atomar mitverschoben. Aggregate, die nicht folgen können (z. B. Veranstaltungen, deren Firma im alten Arbeitsbereich bleibt), brechen die Verschiebung ab.`
+    )) return;
+
+    setIsSaving(true);
+    try {
+      await onUpdateDomain(registry.id, { tenant_id: tenantId });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRename = async () => {
+    if (!registry) return;
+    setIsSaving(true);
+    try {
+      // Empty input clears back to the default (the domain URL itself)
+      await onUpdateDomain(registry.id, { display_name: renameValue.trim() || null });
+      setRenameOpen(false);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenameValue(registry?.display_name ?? '');
+    setRenameOpen(true);
+  };
 
   const healthBadge = () => {
     if (!group.domain) return null;
@@ -839,7 +891,7 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                 {group.domain ? (
                   <div className="flex items-center gap-2">
                     <Globe className="h-5 w-5 text-muted-foreground" />
-                    <CardTitle className="text-lg">{group.domain.replace(/^https?:\/\//, '')}</CardTitle>
+                    <CardTitle className="text-lg">{displayTitle}</CardTitle>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -866,6 +918,48 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
+                )}
+                {registry && !registry.ownership_consistent && (
+                  <Badge variant="destructive" className="text-[10px]">
+                    {language === 'en' ? 'Mixed ownership' : 'Gemischte Zuordnung'}
+                  </Badge>
+                )}
+                {isAdmin && registry && (
+                  <div
+                    className="flex items-center gap-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Select
+                      value={registry.tenant_id ?? ''}
+                      onValueChange={handleOwnerChange}
+                      disabled={isSaving}
+                    >
+                      <SelectTrigger className="h-7 w-[180px] text-xs">
+                        <Building2 className="h-3 w-3 mr-1 shrink-0" />
+                        <SelectValue
+                          placeholder={language === 'en' ? 'Unassigned' : 'Nicht zugeordnet'}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {tenantOptions.map((tenant) => (
+                          <SelectItem key={tenant.id} value={tenant.id} className="text-xs">
+                            {tenant.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={isSaving}
+                      onClick={openRename}
+                      title={language === 'en' ? 'Rename domain (display name)' : 'Domain umbenennen (Anzeigename)'}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      {language === 'en' ? 'Rename' : 'Umbenennen'}
+                    </Button>
+                  </div>
                 )}
                 {group.domain && registeredCount > 0 && (
                   <Button
@@ -951,6 +1045,46 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
           </CardContent>
         </CollapsibleContent>
       </Card>
+
+      {isAdmin && registry && (
+        <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+          <DialogContent onClick={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle>
+                {language === 'en' ? 'Rename domain' : 'Domain umbenennen'}
+              </DialogTitle>
+              <DialogDescription>
+                {language === 'en'
+                  ? `Set an arbitrary display name for "${registry.domain_url}". The domain URL itself stays unchanged and remains the default assigned name — an empty name falls back to it.`
+                  : `Lege einen beliebigen Anzeigenamen für "${registry.domain_url}" fest. Die Domain-URL selbst bleibt unverändert und ist der standardmäßig zugewiesene Name — ein leerer Name fällt darauf zurück.`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="page-domain-display-name">
+                {language === 'en' ? 'Display name' : 'Anzeigename'}
+              </Label>
+              <Input
+                id="page-domain-display-name"
+                value={renameValue}
+                maxLength={120}
+                placeholder={registry.domain_url.replace(/^https?:\/\//, '')}
+                onChange={(e) => setRenameValue(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" disabled={isSaving} onClick={() => setRenameOpen(false)}>
+                {language === 'en' ? 'Cancel' : 'Abbrechen'}
+              </Button>
+              <Button size="sm" disabled={isSaving} onClick={handleRename}>
+                {isSaving
+                  ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  : null}
+                {language === 'en' ? 'Save' : 'Speichern'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </Collapsible>
   );
 };
@@ -961,11 +1095,13 @@ const Pages: React.FC = () => {
   const navigate = useNavigate();
   const { language } = useTheme();
   const { activeTenantId } = useActiveWorkspace();
+  const { canViewAdminData } = usePermissions();
   const [schemas, setSchemas] = useState<PageSchema[]>([]);
   const [tldGroups, setTldGroups] = useState<TLDGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
+  const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   const fetchAndGroup = useCallback(async () => {
     try {
@@ -981,7 +1117,23 @@ const Pages: React.FC = () => {
         setTenantNames({});
       }
 
-      const groups = groupSchemasByTLD(data);
+      // Super-admin TLD management data (ownership + display names): best-effort
+      let registryByDomain = new Map<string, TLDRegistryEntry>();
+      if (canViewAdminData) {
+        try {
+          const [domains, tenants] = await Promise.all([getAdminPageDomains(), getVisibleTenants()]);
+          registryByDomain = new Map(domains.map((domain) => [domain.domain_url, domain]));
+          setTenantOptions(tenants.map((tenant) => ({
+            id: tenant.id,
+            name: tenant.organization_name ?? tenant.name,
+          })));
+        } catch (adminErr) {
+          console.warn('[Pages] Super-admin domain registry unavailable:', adminErr);
+          registryByDomain = new Map();
+        }
+      }
+
+      const groups = groupSchemasByTLD(data, registryByDomain);
 
       // Health check per unique domain
       for (const group of groups) {
@@ -1008,7 +1160,23 @@ const Pages: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTenantId]);
+  }, [activeTenantId, canViewAdminData]);
+
+  // Super-admin TLD management: move ownership to another tenant and/or set
+  // an arbitrary display name. Errors surface via toast; the caller resets
+  // its busy state in a finally block.
+  const handleUpdateDomain = useCallback(async (
+    domainId: string,
+    patch: { tenant_id?: string; display_name?: string | null },
+  ) => {
+    try {
+      await updateAdminPageDomain(domainId, patch);
+      toast.success(language === 'en' ? 'Domain updated.' : 'Domain aktualisiert.');
+      await fetchAndGroup();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : (language === 'en' ? 'Failed to update domain' : 'Domain konnte nicht aktualisiert werden'));
+    }
+  }, [fetchAndGroup, language]);
 
   useEffect(() => {
     fetchAndGroup();
@@ -1076,6 +1244,9 @@ const Pages: React.FC = () => {
             tenantNames={tenantNames}
             onNavigate={navigate}
             onRefresh={fetchAndGroup}
+            isAdmin={canViewAdminData}
+            tenantOptions={tenantOptions}
+            onUpdateDomain={handleUpdateDomain}
             defaultOpen={idx === 0 || tldGroups.length <= 3}
           />
         ))}

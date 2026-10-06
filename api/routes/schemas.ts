@@ -1858,4 +1858,127 @@ schemas.post('/:slug/revalidate', async (c) => {
   });
 });
 
+// ─── Super-admin: page-domain (TLD) ownership & naming ────────────────────
+// A TLD is a frontend origin registered against one or more schemas. The
+// registry row (public.page_domains) is created at registration time; these
+// endpoints let a super-admin list the registry, move a TLD's ownership to
+// another tenant (atomic cascading move) and set an arbitrary display name
+// that is independent of the domain URL itself.
+
+schemas.get('/admin/domains', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: domains, error } = await admin
+    .from('page_domains')
+    .select('id, domain_url, tenant_id, display_name, created_at, updated_at')
+    .order('domain_url', { ascending: true });
+  if (error) return c.json({ error: error.message }, 500);
+
+  const { data: schemaRows, error: schemaError } = await admin
+    .from('page_schemas')
+    .select('id, frontend_url, tenant_id')
+    .not('frontend_url', 'is', null);
+  if (schemaError) return c.json({ error: schemaError.message }, 500);
+
+  const usage = new Map<string, { schemas: number; tenants: Set<string> }>();
+  for (const row of schemaRows ?? []) {
+    if (!row.frontend_url) continue;
+    const entry = usage.get(row.frontend_url) ?? { schemas: 0, tenants: new Set<string>() };
+    entry.schemas += 1;
+    if (row.tenant_id) entry.tenants.add(row.tenant_id);
+    usage.set(row.frontend_url, entry);
+  }
+
+  return c.json({
+    domains: (domains ?? []).map((domain) => {
+      const domainUsage = usage.get(domain.domain_url);
+      const schemaTenants = [...(domainUsage?.tenants ?? [])];
+      return {
+        ...domain,
+        schema_count: domainUsage?.schemas ?? 0,
+        schema_tenant_ids: schemaTenants,
+        ownership_consistent:
+          schemaTenants.length === 0
+            || (schemaTenants.length === 1 && schemaTenants[0] === (domain.tenant_id ?? '')),
+      };
+    }),
+  });
+});
+
+schemas.patch('/admin/domains/:id', async (c) => {
+  const auth = await requireAppRole(c, 'super-admin');
+  if (auth instanceof Response) return auth;
+
+  const domainId = c.req.param('id');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(domainId)) {
+    return c.json({ error: 'Invalid page-domain id' }, 400);
+  }
+
+  let body: { tenant_id?: unknown; display_name?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!Object.prototype.hasOwnProperty.call(body, 'tenant_id')
+    && !Object.prototype.hasOwnProperty.call(body, 'display_name')) {
+    return c.json({ error: 'Provide tenant_id and/or display_name' }, 400);
+  }
+
+  const admin = await createSupabaseAdminClient(c.env);
+  const { data: domain } = await admin
+    .from('page_domains')
+    .select('id, domain_url, tenant_id, display_name')
+    .eq('id', domainId)
+    .maybeSingle();
+  if (!domain) return c.json({ error: 'Page domain not found' }, 404);
+
+  // Ownership change: atomic cascading RPC covering every schema registered
+  // on the domain, its pages, frontend targets, content templates and
+  // tenant-locked aggregates, plus the registry row itself.
+  if (Object.prototype.hasOwnProperty.call(body, 'tenant_id')) {
+    const tenantId = body.tenant_id;
+    if (typeof tenantId !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      return c.json({ error: 'tenant_id must be a tenant UUID; page domains cannot be unassigned' }, 400);
+    }
+    const { error: rpcError } = await admin.rpc('reassign_page_domain_tenant', {
+      p_domain_id: domainId,
+      p_target_tenant_id: tenantId,
+    });
+    if (rpcError) {
+      return c.json({ error: `Tenant reassignment failed: ${rpcError.message}` }, 409);
+    }
+  }
+
+  // Display name: arbitrary label, independent of the domain URL (which stays
+  // the default assigned name). Empty string clears back to the default.
+  if (Object.prototype.hasOwnProperty.call(body, 'display_name')) {
+    const raw = body.display_name;
+    if (raw !== null && typeof raw !== 'string') {
+      return c.json({ error: 'display_name must be a string or null' }, 400);
+    }
+    const trimmed = typeof raw === 'string' ? raw.trim() : null;
+    const displayName = trimmed === '' ? null : trimmed;
+    if (displayName && displayName.length > 120) {
+      return c.json({ error: 'display_name must be 120 characters or fewer' }, 400);
+    }
+    const { error: updateError } = await admin
+      .from('page_domains')
+      .update({ display_name: displayName })
+      .eq('id', domainId);
+    if (updateError) return c.json({ error: updateError.message }, 500);
+  }
+
+  const { data: updated } = await admin
+    .from('page_domains')
+    .select('id, domain_url, tenant_id, display_name, created_at, updated_at')
+    .eq('id', domainId)
+    .single();
+
+  return c.json({ success: true, domain: updated ?? null });
+});
+
 export default schemas;
