@@ -35,36 +35,55 @@ display name and (via per-schema tenant labels) who owns the schemas.
 ## Tenant reassignment (super-admin)
 
 `PATCH /api/schemas/admin/domains/:id` with `{ "tenant_id": "<uuid>" }` invokes
-the `public.reassign_page_domain_tenant(p_domain_id, p_target_tenant_id)` RPC.
-The RPC is `SECURITY DEFINER` with an in-function super-admin check on the
-invoker JWT and performs one atomic transaction:
+the `public.reassign_page_domains_tenant(p_domain_ids uuid[], p_target_tenant_id uuid)`
+RPC. The RPC is `SECURITY DEFINER` with an in-function super-admin check on the
+invoker JWT and performs one atomic transaction over the **union of the selected
+domains** — the PATCH accepts `additional_domain_ids` so shared aggregates
+(products, companies, events spanning domains) move together in the same
+transaction instead of blocking:
 
-1. `page_schemas.tenant_id` for every schema whose `frontend_url` equals the
-   domain origin.
+1. `page_schemas.tenant_id` for every schema whose `frontend_url` equals one of
+   the selected domain origins.
 2. `schema_frontend_targets.tenant_id` and `page_content_templates.tenant_id`
    for those schemas.
-3. `pages.tenant_id` for schema-bound pages plus legacy domain-bound pages
-   (`schema_id is null and domain_url = origin`).
-4. `mentorbooking_products.tenant_id` and `mentorbooking_events.tenant_id` for
-   aggregates whose tenant is trigger-locked to the owning page. Products
-   follow their events even when they have **no canonical page** — the event
-   trigger `validate_event_product_tenant` requires the referenced product to
-   sit in the event's workspace.
-5. `companies.tenant_id` for every company assigned to a moved event — this
-   must happen **before** the event move because
-   `validate_event_company_tenant` requires the company to already sit in the
-   target workspace.
-6. `page_domains.tenant_id` last.
+3. `pages.tenant_id` for schema-bound pages plus legacy domain-bound pages.
+4. `mentorbooking_products.tenant_id` — every product with a canonical page on
+   the selected domains **plus every product the moved events reference**, even
+   when it has no canonical page (the event trigger
+   `validate_event_product_tenant` requires the referenced product to sit in
+   the event's workspace).
+5. `companies.tenant_id` for every company assigned to a moved event — before
+   the event move, because `validate_event_company_tenant` requires the company
+   to already sit in the target workspace.
+6. `mentorbooking_events.tenant_id` — page-bound events of the selected domains
+   **plus legacy pageless events** (no public page) that reference moved
+   companies/products: their page-tenant validation returns early for null
+   pages, so they follow their aggregates safely.
+7. `page_domains.tenant_id` last, for every selected registry row.
 
-Pre-checks (step 0/0b) block the whole move with an actionable error when an
-entity cannot follow its events:
+Updates filter `tenant_id is distinct from p_target_tenant_id`, so no-op rows
+never fire triggers — already-migrated domains can safely be part of the
+selection.
 
-- a **company** also referenced by events outside the moved set (events on
-  another domain that stays behind, or events without a public page);
-- a **product** whose canonical page lives outside the domain (its
+### Pre-checks: when the move still blocks
+
+The pre-checks only block on entities that genuinely cannot follow:
+
+- a **company** also referenced by events whose **page** sits on a domain
+  outside the selection (include that domain, or move it first);
+- a **product** whose canonical page lives outside the selection (its
   `validate_service_product_page_owner` trigger requires page and product to
-  share a workspace — move that domain first);
-- a **product** also referenced by events outside the moved set.
+  share a workspace — include that domain, or move it first);
+- a **product** also referenced by events whose page sits outside the
+  selection;
+- a pageless event referencing a moved company/product whose *other* linked
+  entity is not moving.
+
+The dashboard move dialog offers the linked domains as pre-checked checkboxes
+(`suggested_move_domain_urls`), so "taking the product along" is one click:
+the dialog folds them into `additional_domain_ids` and the union move resolves
+the block atomically. Unchecking them leaves the block in place, with the
+database error shown inline.
 
 ### Ordering paradox and the event-link constraint trigger
 
@@ -87,11 +106,11 @@ The move is all-or-nothing. Trigger-locked aggregates that cannot follow abort
 the entire reassignment with a PostgreSQL error, surfaced by the API as
 `409 { "error": "Tenant reassignment failed: …" }`. Pre-checks catch the
 typical cases before anything is written: an event whose company/product
-stays behind, a company whose events span domains in both workspaces, a
-product whose canonical page lives on another domain. The blocking entity
-must move first. There is no partial move and no data loss on failure.
-Unassignment (`tenant_id: null`) is rejected: a TLD always has exactly one
-owning tenant.
+stays behind, a company/product whose events span domains in both workspaces,
+a product whose canonical page lives on another domain. The dialog resolves
+most of these by offering the linked domain(s) for inclusion. There is no
+partial move and no data loss on failure. Unassignment (`tenant_id: null`) is
+rejected: a TLD always has exactly one owning tenant.
 
 ## Display naming (super-admin)
 
@@ -124,8 +143,8 @@ On `/pages`, every TLD card shows:
 
 | Method | Path | Role | Description |
 |---|---|---|---|
-| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent`, and the migration-scope preview: `page_count`, `product_count`, `event_count`, `company_count`, `blocking_company_names`, `blocking_product_names` |
-| PATCH | `/api/schemas/admin/domains/:id` | super-admin | `{ tenant_id? }` (cascading reassignment) and/or `{ display_name? }` |
+| GET | `/api/schemas/admin/domains` | super-admin | Registry rows with `tenant_id`, `display_name`, `schema_count`, `schema_tenant_ids`, `ownership_consistent`, and the migration-scope preview: `page_count`, `product_count`, `event_count`, `company_count`, `blocking_company_names`, `blocking_product_names`, `suggested_move_domain_urls` |
+| PATCH | `/api/schemas/admin/domains/:id` | super-admin | `{ tenant_id?, additional_domain_ids?, display_name? }` — the union of the selected domains moves in one atomic transaction |
 
 Both endpoints require the `super-admin` role (custom claim). The reassignment
 RPC is invoked with the **user's bearer token** (same pattern as the super-admin

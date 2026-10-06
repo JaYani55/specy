@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -783,10 +784,11 @@ interface TLDSectionProps {
   /** Super-admin TLD management: owner reassignment + arbitrary display name */
   isAdmin?: boolean;
   tenantOptions: Array<{ id: string; name: string }>;
-  onUpdateDomain: (domainId: string, patch: { tenant_id?: string; display_name?: string | null }) => Promise<void>;
+  domainRegistry: TLDRegistryEntry[];
+  onUpdateDomain: (domainId: string, patch: { tenant_id?: string; display_name?: string | null; additional_domain_ids?: string[] }) => Promise<void>;
 }
 
-const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, onNavigate, onRefresh, defaultOpen = true, isAdmin = false, tenantOptions, onUpdateDomain }) => {
+const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, onNavigate, onRefresh, defaultOpen = true, isAdmin = false, tenantOptions, domainRegistry, onUpdateDomain }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isUnhooking, setIsUnhooking] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -795,6 +797,8 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState<{ id: string; name: string } | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  /** Linked domains offered for inclusion — pre-checked so shared products/companies come along */
+  const [moveInclude, setMoveInclude] = useState<Set<string>>(new Set());
 
   const handleUnhook = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -830,6 +834,12 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
       id: tenantId,
       name: tenantOptions.find((t) => t.id === tenantId)?.name ?? tenantId,
     });
+    // Offer the linked domains (pre-checked): including them takes shared
+    // products/companies/events along in the same atomic move.
+    const suggestedIds = (registry.suggested_move_domain_urls ?? [])
+      .map((url) => domainRegistry.find((d) => d.domain_url === url)?.id)
+      .filter((id): id is string => Boolean(id));
+    setMoveInclude(new Set(suggestedIds));
     setMoveOpen(true);
   };
 
@@ -838,7 +848,10 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
     setIsSaving(true);
     setMoveError(null);
     try {
-      await onUpdateDomain(registry.id, { tenant_id: moveTarget.id });
+      await onUpdateDomain(registry.id, {
+        tenant_id: moveTarget.id,
+        ...(moveInclude.size > 0 ? { additional_domain_ids: [...moveInclude] } : {}),
+      });
       setMoveOpen(false);
     } catch (err) {
       // The dialog stays open so the operator can retry after moving the
@@ -1166,6 +1179,41 @@ const TLDSection: React.FC<TLDSectionProps> = ({ group, language, tenantNames, o
                 </li>
               </ul>
             </div>
+            {(registry.suggested_move_domain_urls?.length ?? 0) > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium">
+                  {language === 'en' ? 'Include linked domains' : 'Verknüpfte Domains mitverschieben'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {language === 'en'
+                    ? 'Shared products, companies and events span these domains. Include them to move everything together in the same atomic transaction.'
+                    : 'Geteilte Produkte, Firmen und Veranstaltungen verteilen sich auf diese Domains. Binde sie ein, um alles gemeinsam in derselben atomaren Transaktion zu verschieben.'}
+                </p>
+                {registry.suggested_move_domain_urls!.map((url) => {
+                  const linked = domainRegistry.find((d) => d.domain_url === url);
+                  const linkedId = linked?.id;
+                  if (!linkedId) return null;
+                  return (
+                    <label key={url} className="flex items-center gap-2 text-xs">
+                      <Checkbox
+                        checked={moveInclude.has(linkedId)}
+                        disabled={isSaving}
+                        onCheckedChange={(checked) => {
+                          setMoveInclude((prev) => {
+                            const next = new Set(prev);
+                            if (checked) next.add(linkedId); else next.delete(linkedId);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="truncate">
+                        {linked?.display_name || url.replace(/^https?:\/\//, '')}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
             {(registry.blocking_company_names?.length ?? 0) > 0 && (
               <p className="text-xs text-destructive">
                 {language === 'en'
@@ -1222,6 +1270,7 @@ const Pages: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
   const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [domainRegistry, setDomainRegistry] = useState<TLDRegistryEntry[]>([]);
 
   const fetchAndGroup = useCallback(async () => {
     try {
@@ -1243,6 +1292,7 @@ const Pages: React.FC = () => {
         try {
           const [domains, tenants] = await Promise.all([getAdminPageDomains(), getVisibleTenants()]);
           registryByDomain = new Map(domains.map((domain) => [domain.domain_url, domain]));
+          setDomainRegistry(domains);
           setTenantOptions(tenants.map((tenant) => ({
             id: tenant.id,
             name: tenant.organization_name ?? tenant.name,
@@ -1287,7 +1337,7 @@ const Pages: React.FC = () => {
   // shows them inline for retry; the rename path falls back to a toast).
   const handleUpdateDomain = useCallback(async (
     domainId: string,
-    patch: { tenant_id?: string; display_name?: string | null },
+    patch: { tenant_id?: string; display_name?: string | null; additional_domain_ids?: string[] },
   ) => {
     await updateAdminPageDomain(domainId, patch);
     toast.success(language === 'en' ? 'Domain updated.' : 'Domain aktualisiert.');
@@ -1362,6 +1412,7 @@ const Pages: React.FC = () => {
             onRefresh={fetchAndGroup}
             isAdmin={canViewAdminData}
             tenantOptions={tenantOptions}
+            domainRegistry={domainRegistry}
             onUpdateDomain={handleUpdateDomain}
             defaultOpen={idx === 0 || tldGroups.length <= 3}
           />

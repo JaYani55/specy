@@ -729,7 +729,7 @@ export const getAdminPageDomains = async (): Promise<TLDRegistryEntry[]> => {
  */
 export const updateAdminPageDomain = async (
   domainId: string,
-  patch: { tenant_id?: string; display_name?: string | null },
+  patch: { tenant_id?: string; display_name?: string | null; additional_domain_ids?: string[] },
 ): Promise<void> => {
   if (!API_URL) {
     throw new Error('API URL not configured');

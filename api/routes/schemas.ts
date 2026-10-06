@@ -1911,9 +1911,10 @@ schemas.get('/admin/domains', async (c) => {
     companies: string[];
     blockingCompanies: string[];
     blockingProducts: string[];
+    suggestedDomains: string[];
   }>();
-  const emptyScopeEntry = (): { pages: string[]; products: string[]; events: number; companies: string[]; blockingCompanies: string[]; blockingProducts: string[] } => ({
-    pages: [], products: [], events: 0, companies: [], blockingCompanies: [], blockingProducts: [],
+  const emptyScopeEntry = (): { pages: string[]; products: string[]; events: number; companies: string[]; blockingCompanies: string[]; blockingProducts: string[]; suggestedDomains: string[] } => ({
+    pages: [], products: [], events: 0, companies: [], blockingCompanies: [], blockingProducts: [], suggestedDomains: [],
   });
 
   if (allSchemaIds.length > 0) {
@@ -1972,6 +1973,14 @@ schemas.get('/admin/domains', async (c) => {
       }
 
       const movedPageIds = new Set(allPageIds);
+      const companyOutsideDomains = new Map<string, Set<string>>();
+      const productOutsideDomains = new Map<string, Set<string>>();
+      const referencingEvents: Array<{ company_id: string | null; page_id: string | null }> = [];
+      const blockingByCompany = new Map<string, boolean>();
+      const productMeta: Array<{ id: number; name: string; product_page_id: string | null }> = [];
+      const productReferencingEvents: Array<{ product_id: number | null; page_id: string | null }> = [];
+      const productReferencedOutside = new Set<string>();
+      const blockingProductIds = new Set<string>();
 
       // ── Blocking companies: an event outside the moved page set also
       //    references them (the RPC pre-check aborts on those).
@@ -1980,12 +1989,12 @@ schemas.get('/admin/domains', async (c) => {
       let blockingCompanyNamesByDomain = new Map<string, string[]>();
 
       if (companyIds.length > 0) {
-        const { data: referencingEvents } = await admin
+        const { data: companyEventRows } = await admin
           .from('mentorbooking_events')
           .select('company_id, page_id')
           .in('company_id', companyIds);
-        const blockingByCompany = new Map<string, boolean>();
-        for (const row of referencingEvents ?? []) {
+        referencingEvents.push(...(companyEventRows ?? []));
+        for (const row of referencingEvents) {
           if (!row.company_id) continue;
           const isOutside = !row.page_id || !movedPageIds.has(row.page_id);
           blockingByCompany.set(row.company_id, (blockingByCompany.get(row.company_id) ?? false) || isOutside);
@@ -2006,26 +2015,25 @@ schemas.get('/admin/domains', async (c) => {
       //    or (b) an event outside the moved page set also references it.
       const allProductIds = [...new Set([...scope.values()].flatMap((e) => e.products))];
       if (allProductIds.length > 0) {
-        const productMeta = (await admin
+        const metaRows = (await admin
           .from('mentorbooking_products')
           .select('id, name, product_page_id')
           .in('id', allProductIds)).data ?? [];
-        const { data: productReferencingEvents } = await admin
+        productMeta.push(...metaRows);
+        const { data: productEventRows } = await admin
           .from('mentorbooking_events')
           .select('product_id, page_id')
           .in('product_id', allProductIds);
-        const productReferencedOutside = new Set<string>();
-        for (const row of productReferencingEvents ?? []) {
+        productReferencingEvents.push(...(productEventRows ?? []));
+        for (const row of productReferencingEvents) {
           if (row.product_id == null) continue;
           if (!row.page_id || !movedPageIds.has(row.page_id)) productReferencedOutside.add(String(row.product_id));
         }
-        const blockingProductIds = new Set(
-          productMeta
-            .filter((p) =>
-              (p.product_page_id != null && !movedPageIds.has(p.product_page_id))
-              || productReferencedOutside.has(String(p.id)))
-            .map((p) => String(p.id)),
-        );
+        for (const p of productMeta) {
+          if ((p.product_page_id && !movedPageIds.has(p.product_page_id)) || productReferencedOutside.has(String(p.id))) {
+            blockingProductIds.add(String(p.id));
+          }
+        }
         const productNames = new Map(productMeta.map((p) => [String(p.id), p.name]));
         blockingProductNamesByDomain = new Map();
         for (const [domain, entry] of scope) {
@@ -2036,11 +2044,77 @@ schemas.get('/admin/domains', async (c) => {
         }
       }
 
+      // ── Domains to offer as "include in this move": the outside pages that
+      //    make the blocking entities block (a blocking product's canonical
+      //    page, or the pages of the outside events referencing it). Moving
+      //    those domains together resolves the block atomically.
+      const outsidePageIds = new Set<string>();
+      for (const row of referencingEvents) {
+        if (row.company_id && row.page_id && !movedPageIds.has(row.page_id) && blockingByCompany.get(row.company_id)) {
+          outsidePageIds.add(row.page_id);
+        }
+      }
+      for (const row of productReferencingEvents) {
+        if (row.product_id != null && row.page_id && !movedPageIds.has(row.page_id) && blockingProductIds.has(String(row.product_id))) {
+          outsidePageIds.add(row.page_id);
+        }
+      }
+      for (const p of productMeta) {
+        if (p.product_page_id && !movedPageIds.has(p.product_page_id) && blockingProductIds.has(String(p.id))) {
+          outsidePageIds.add(p.product_page_id);
+        }
+      }
+      if (outsidePageIds.size > 0) {
+        const { data: outsidePages } = await admin
+          .from('pages')
+          .select('id, schema_id, domain_url')
+          .in('id', [...outsidePageIds]);
+        const domainByPage = new Map<string, string>();
+        for (const p of outsidePages ?? []) {
+          const domain = p.schema_id ? schemaIdToDomain.get(p.schema_id) : p.domain_url ?? undefined;
+          if (domain) domainByPage.set(p.id, domain);
+        }
+        for (const row of referencingEvents) {
+          const domain = row.page_id ? domainByPage.get(row.page_id) : undefined;
+          if (row.company_id && domain && blockingByCompany.get(row.company_id)) {
+            const set = companyOutsideDomains.get(row.company_id) ?? new Set<string>();
+            set.add(domain);
+            companyOutsideDomains.set(row.company_id, set);
+          }
+        }
+        for (const row of productReferencingEvents) {
+          const domain = row.page_id ? domainByPage.get(row.page_id) : undefined;
+          if (row.product_id != null && domain && blockingProductIds.has(String(row.product_id))) {
+            const set = productOutsideDomains.get(String(row.product_id)) ?? new Set<string>();
+            set.add(domain);
+            productOutsideDomains.set(String(row.product_id), set);
+          }
+        }
+        for (const p of productMeta) {
+          const domain = p.product_page_id ? domainByPage.get(p.product_page_id) : undefined;
+          if (domain && blockingProductIds.has(String(p.id))) {
+            const set = productOutsideDomains.get(String(p.id)) ?? new Set<string>();
+            set.add(domain);
+            productOutsideDomains.set(String(p.id), set);
+          }
+        }
+      }
+
+      const registryDomainSet = new Set(domainUrls);
       for (const [domain, entry] of scope) {
         entry.companies = [...new Set(entry.companies)];
         entry.products = [...new Set(entry.products)];
         entry.blockingCompanies = blockingCompanyNamesByDomain.get(domain) ?? [];
         entry.blockingProducts = blockingProductNamesByDomain.get(domain) ?? [];
+        const suggested = new Set<string>();
+        for (const id of entry.companies) {
+          for (const d of companyOutsideDomains.get(id) ?? []) suggested.add(d);
+        }
+        for (const id of entry.products) {
+          for (const d of productOutsideDomains.get(id) ?? []) suggested.add(d);
+        }
+        suggested.delete(domain);
+        entry.suggestedDomains = [...suggested].filter((d) => registryDomainSet.has(d));
       }
     }
   }
@@ -2062,6 +2136,7 @@ schemas.get('/admin/domains', async (c) => {
         company_count: scope.get(domain.domain_url)?.companies.length ?? 0,
         blocking_company_names: scope.get(domain.domain_url)?.blockingCompanies ?? [],
         blocking_product_names: scope.get(domain.domain_url)?.blockingProducts ?? [],
+        suggested_move_domain_urls: scope.get(domain.domain_url)?.suggestedDomains ?? [],
       };
     }),
   });
@@ -2076,7 +2151,7 @@ schemas.patch('/admin/domains/:id', async (c) => {
     return c.json({ error: 'Invalid page-domain id' }, 400);
   }
 
-  let body: { tenant_id?: unknown; display_name?: unknown };
+  let body: { tenant_id?: unknown; display_name?: unknown; additional_domain_ids?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -2096,21 +2171,34 @@ schemas.patch('/admin/domains/:id', async (c) => {
   if (!domain) return c.json({ error: 'Page domain not found' }, 404);
 
   // Ownership change: atomic cascading RPC covering every schema registered
-  // on the domain, its pages, frontend targets, content templates and
-  // tenant-locked aggregates, plus the registry row itself.
+  // on the domain(s), their pages, frontend targets, content templates and
+  // tenant-locked aggregates, plus the registry rows themselves. Entities
+  // shared between the primary domain and `additional_domain_ids` (products,
+  // companies, events spanning domains) move together in ONE transaction —
+  // that is how a product “taken along” keeps its page/aggregate consistency.
   if (Object.prototype.hasOwnProperty.call(body, 'tenant_id')) {
     const tenantId = body.tenant_id;
     if (typeof tenantId !== 'string'
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
       return c.json({ error: 'tenant_id must be a tenant UUID; page domains cannot be unassigned' }, 400);
     }
+    let domainIds = [domainId];
+    if (Object.prototype.hasOwnProperty.call(body, 'additional_domain_ids')) {
+      const extra = body.additional_domain_ids;
+      if (!Array.isArray(extra)
+        || extra.some((x) => typeof x !== 'string'
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x))) {
+        return c.json({ error: 'additional_domain_ids must be an array of page-domain UUIDs' }, 400);
+      }
+      domainIds = [...new Set([domainId, ...(extra as string[])])];
+    }
     // The RPC re-checks the super-admin role from the invoker's JWT inside
     // the database (same pattern as the /admin logs routes): it must be
     // invoked with the user's bearer token, not the service client, or
     // is_super_admin() would evaluate against an empty claim set.
     const supabase = await createSupabaseClient(c.env, auth.token);
-    const { error: rpcError } = await supabase.rpc('reassign_page_domain_tenant', {
-      p_domain_id: domainId,
+    const { error: rpcError } = await supabase.rpc('reassign_page_domains_tenant', {
+      p_domain_ids: domainIds,
       p_target_tenant_id: tenantId,
     });
     if (rpcError) {

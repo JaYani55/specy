@@ -338,6 +338,8 @@ export interface TLDRegistryEntry {
   blocking_company_names?: string[];
   /** Products whose canonical page is outside the domain or referenced by outside events — these block the move */
   blocking_product_names?: string[];
+  /** Domains hosting the blocking entities — including them in the move resolves the block */
+  suggested_move_domain_urls?: string[];
 }
 
 // --- Agent Log Types ---

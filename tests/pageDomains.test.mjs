@@ -25,26 +25,20 @@ test('Page domains is an ordered migration creating the registry, RLS and the gu
   assert.match(migration, /create policy "super_admin_update_page_domains"[\s\S]*?with check \(public\.is_super_admin\(\)\)/);
 
   // SECURITY DEFINER RPC with in-function super-admin guard and atomic cascade
-  assert.match(migration, /reassign_page_domain_tenant\([\s\S]*?security definer/);
+  assert.match(migration, /reassign_page_domains_tenant\([\s\S]*?security definer/);
+  assert.match(migration, /drop function if exists public\.reassign_page_domain_tenant\(uuid, uuid\)/);
   assert.match(migration, /if not public\.is_super_admin\(\) then[\s\S]*?Only super-admins may reassign page domains/);
   assert.match(migration, /update public\.page_schemas[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /update public\.schema_frontend_targets[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /update public\.page_content_templates[\s\S]*?set tenant_id = p_target_tenant_id/);
   assert.match(migration, /update public\.pages[\s\S]*?set tenant_id = p_target_tenant_id/);
-  assert.match(migration, /update public\.mentorbooking_products[\s\S]*?set tenant_id = p_target_tenant_id/);
-  assert.match(migration, /update public\.mentorbooking_events[\s\S]*?set tenant_id = p_target_tenant_id/);
-  // Companies assigned to the moved events follow their events, with a
-  // guard against companies also referenced by events outside the move.
+  assert.match(migration, /update public\.mentorbooking_products[\s\S]*?where id = any\(v_product_ids\)/);
+  assert.match(migration, /update public\.mentorbooking_events[\s\S]*?page_id = any\(v_page_ids\)[\s\S]*?page_id is null/);
   assert.match(migration, /update public\.companies[\s\S]*?set tenant_id = p_target_tenant_id/);
-  assert.match(migration, /is also referenced by events outside this domain/);
-  // Products referenced by the moved events follow too — including products
-  // without a canonical page — with pre-checks for cross-domain page links
-  // and outside-event references.
-  assert.match(migration, /Product "%" is linked to a page outside this domain/);
-  assert.match(migration, /Product "%" is also referenced by events outside this domain/);
-  assert.match(migration, /update public\.mentorbooking_products[\s\S]*?or id in \([\s\S]*?select distinct e\.product_id/);
+  assert.match(migration, /is also referenced by events on other domains/);
+  assert.match(migration, /Product "%" is linked to a page on another domain/);
   assert.match(migration, /update public\.page_domains[\s\S]*?set tenant_id = p_target_tenant_id/);
-  assert.match(migration, /grant execute on function public\.reassign_page_domain_tenant\(uuid, uuid\) to authenticated/);
+  assert.match(migration, /grant execute on function public\.reassign_page_domains_tenant\(uuid\[\], uuid\) to authenticated/);
 
   // Ordering-paradox handling: constraint trigger disabled and re-enabled inside the transaction
   assert.match(migration, /disable trigger enforce_event_page_link/);
@@ -77,11 +71,16 @@ test('Admin endpoints are super-admin-only and map to the registry surfaces', ()
   assert.match(domainsRoute, /company_count:/);
   assert.match(domainsRoute, /blocking_company_names:/);
   assert.match(domainsRoute, /blocking_product_names:/);
+  assert.match(domainsRoute, /suggested_move_domain_urls:/);
   const patchRoute = routes.slice(routes.indexOf("schemas.patch('/admin/domains/:id'"));
   assert.match(patchRoute, /requireAppRole\(c, 'super-admin'\)/);
   // The RPC must be invoked with the user's bearer token so is_super_admin()
   // sees the custom claim inside the database session (not the service client).
-  assert.match(patchRoute, /createSupabaseClient\(c\.env, auth\.token\)[\s\S]*?\.rpc\('reassign_page_domain_tenant'/);
+  assert.match(patchRoute, /createSupabaseClient\(c\.env, auth\.token\)[\s\S]*?\.rpc\('reassign_page_domains_tenant'/);
+  // Shared entities spanning domains move together: the PATCH accepts
+  // additional domain ids that are folded into one array RPC call.
+  assert.match(patchRoute, /additional_domain_ids must be an array of page-domain UUIDs/);
+  assert.match(patchRoute, /p_domain_ids: domainIds/);
   assert.match(patchRoute, /page domains cannot be unassigned/);
   assert.match(patchRoute, /display_name must be 120 characters or fewer/);
   assert.ok(routes.indexOf("schemas.get('/admin/domains'") < routes.indexOf("schemas.patch('/admin/domains/:id'"));
@@ -94,7 +93,7 @@ test('The dashboard exposes super-admin TLD management on the /pages cards', () 
   assert.match(pages, /const \{ canViewAdminData \} = usePermissions\(\)/);
   assert.match(pages, /getAdminPageDomains\(\), getVisibleTenants\(\)/);
   assert.match(pages, /onValueChange=\{handleOwnerChange\}/);
-  assert.match(pages, /onUpdateDomain\(registry\.id, \{ tenant_id: moveTarget\.id \}\)/);
+  assert.match(pages, /onUpdateDomain\(registry\.id, \{\s*tenant_id: moveTarget\.id,[\s\S]*?additional_domain_ids: \[\.\.\.moveInclude\]/);
   assert.match(pages, /onUpdateDomain\(registry\.id, \{ display_name: renameValue\.trim\(\) \|\| null \}\)/);
   // The owner move uses a migration-scope dialog (no browser confirm), which
   // stays open on failure so the blocking aggregates can be addressed first.
@@ -102,6 +101,8 @@ test('The dashboard exposes super-admin TLD management on the /pages cards', () 
   assert.match(pages, /Migration scope/);
   assert.match(pages, /blocking_company_names/);
   assert.match(pages, /blocking_product_names/);
+  assert.match(pages, /suggested_move_domain_urls/);
+  assert.match(pages, /moveInclude\.size > 0 \? \{ additional_domain_ids: \[\.\.\.moveInclude\] \} : \{\}/);
   assert.doesNotMatch(pages.slice(pages.indexOf('handleOwnerChange'), pages.indexOf('handleConfirmMove')), /window\.confirm/);
   // Display name wins, the raw domain stays visible as description
   assert.match(pages, /registry\?\.display_name\s*\|\|/);
