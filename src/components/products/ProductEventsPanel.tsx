@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, ExternalLink, Loader2, Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { CalendarDays, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/lib/supabase';
+import { DeleteEventDialog } from '@/components/events/DeleteEventDialog';
 
 interface ProductEventsPanelProps {
   tenantId: string;
@@ -48,6 +50,9 @@ export function ProductEventsPanel({ tenantId, serviceProductId, legacyProductId
   const [resolvedLegacyProductId, setResolvedLegacyProductId] = useState<number | undefined>(legacyProductId);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [eventToDelete, setEventToDelete] = useState<ProductEventSummary | null>(null);
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,7 +138,38 @@ export function ProductEventsPanel({ tenantId, serviceProductId, legacyProductId
     }
     void load();
     return () => { cancelled = true; };
-  }, [legacyProductId, serviceProductId, tenantId]);
+  }, [legacyProductId, serviceProductId, tenantId, reloadKey]);
+
+  // Deleting the event row removes its linked public page in the same
+  // caller-scoped transaction (delete_event_page_after_event_delete trigger).
+  const handleDeleteEvent = async () => {
+    if (!eventToDelete || !tenantId) return;
+    setIsDeletingEvent(true);
+    try {
+      const { error } = await supabase
+        .from('mentorbooking_events')
+        .delete()
+        .eq('id', eventToDelete.id)
+        .eq('tenant_id', tenantId);
+      if (error) throw error;
+      toast.success('Veranstaltung und zugehörige öffentliche Seite wurden gelöscht.');
+      setEventToDelete(null);
+      setReloadKey((key) => key + 1);
+    } catch (error) {
+      console.error('Could not delete the event:', error);
+      toast.error(error instanceof Error ? error.message : 'Veranstaltung konnte nicht gelöscht werden.');
+    } finally {
+      setIsDeletingEvent(false);
+    }
+  };
+
+  // Mirrors the DeleteEventDialog guard: past events stay deletable only for
+  // viewers with admin data access.
+  const isPastEventSummary = (summary: ProductEventSummary) => {
+    if (!summary.date) return false;
+    const start = new Date(`${summary.date}T${summary.time || '00:00'}`);
+    return !Number.isNaN(start.getTime()) && start.getTime() < Date.now();
+  };
 
   const handleCreateEvent = () => {
     if (resolvedLegacyProductId === undefined || (onBeforeCreateEvent && !onBeforeCreateEvent())) return;
@@ -206,12 +242,29 @@ export function ProductEventsPanel({ tenantId, serviceProductId, legacyProductId
                     <ExternalLink className="mr-1.5 h-4 w-4" />
                     Öffnen
                   </Button>
+                  {permissions.canDeleteEvents && (!isPastEventSummary(event) || permissions.canViewAdminData) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setEventToDelete(event)}
+                      aria-label={`„${event.title || 'Veranstaltung'}“ löschen`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}
           </ul>
         )}
       </CardContent>
+      <DeleteEventDialog
+        open={Boolean(eventToDelete)}
+        onOpenChange={(open) => { if (!open) setEventToDelete(null); }}
+        onDelete={handleDeleteEvent}
+        isDeleting={isDeletingEvent}
+      />
     </Card>
   );
 }
