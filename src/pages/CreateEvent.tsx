@@ -121,15 +121,21 @@ const CreateEvent = () => {
         });
         // New event pages must start as drafts. The database function normally
         // guarantees this; force it back to draft if an outdated deployment
-        // published the page on creation.
-        if (result.page_status !== 'draft') {
-          await setEventPagePublication({
-            event_id: result.event_id,
-            tenant_id: result.tenant_id,
-            expected_definition_revision: schema.definition_revision ?? 1,
-            expected_page_updated_at: result.page_updated_at,
-            status: 'draft',
-          });
+        // published the page on creation. The correction must never abort the
+        // creation itself — older deployments may return a result shape without
+        // the revision metadata this RPC requires.
+        if (result.page_status === 'published' && result.page_updated_at) {
+          try {
+            await setEventPagePublication({
+              event_id: result.event_id,
+              tenant_id: result.tenant_id,
+              expected_definition_revision: schema.definition_revision ?? 1,
+              expected_page_updated_at: result.page_updated_at,
+              status: 'draft',
+            });
+          } catch (draftError) {
+            console.error('Event was created, but the page could not be reset to draft:', draftError);
+          }
         }
         createdRecord = { id: result.event_id, tenant_id: result.tenant_id };
         schemaConsolePath = getSchemaConsolePath(schema);
@@ -221,9 +227,8 @@ const CreateEvent = () => {
       console.error('Error creating event:', error);
       const message = error instanceof Error ? error.message : undefined;
       toast.error(
-        language === 'en' 
-          ? message || 'Failed to create event' 
-          : 'Fehler beim Erstellen der Veranstaltung'
+        message
+          || (language === 'en' ? 'Failed to create event' : 'Fehler beim Erstellen der Veranstaltung')
       );
     } finally {
       setIsSubmitting(false);

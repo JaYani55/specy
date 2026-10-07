@@ -78,6 +78,9 @@ const formSchema = zod.object({
   if (values.event_schema_id && !values.event_page_name?.trim()) {
     context.addIssue({ code: zod.ZodIssueCode.custom, path: ['event_page_name'], message: 'A public page title is required.' });
   }
+  if (values.event_schema_id && !values.company?.trim()) {
+    context.addIssue({ code: zod.ZodIssueCode.custom, path: ['company'], message: 'Für öffentliche Veranstaltungsseiten ist ein Unternehmen erforderlich.' });
+  }
   if (values.event_schema_id && !isValidIanaTimezone(values.timezone ?? '')) {
     context.addIssue({ code: zod.ZodIssueCode.custom, path: ['timezone'], message: 'Choose a valid IANA timezone.' });
   }

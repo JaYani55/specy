@@ -19,8 +19,8 @@ export function CompanySection({ form, isLoading, language }) {
               label={language === "en" ? "Existing Company (optional)" : "Bestehendes Unternehmen (optional)"}
               missingText={missing
                 ? language === "en"
-                  ? "Optional: select an existing company or enter a company name below. You can also save the event without a company."
-                  : "Optional: wähle ein bestehendes Unternehmen aus oder gib unten einen Unternehmensnamen ein. Du kannst die Veranstaltung auch ohne Unternehmen speichern."
+                  ? "Optional: select an existing company or enter a company name below. You can also save the event without a company — unless it gets a public event page, which requires a company."
+                  : "Optional: wähle ein bestehendes Unternehmen aus oder gib unten einen Unternehmensnamen ein. Du kannst die Veranstaltung auch ohne Unternehmen speichern — öffentliche Veranstaltungsseiten erfordern jedoch ein Unternehmen."
                 : null}
             />
             <FormControl>
