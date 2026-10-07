@@ -48,9 +48,9 @@ export function ProductApprovedMentorSelector({
   }, [approvedMentorIds]);
 
   if (loading)
-    return <div>{language === "en" ? "Loading mentors..." : "Lade Mentoren..."}</div>;
+    return <div>{language === "en" ? "Loading staff..." : "Lade Mitarbeitende..."}</div>;
   if (!mentors.length)
-    return <div>{language === "en" ? "No mentors available." : "Keine Mentoren verfügbar."}</div>;
+    return <div>{language === "en" ? "No staff available." : "Keine Mitarbeitenden verfügbar."}</div>;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

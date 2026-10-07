@@ -4,7 +4,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 const roleinfo = [
   {
     id: 1,
-    title: 'MentorInnen',
+    title: 'Mitarbeitende',
     description: [
       'Für sie sichtbare Veranstaltungen sehen',
       'Anfragen, um an Veranstaltungen teilzunehmen',
@@ -18,20 +18,20 @@ const roleinfo = [
     description: [
       'Veranstaltungen erstellen, bearbeiten und löschen.',
       'Produkte verwalten (z. B. Kurse, Sessions).',
-      'Mentorenanfragen einsehen und bearbeiten (annehmen/ablehnen). (teilweise noch bug fixes nötig)',
-      'Mentoren manuell zu Veranstaltungen zuweisen.',
-      'Profile von Mentoren und Kollegen ansehen.',
+      'Mitarbeiter-Anfragen einsehen und bearbeiten (annehmen/ablehnen). (teilweise noch bug fixes nötig)',
+      'Mitarbeitende manuell zu Veranstaltungen zuweisen.',
+      'Profile von Mitarbeitenden und Kollegen ansehen.',
       'Zugang zum Verwaltungsbereich',
     ],
   },
   {
     id: 3,
-    title: 'Mentoring-Management',
+    title: 'Mitarbeiter-Management',
     description: [
       'Alles, was Mitarbeiter können, plus:',
-      'Mentoren anlegen oder entfernen.',
-      'Eigenschaften (“Traits”) von Mentoren festlegen oder ändern.',
-      'Profile aller Nutzer (Mentoren & Mitarbeiter) ansehen und bearbeiten. (Username und Profil-Icon via mentorbooking, alles andere via seatable)',
+      'Mitarbeitende anlegen oder entfernen.',
+      'Eigenschaften (“Traits”) von Mitarbeitenden festlegen oder ändern.',
+      'Profile aller Mitarbeitenden ansehen und bearbeiten. (Username und Profil-Icon via mentorbooking, alles andere via seatable)',
     ],
   },
 ];

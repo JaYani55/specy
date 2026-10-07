@@ -233,7 +233,7 @@ const VerwaltungManageProducts = () => {
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full flex-shrink-0 group-hover:bg-purple-600 transition-colors duration-200"></div>
                 <span className="text-sm font-medium text-muted-foreground">
-                  {language === "en" ? "Mentors:" : "Mentoren:"}
+                  {language === "en" ? "Staff:" : "Mitarbeitende:"}
                 </span>
                 <span className="text-sm text-foreground">
                   {product.min_amount_mentors ?? 1}
@@ -283,7 +283,7 @@ const VerwaltungManageProducts = () => {
                   <div className="w-2 h-2 bg-teal-500 rounded-full flex-shrink-0 mt-1 group-hover:bg-teal-600 transition-colors duration-200"></div>
                   <div className="flex-1">
                     <span className="text-sm font-medium text-muted-foreground">
-                      {language === "en" ? "Approved mentors:" : "Freigegebene Mentoren:"}
+                      {language === "en" ? "Approved staff:" : "Freigegebene Mitarbeitende:"}
                     </span>
                     <div className="text-sm text-foreground mt-1">
                       {product.approved
@@ -346,7 +346,7 @@ const VerwaltungManageProducts = () => {
             <TableHead className="w-12"></TableHead>
             <TableHead className="w-[250px] text-base font-semibold">{language === "en" ? "Name" : "Name"}</TableHead>
             <TableHead className="w-36 text-base font-semibold">{language === "en" ? "Compensation" : "Vergütung"}</TableHead>
-            <TableHead className="w-24 text-base font-semibold">{language === "en" ? "Mentors" : "Mentoren"}</TableHead>
+            <TableHead className="w-24 text-base font-semibold">{language === "en" ? "Staff" : "Mitarbeitende"}</TableHead>
             <TableHead className="w-24 text-right text-base font-semibold">{language === "en" ? "Actions" : "Aktionen"}</TableHead>
           </TableRow>
         </TableHeader>
@@ -475,7 +475,7 @@ const VerwaltungManageProducts = () => {
 
                         <div>
                           <h4 className="font-semibold text-sm text-muted-foreground mb-2">
-                            {language === "en" ? "Approved Mentors:" : "Freigegebene Mentoren:"}
+                            {language === "en" ? "Approved Staff:" : "Freigegebene Mitarbeitende:"}
                           </h4>
                           {product.approved && product.approved.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
@@ -492,7 +492,7 @@ const VerwaltungManageProducts = () => {
                             </div>
                           ) : (
                             <span className="text-muted-foreground text-sm">
-                              {language === "en" ? "No specific mentors approved - all eligible mentors can be assigned" : "Keine spezifischen Mentoren freigegeben - alle geeigneten Mentoren können zugewiesen werden"}
+                              {language === "en" ? "No specific staff approved - all eligible staff can be assigned" : "Keine spezifischen Mitarbeitenden freigegeben - alle geeigneten Mitarbeitenden können zugewiesen werden"}
                             </span>
                           )}
                         </div>

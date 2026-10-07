@@ -357,7 +357,7 @@ const ProductDetail = () => {
                     
                     <div className="flex flex-col gap-2">
                       <span className="text-lg font-medium">
-                        {language === 'en' ? 'Mentor Requirements' : 'Mentorenanforderungen'}
+                        {language === 'en' ? 'Staff Requirements' : 'Mitarbeiteranforderungen'}
                       </span>
                       <div className="flex gap-3">
                         <Badge variant="outline" className="text-base py-1 px-3">
@@ -391,7 +391,7 @@ const ProductDetail = () => {
                 {product.approved && product.approved.length > 0 && (
                   <div>
                     <h2 className="text-2xl font-semibold mb-4 pb-2 border-b">
-                      {language === 'en' ? 'Approved Mentors' : 'Freigegebene Mentoren'}
+                      {language === 'en' ? 'Approved Staff' : 'Freigegebene Mitarbeitende'}
                     </h2>
                     <ul className="space-y-3 mt-4">
                       {product.approved.map((uuid, index) => {

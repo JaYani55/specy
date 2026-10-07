@@ -20,8 +20,8 @@ export const AccessDenied = ({ language }: AccessDeniedProps) => {
       </h2>
       <p className="text-muted-foreground text-center max-w-md">
         {language === "en"
-          ? "Mentors can only view their own profile and coach profiles."
-          : "MentorInnen können nur ihr eigenes Profil und Coach-Profile einsehen."}
+          ? "Staff can only view their own profile and coach profiles."
+          : "Mitarbeitende können nur ihr eigenes Profil und Coach-Profile einsehen."}
       </p>
       <Button onClick={() => navigate('/profile')}>
         {language === "en" ? "Go to My Profile" : "Zu meinem Profil"}

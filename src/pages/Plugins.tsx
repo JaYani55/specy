@@ -654,7 +654,7 @@ export default function Plugins() {
               <Label htmlFor="webapp-name">Name *</Label>
               <Input
                 id="webapp-name"
-                placeholder="Mentor Portal"
+                placeholder="Staff Portal"
                 value={webappForm.name}
                 onChange={(e) => setWebappForm((current) => ({ ...current, name: e.target.value }))}
               />
@@ -699,7 +699,7 @@ export default function Plugins() {
               <Label htmlFor="webapp-description">Beschreibung</Label>
               <Input
                 id="webapp-description"
-                placeholder="Externe Anwendung fuer Staff oder Mentoren"
+                placeholder="Externe Anwendung fuer Mitarbeitende"
                 value={webappForm.description}
                 onChange={(e) => setWebappForm((current) => ({ ...current, description: e.target.value }))}
               />

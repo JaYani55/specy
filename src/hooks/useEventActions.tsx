@@ -96,7 +96,7 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
 
     try {
       await assignMentorToEvent(event.id, mentorId, activeTenantId);
-      toast.success('Mentor assigned successfully');
+      toast.success('Staff member assigned successfully');
       
       // Update local event state
       const updatedEvent = {
@@ -109,7 +109,7 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
       await refetchEvents();
     } catch (error) {
       console.error('Error assigning mentor:', error);
-      toast.error('Failed to assign mentor');
+      toast.error('Failed to assign staff member');
     }
   };
 
@@ -121,7 +121,7 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
 
     try {
       await removeMentorFromEvent(event.id, mentorId, activeTenantId);
-      toast.success('Mentor removed successfully');
+      toast.success('Staff member removed successfully');
       
       // Update local event state
       const updatedEvent = {
@@ -133,7 +133,7 @@ const useEventActions = (event: Event | null, setEvent: (event: Event) => void):
       await refetchEvents();
     } catch (error) {
       console.error('Error removing mentor:', error);
-      toast.error('Failed to remove mentor');
+      toast.error('Failed to remove staff member');
     }
   };
 

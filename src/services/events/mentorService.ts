@@ -30,7 +30,7 @@ export const assignMentorToEvent = async (eventId: string, mentorId: string, ten
 
   if (error) {
     console.error('Error assigning mentor to event:', error);
-    throw new Error(error.message || 'Failed to assign mentor to event');
+    throw new Error(error.message || 'Failed to assign staff member to event');
   }
 };
 
@@ -62,6 +62,6 @@ export const removeMentorFromEvent = async (eventId: string, mentorId: string, t
 
   if (error) {
     console.error('Error removing mentor from event:', error);
-    throw new Error(error.message || 'Failed to remove mentor from event');
+    throw new Error(error.message || 'Failed to remove staff member from event');
   }
 };

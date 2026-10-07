@@ -108,16 +108,16 @@ export function MentorSelector({ eventId, excludeUserIds, onMentorSelected, lang
         setErrorMessage(
           excludeUserIds.length > 0 
             ? language === "en" 
-              ? "No additional mentors available" 
-              : "Keine weiteren MentorInnen verfügbar" 
+              ? "No additional staff available" 
+              : "Keine weiteren Mitarbeitende verfügbar" 
             : language === "en"
-              ? "No mentors found in the system"
-              : "Keine MentorInnen im System gefunden"
+              ? "No staff found in the system"
+              : "Keine Mitarbeitenden im System gefunden"
         );
       }
     } catch (err) {
       console.error("Exception loading mentors:", err);
-      setErrorMessage(language === "en" ? "Error loading mentors" : "Fehler beim Laden der MentorInnen");
+      setErrorMessage(language === "en" ? "Error loading staff" : "Fehler beim Laden der Mitarbeitenden");
     } finally {
       setLoading(false);
     }
@@ -155,7 +155,7 @@ export function MentorSelector({ eventId, excludeUserIds, onMentorSelected, lang
       setSearchText('');
     } catch (error) {
       console.error("Error selecting mentor:", error);
-      setErrorMessage(language === "en" ? "Error assigning mentor" : "Fehler bei der MentorIn-Zuweisung");
+      setErrorMessage(language === "en" ? "Error assigning staff" : "Fehler bei der Zuweisung von Mitarbeitenden");
     }
   };
 
@@ -168,27 +168,27 @@ export function MentorSelector({ eventId, excludeUserIds, onMentorSelected, lang
           disabled={disabled}
           className="w-full justify-between"
         >
-          {language === "en" ? "Assign mentor..." : "MentorIn zuweisen..."}
+          {language === "en" ? "Assign staff..." : "Mitarbeitende zuweisen..."}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-0">
         <Command>
           <CommandInput 
-            placeholder={language === "en" ? "Search mentors..." : "MentorInnen suchen..."}
+            placeholder={language === "en" ? "Search staff..." : "Mitarbeitende suchen..."}
             onValueChange={setSearchText}
           />
           {loading ? (
             <div className="py-6 text-center text-sm flex flex-col items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
-              {language === "en" ? "Loading mentors..." : "Lade MentorInnen..."}
+              {language === "en" ? "Loading staff..." : "Lade Mitarbeitende..."}
             </div>
           ) : (
             <>
               <CommandEmpty>
                 {errorMessage || 
-                  (language === "en" ? "No mentors found. Try a different search term." : 
-                  "Keine MentorInnen gefunden. Versuche einen anderen Suchbegriff.")}
+                  (language === "en" ? "No staff found. Try a different search term." : 
+                  "Keine Mitarbeitenden gefunden. Versuche einen anderen Suchbegriff.")}
               </CommandEmpty>
               <CommandGroup>
                 {filteredMentors.map((mentor) => (
@@ -205,8 +205,8 @@ export function MentorSelector({ eventId, excludeUserIds, onMentorSelected, lang
               {mentors.length > 0 && (
                 <div className="py-2 px-2 text-xs text-muted-foreground border-t">
                   {language === "en" 
-                    ? `Showing ${filteredMentors.length} of ${mentors.length} mentors` 
-                    : `Zeige ${filteredMentors.length} von ${mentors.length} MentorInnen`}
+                    ? `Showing ${filteredMentors.length} of ${mentors.length} staff` 
+                    : `Zeige ${filteredMentors.length} von ${mentors.length} Mitarbeitende`}
                 </div>
               )}
             </>

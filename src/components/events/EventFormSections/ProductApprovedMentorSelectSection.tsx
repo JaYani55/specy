@@ -7,8 +7,8 @@ export function ProductApprovedMentorSelectSection({ form, selectedProduct, appr
     return (
       <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
         {language === "en"
-          ? "No approved mentors for this product. Please assign mentors in the product settings."
-          : "Keine freigegebenen MentorInnen für dieses Produkt. Bitte weisen Sie MentorInnen in den Produkteinstellungen zu."}
+          ? "No approved staff for this product. Please assign staff in the product settings."
+          : "Keine freigegebenen Mitarbeitenden für dieses Produkt. Bitte weisen Sie Mitarbeitende in den Produkteinstellungen zu."}
       </div>
     );
   }
@@ -22,7 +22,7 @@ export function ProductApprovedMentorSelectSection({ form, selectedProduct, appr
       render={({ field }) => (
         <FormItem>
           <FormLabel className="mt-6 mb-2 block text-base font-semibold">
-            {language === "en" ? "Select Approved Mentors" : "Freigegebene Mentoren auswählen"}
+            {language === "en" ? "Select Approved Staff" : "Freigegebene Mitarbeitende auswählen"}
           </FormLabel>
           <ProductApprovedMentorSelector
             approvedMentorIds={approvedMentorIds}

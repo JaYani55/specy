@@ -18,7 +18,7 @@ export const RequestButton = ({
 
   // Responsive labels (optional)
   const shortLabel = language === "en" ? "Request" : "Anfrage";
-  const longLabel = language === "en" ? "Request to be a mentor" : "Anfrage als MentorIn";
+  const longLabel = language === "en" ? "Request to be a staff member" : "Anfrage als Mitarbeitende:r";
 
   return (
     <Button

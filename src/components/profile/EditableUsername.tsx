@@ -104,8 +104,8 @@ export const EditableUsername: React.FC<EditableUsernameProps> = ({
 
   // Zusätzliche Beschreibungstexte für die Prominenz
   const descriptionText = language === 'de'
-    ? (canEditUsername ? 'Du kannst dem User einen Anzeigenamen geben.' : 'Die Mentorenverwaltung kann diesen Anzeigenamen vergeben.')
-    : (canEditUsername ? 'You can set a Username for this user.' : 'Mentor management can assign this display name.');
+    ? (canEditUsername ? 'Du kannst dem User einen Anzeigenamen geben.' : 'Die Mitarbeiterverwaltung kann diesen Anzeigenamen vergeben.')
+    : (canEditUsername ? 'You can set a Username for this user.' : 'Staff management can assign this display name.');
 
 
   // --- Render-Logik ---

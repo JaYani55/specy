@@ -35,8 +35,8 @@ function MentorSeaTableForm() {
       <div className="text-center p-6">
         <p className="text-muted-foreground">
           {language === 'en' 
-            ? 'You do not have permission to add mentors' 
-            : 'Sie haben keine Berechtigung, Mentoren hinzuzufügen'}
+            ? 'You do not have permission to add staff' 
+            : 'Sie haben keine Berechtigung, Mitarbeitende hinzuzufügen'}
         </p>
       </div>
     );

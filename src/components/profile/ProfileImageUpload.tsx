@@ -140,8 +140,8 @@ export const ProfileImageUpload = ({ language, userId, currentIcon, onImageUploa
           <Info className="h-4 w-4 text-gray-500" />
           <p className="text-sm text-gray-600">
             {language === 'en' 
-              ? 'Contact mentoring management to change your icon'
-              : 'Kontaktieren Sie das Mentoring-Management für Icon-Änderungen'}
+              ? 'Contact staff management to change your icon'
+              : 'Kontaktieren Sie das Mitarbeiter-Management für Icon-Änderungen'}
           </p>
         </div>
       </div>

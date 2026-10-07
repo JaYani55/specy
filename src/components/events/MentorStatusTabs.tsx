@@ -104,12 +104,12 @@ export const MentorStatusPanel: React.FC<MentorStatusPanelProps> = ({
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-xl font-semibold flex items-center gap-2 text-primary">
           <Users className="h-5 w-5" />
-          {language === "en" ? "Mentor Status" : "MentorInnen-Status"}
+          {language === "en" ? "Staff Status" : "Mitarbeiter-Status"}
         </h3>
         <Badge variant="outline" className="px-2.5 py-1 text-sm bg-primary/5">
           <span className="font-semibold">{totalMentorCount}</span>
           <span className="ml-1 font-normal">
-            {language === "en" ? "total mentors" : "MentorInnen insgesamt"}
+            {language === "en" ? "total staff" : "Mitarbeitende insgesamt"}
           </span>
         </Badge>
       </div>
@@ -126,7 +126,7 @@ export const MentorStatusPanel: React.FC<MentorStatusPanelProps> = ({
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-lg font-semibold flex items-center gap-2">
               <Check className="h-5 w-5 text-green-600" />
-              {language === "en" ? "Assigned Mentors" : "Zugewiesene MentorInnen"}
+              {language === "en" ? "Assigned Staff" : "Zugewiesene Mitarbeitende"}
             </h4>
 
             {/* X / Y in green */}
@@ -143,8 +143,8 @@ export const MentorStatusPanel: React.FC<MentorStatusPanelProps> = ({
               <Users className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
               <p className="text-muted-foreground">
                 {language === "en"
-                  ? "No assigned mentors yet"
-                  : "Noch keine zugewiesenen MentorInnen"}
+                  ? "No assigned staff yet"
+                  : "Noch keine zugewiesenen Mitarbeitende"}
               </p>
             </div>
           ) : (
@@ -179,7 +179,7 @@ export const MentorStatusPanel: React.FC<MentorStatusPanelProps> = ({
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-lg font-semibold flex items-center gap-2">
               <XCircle className="h-5 w-5 text-red-600" />
-              {language === "en" ? "Declined Mentors" : "Abgelehnte MentorInnen"}
+              {language === "en" ? "Declined Staff" : "Abgelehnte Mitarbeitende"}
             </h4>
             <Badge
               className="bg-red-100 text-red-800 border-red-300 text-lg px-3 py-1 font-bold rounded-xl shadow-sm"
@@ -194,8 +194,8 @@ export const MentorStatusPanel: React.FC<MentorStatusPanelProps> = ({
               <XCircle className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
               <p className="text-muted-foreground">
                 {language === "en"
-                  ? "No declined mentors"
-                  : "Keine abgelehnten MentorInnen"}
+                  ? "No declined staff"
+                  : "Keine abgelehnten Mitarbeitende"}
               </p>
             </div>
           ) : (

@@ -47,9 +47,9 @@ export const RoleIndicator: React.FC<RoleIndicatorProps> = ({ language }) => {
       case UserRole.STAFF:
         return language === 'en' ? 'Staff' : 'Mitarbeiter';
       case UserRole.MENTORINGMANAGEMENT:
-        return language === 'en' ? 'Mentoring Management' : 'Mentoring Management';
+        return language === 'en' ? 'Staff Management' : 'Mitarbeiter-Management';
       case UserRole.MENTOR:
-        return language === 'en' ? 'Mentor' : 'Mentor';
+        return language === 'en' ? 'Staff' : 'Mitarbeiter';
       default:
         return role;
     }

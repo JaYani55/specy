@@ -75,8 +75,8 @@ const Verwaltung = () => {
     {
       title: language === 'de' ? 'Eigenschaften verwalten' : 'Manage Traits',
       description: language === 'de' 
-        ? 'Mentor-Eigenschaften und Kategorien definieren' 
-        : 'Define mentor traits and categories',
+        ? 'Mitarbeiter-Eigenschaften und Kategorien definieren' 
+        : 'Define staff traits and categories',
       icon: Tags,
       href: '/admin/trait',
       permission: 'canManageTraits',
@@ -85,8 +85,8 @@ const Verwaltung = () => {
     {
       title: language === 'de' ? 'Eigenschaften zuweisen' : 'Assign Traits',
       description: language === 'de' 
-        ? 'Eigenschaften zu MentorInnen zuordnen und verwalten' 
-        : 'Assign and manage traits to mentors',
+        ? 'Eigenschaften zu Mitarbeitenden zuordnen und verwalten' 
+        : 'Assign and manage staff traits',
       icon: UserCheck,
       href: '/admin/traitsmentorassign',
       permission: 'canManageTraits',
@@ -188,7 +188,7 @@ const Verwaltung = () => {
             <div>
               <div className="mb-8">
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                  {language === 'de' ? 'MentorInnen-Verwaltung' : 'Mentor Administration'}
+                  {language === 'de' ? 'Mitarbeiter-Verwaltung' : 'Staff Administration'}
                 </h2>
                 <p className="text-gray-600 dark:text-gray-400">
                   {language === 'de' 

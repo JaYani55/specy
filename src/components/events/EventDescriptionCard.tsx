@@ -97,7 +97,7 @@ export const EventDescriptionCard = ({
         {shouldShowMentorRequests && (
           <div className="border-t pt-6">
             <h3 className="text-lg font-semibold mb-3">
-              {language === "en" ? "Mentor Requests" : "Mentoranfragen"}
+              {language === "en" ? "Staff Requests" : "Mitarbeiter-Anfragen"}
             </h3>
             
             <MentorRequestsModal

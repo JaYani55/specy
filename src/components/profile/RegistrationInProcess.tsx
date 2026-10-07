@@ -23,8 +23,8 @@ export const RegistrationInProcess: React.FC<RegistrationInProcessProps> = ({
           <div>
             <p className="text-amber-700 mb-2">
               {language === 'en' 
-                ? 'Your mentor profile is currently being processed. The data synchronization between our systems is still in progress.' 
-                : 'Ihr Mentor-Profil wird derzeit bearbeitet. Die Datensynchronisation zwischen unseren Systemen ist noch im Gange.'}
+                ? 'Your staff profile is currently being processed. The data synchronization between our systems is still in progress.' 
+                : 'Ihr Mitarbeiter-Profil wird derzeit bearbeitet. Die Datensynchronisation zwischen unseren Systemen ist noch im Gange.'}
             </p>
             <p className="text-sm text-amber-600">
               {language === 'en'

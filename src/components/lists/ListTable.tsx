@@ -81,13 +81,13 @@ const ListTable: React.FC<ListTableProps> = ({
     const mentorNames = mentorNamesByEventId[eventId] || [];
     
     if (mentorNames.length === 0) {
-      return language === "en" ? "No mentors assigned" : "Keine MentorInnen zugewiesen";
+      return language === "en" ? "No staff assigned" : "Keine Mitarbeitende zugewiesen";
     }
     
     return (
       <div className="space-y-1">
         <p className="font-semibold mb-1">
-          {language === "en" ? "Assigned Mentors:" : "Zugewiesene MentorInnen:"}
+          {language === "en" ? "Assigned Staff:" : "Zugewiesene Mitarbeitende:"}
         </p>
         <ul className="list-disc pl-4">
           {mentorNames.map((name, idx) => (
@@ -174,7 +174,7 @@ const ListTable: React.FC<ListTableProps> = ({
                   <>
                     {event.acceptedMentors && event.acceptedMentors.length > 0 ? (
                       <div className="mt-3">
-                        <span className="text-sm text-muted-foreground">{language === "en" ? "Mentors:" : "MentorInnen:"}</span>
+                        <span className="text-sm text-muted-foreground">{language === "en" ? "Staff:" : "Mitarbeitende:"}</span>
                         <div className="flex flex-wrap gap-2 mt-1">
                           {mentorNamesByEventId[event.id]?.map((name, index) => (
                             <div key={index} className="inline-flex items-center text-xs px-2 py-1 rounded bg-primary/10">
@@ -186,7 +186,7 @@ const ListTable: React.FC<ListTableProps> = ({
                       </div>
                     ) : (
                       <div className="text-sm text-muted-foreground mt-3">
-                        {language === "en" ? "No mentors" : "Keine MentorInnen"}
+                        {language === "en" ? "No staff" : "Keine Mitarbeitende"}
                       </div>
                     )}
                   </>
@@ -207,7 +207,7 @@ const ListTable: React.FC<ListTableProps> = ({
               <TableHead className="w-[120px]">{language === "en" ? "Date" : "Datum"}</TableHead>
               <TableHead className="w-[100px]">{language === "en" ? "Time" : "Zeit"}</TableHead>
               <TableHead className="w-[160px]">{language === "en" ? "Time until event" : "Zeit bis Event"}</TableHead>
-              <TableHead className="w-[120px]">{language === "en" ? "Mentors" : "MentorInnen"}</TableHead>
+              <TableHead className="w-[120px]">{language === "en" ? "Staff" : "Mitarbeitende"}</TableHead>
               <TableHead className="w-[100px]">{language === "en" ? "Mode" : "Modus"}</TableHead>
               <TableHead className="w-[180px]">{language === "en" ? "Staff" : "Mitarbeiter"}</TableHead>
               <TableHead className="w-[120px] text-right">{language === "en" ? "Actions" : "Aktionen"}</TableHead>

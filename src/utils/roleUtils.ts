@@ -25,9 +25,9 @@ export const getDisplayRoleName = (role: UserRole, language: 'en' | 'de' = 'en')
     case UserRole.STAFF:
       return language === 'en' ? 'Staff' : 'Mitarbeiter';
     case UserRole.MENTORINGMANAGEMENT:
-      return language === 'en' ? 'Mentoring Management' : 'Mentoring Management';
+      return language === 'en' ? 'Staff Management' : 'Mitarbeiter-Management';
     case UserRole.MENTOR:
-      return language === 'en' ? 'Mentor' : 'Mentor';
+      return language === 'en' ? 'Staff' : 'Mitarbeiter';
     default:
       return role;
   }

@@ -89,7 +89,7 @@ export const MentorStatusBadge = ({
         className={`bg-green-100/80 dark:bg-green-900/30 text-green-900 dark:text-green-400 border-green-500/30 ${sizeClasses[size]} ${className}`}
       >
         <CheckCircle size={iconSize} />
-        {language === "en" ? "You're a Mentor" : "Du bist MentorIn"}
+        {language === "en" ? "You're staff" : "Du bist Mitarbeitende:r"}
       </Badge>
     );
   }

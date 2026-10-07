@@ -129,8 +129,8 @@ const MentorRequestsModal = ({
       if (!isTogglingOff && totalWouldBeAccepted > requiredMentors) {
         toast.error(
           language === "en"
-            ? `This event only requires ${requiredMentors} mentor(s). Accepting this would exceed the limit.`
-            : `Für dieses Event sind nur ${requiredMentors} MentorInnen benötigt. Diese Annahme würde das Limit überschreiten.`
+            ? `This event only requires ${requiredMentors} staff member(s). Accepting this would exceed the limit.`
+            : `Für dieses Event sind nur ${requiredMentors} Mitarbeitende benötigt. Diese Annahme würde das Limit überschreiten.`
         );
         setProcessingMentors(prev => {
           const newSet = new Set(prev);
@@ -221,7 +221,7 @@ const MentorRequestsModal = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {language === "en" ? "Manage Mentor Requests" : "MentorInnen-Anfragen verwalten"}
+            {language === "en" ? "Manage Staff Requests" : "Mitarbeiter-Anfragen verwalten"}
           </DialogTitle>
         </DialogHeader>
         
@@ -316,7 +316,7 @@ const MentorRequestsModal = ({
             <span className="font-medium text-red-600">{getDeclinedMentorsCount()}</span>
           </div>
           <div className="flex justify-between text-sm font-medium border-t pt-2">
-            <span>{language === 'en' ? 'Required Mentors:' : 'Benötigte MentorInnen:'}</span>
+            <span>{language === 'en' ? 'Required Staff:' : 'Benötigte Mitarbeitende:'}</span>
             <span>{event?.amount_requiredmentors || 1}</span>
           </div>
         </div>

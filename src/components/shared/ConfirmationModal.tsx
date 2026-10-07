@@ -83,14 +83,14 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
               {isSuccess ? (
                 <span className="text-lg block">
                   {language === "en"
-                    ? "Your request has been received. Thank you for volunteering as a mentor!"
-                    : "Deine Anfrage wurde erhalten. Danke, dass du dich als MentorIn gemeldet hast!"}
+                    ? "Your request has been received. Thank you for volunteering as a staff member!"
+                    : "Deine Anfrage wurde erhalten. Danke, dass du dich als Mitarbeitende:r gemeldet hast!"}
                 </span>
               ) : (
                 <span className="text-lg block">
                   {language === "en"
-                    ? `Are you sure you have time on ${event.date} at ${event.time} to take part as mentor?`
-                    : `Bist du sicher, dass du am ${event.date} um ${event.time} Zeit hast als MentorIn dabei zu sein?`}
+                    ? `Are you sure you have time on ${event.date} at ${event.time} to take part as a staff member?`
+                    : `Bist du sicher, dass du am ${event.date} um ${event.time} Zeit hast als Mitarbeitende:r dabei zu sein?`}
                 </span>
               )}
             </div>

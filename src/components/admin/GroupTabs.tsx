@@ -131,8 +131,8 @@ export const GroupTabs = ({
                           <ArrowDownSquare className="h-10 w-10 text-primary/40 mb-2" />
                           <p className="text-center text-muted-foreground">
                             {language === 'en' 
-                              ? 'Drop mentors here' 
-                              : 'Mentoren hier ablegen'}
+                              ? 'Drop staff here' 
+                              : 'Mitarbeitende hier ablegen'}
                           </p>
                         </div>
                       ) : (
@@ -143,8 +143,8 @@ export const GroupTabs = ({
                               <ArrowDownSquare className="h-5 w-5 text-primary/60" />
                               <p className="text-sm text-primary/80">
                                 {language === 'en' 
-                                  ? 'Drop mentors here' 
-                                  : 'Mentoren hier ablegen'}
+                                  ? 'Drop staff here' 
+                                  : 'Mitarbeitende hier ablegen'}
                               </p>
                             </div>
                           </div>

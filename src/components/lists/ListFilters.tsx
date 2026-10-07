@@ -42,9 +42,9 @@ const ListFilters = ({
     if (!filter) return '';
     
     if (filter === 'needsMentors') {
-      return language === 'en' ? 'Looking for mentors' : 'MentorInnen gesucht';
+      return language === 'en' ? 'Looking for staff' : 'Mitarbeitende gesucht';
     } else if (filter === 'successComplete') {
-      return language === 'en' ? 'All mentors found' : 'Alle MentorInnen gefunden';
+      return language === 'en' ? 'All staff found' : 'Alle Mitarbeitenden gefunden';
     } else if (filter === 'locked') {
       return language === 'en' ? 'Locked' : 'Gesperrt';
     }
@@ -73,14 +73,14 @@ const ListFilters = ({
               <DropdownMenuItem className="text-base py-3" onClick={() => onStatusFilterChange('needsMentors')}>
                 <div className="flex items-center gap-3">
                   {/* Removed status color dot */}
-                  {language === "en" ? "Looking for mentors" : "MentorInnen gesucht"}
+                  {language === "en" ? "Looking for staff" : "Mitarbeitende gesucht"}
                 </div>
               </DropdownMenuItem>
               
               <DropdownMenuItem className="text-base py-3" onClick={() => onStatusFilterChange('successComplete')}>
                 <div className="flex items-center gap-3">
                   {/* Removed status color dot */}
-                  {language === "en" ? "All mentors found" : "Alle MentorInnen gefunden"}
+                  {language === "en" ? "All staff found" : "Alle Mitarbeitenden gefunden"}
                 </div>
               </DropdownMenuItem>
               
