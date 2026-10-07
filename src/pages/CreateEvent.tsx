@@ -8,15 +8,22 @@ import { EventForm, EventFormValues } from '../components/events/EventForm';
 import { supabase } from '../lib/supabase';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useData } from '../contexts/DataContext';
 import { calculateEndTime } from '@/utils/timeUtils';
 import { ensureCompanyRecord } from '@/services/company/companyService';
 import { useActiveWorkspace } from '@/contexts/ActiveWorkspaceContext';
-import { createPublicEventPage } from '@/services/events/eventPageService';
+import { createPublicEventPage, setEventPagePublication } from '@/services/events/eventPageService';
 import { getSchema } from '@/services/pageService';
 import { getSchemaConsolePath } from '@/utils/schemaPaths';
 import { normalizeEventPageSlug } from '@/utils/eventPage';
 import { isCatalogueSchema } from '@/utils/schemaKinds';
+
+interface CreatedEventConfirmation {
+  eventName: string;
+  schemaPath: string;
+  editorPath: string;
+}
 
 interface CreateEventNavigationState {
   preselectedProductId?: unknown;
@@ -39,6 +46,7 @@ const CreateEvent = () => {
     ? navigationState.returnTo
     : null;
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createdEvent, setCreatedEvent] = useState<CreatedEventConfirmation | null>(null);
   const { refetchEvents } = useData();
   const { activeTenantId, loading: workspaceLoading } = useActiveWorkspace();
   
@@ -72,6 +80,7 @@ const CreateEvent = () => {
 
       let createdRecord: { id: string; tenant_id: string } | null = null;
       let publicPage: { page_id: string; editor_path: string } | null = null;
+      let schemaConsolePath: string | null = null;
       if (values.event_schema_id) {
         const schema = await getSchema(values.event_schema_id);
         if (schema.tenant_id !== activeTenantId || !isCatalogueSchema(schema.entity_kind) || schema.content_scope !== 'page-collection') {
@@ -110,8 +119,21 @@ const CreateEvent = () => {
           page_name: values.event_page_name ?? '',
           page_slug: normalizeEventPageSlug(`${values.event_page_name}-${values.date}-${values.time.replace(':', '-')}`),
         });
+        // New event pages must start as drafts. The database function normally
+        // guarantees this; force it back to draft if an outdated deployment
+        // published the page on creation.
+        if (result.page_status !== 'draft') {
+          await setEventPagePublication({
+            event_id: result.event_id,
+            tenant_id: result.tenant_id,
+            expected_definition_revision: schema.definition_revision ?? 1,
+            expected_page_updated_at: result.page_updated_at,
+            status: 'draft',
+          });
+        }
         createdRecord = { id: result.event_id, tenant_id: result.tenant_id };
-        publicPage = { page_id: result.page_id, editor_path: `${getSchemaConsolePath(schema)}/edit/${result.page_id}` };
+        schemaConsolePath = getSchemaConsolePath(schema);
+        publicPage = { page_id: result.page_id, editor_path: `${schemaConsolePath}/edit/${result.page_id}` };
       } else {
         const { data: createdRecords, error } = await supabase
           .from('mentorbooking_events')
@@ -185,7 +207,13 @@ const CreateEvent = () => {
       );
       
       if (publicPage) {
-        navigate(publicPage.editor_path);
+        // Confirm instead of jumping straight into the editor so the user can
+        // head to the schema's pages overview and publish the draft there.
+        setCreatedEvent({
+          eventName: values.event_page_name?.trim() || (language === 'en' ? 'Event' : 'Veranstaltung'),
+          schemaPath: schemaConsolePath,
+          editorPath: publicPage.editor_path,
+        });
       } else {
         navigate(returnTo || '/events');
       }
@@ -237,6 +265,36 @@ const CreateEvent = () => {
         </div>
       </div>
     
+      <Dialog open={Boolean(createdEvent)} onOpenChange={(open) => { if (!open) setCreatedEvent(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {language === 'en' ? 'Event created' : 'Veranstaltung erstellt'}
+            </DialogTitle>
+            <DialogDescription>
+              {language === 'en'
+                ? `"${createdEvent?.eventName}" has been saved. The public event page was created as a draft and is not published yet. You can publish it in the schema's pages overview.`
+                : `„${createdEvent?.eventName}“ wurde gespeichert. Die öffentliche Veranstaltungsseite wurde als Entwurf angelegt und ist noch nicht veröffentlicht. Du kannst sie in der Seitenübersicht des Schemas veröffentlichen.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setCreatedEvent(null); navigate(returnTo || '/events'); }}>
+              {language === 'en' ? 'Close' : 'Schließen'}
+            </Button>
+            <Button
+              onClick={() => { const path = createdEvent?.schemaPath; setCreatedEvent(null); if (path) navigate(path); }}
+            >
+              {language === 'en' ? 'Go to pages overview' : 'Zur Seitenübersicht'}
+            </Button>
+            <Button
+              onClick={() => { const path = createdEvent?.editorPath; setCreatedEvent(null); if (path) navigate(path); }}
+            >
+              {language === 'en' ? 'Edit page' : 'Seite bearbeiten'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <EventForm
         key="create-event-form"
         initialValues={{

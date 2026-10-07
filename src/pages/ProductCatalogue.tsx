@@ -234,7 +234,12 @@ export default function ProductCatalogue() {
                           <DeleteButton
                             size="sm"
                             className="px-3"
-                            onClick={() => confirmDeleteProduct(product)}
+                            onClick={(e) => {
+                              // Keep the surrounding product card's navigation
+                              // from swallowing the delete interaction.
+                              e.stopPropagation();
+                              confirmDeleteProduct(product);
+                            }}
                           >
                             <span className="sr-only">
                               {language === 'en'
