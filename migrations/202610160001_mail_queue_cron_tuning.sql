@@ -93,9 +93,11 @@ begin
       null; -- job not registered yet — nothing to unschedule
     end;
 
+    -- Cron format (not the interval form) — pg_cron's interval parser only
+    -- accepts '[1-59] seconds' on the installed extension version.
     perform cron.schedule(
       'mail-queue-processor',
-      '5 minutes',
+      '*/5 * * * *',
       $cron$ select public.trigger_mail_queue_processing(); $cron$
     );
   else
