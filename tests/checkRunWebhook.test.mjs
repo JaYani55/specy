@@ -207,6 +207,47 @@ test('parseCheckRunEvent ignores skipped/stale/neutral conclusions', () => {
   }
 });
 
+test('parseCheckRunEvent captures the build link from the check_run itself', () => {
+  const fromDetails = parseCheckRunEvent(buildPayload({
+    check_run: {
+      status: 'in_progress', check_suite: { head_branch: 'main' }, output: {},
+      details_url: 'https://github.com/acme/field-notes-ssr/actions/runs/12345',
+      html_url: 'https://github.com/acme/field-notes-ssr/actions/runs/12345/checks',
+    },
+  }));
+  assert.ok(fromDetails);
+  assert.equal(fromDetails.buildUrl, 'https://github.com/acme/field-notes-ssr/actions/runs/12345');
+
+  const fromHtml = parseCheckRunEvent(buildPayload({
+    check_run: {
+      status: 'in_progress', check_suite: { head_branch: 'main' }, output: {},
+      html_url: 'https://github.com/acme/field-notes-ssr/actions/runs/99',
+    },
+  }));
+  assert.ok(fromHtml);
+  assert.equal(fromHtml.buildUrl, 'https://github.com/acme/field-notes-ssr/actions/runs/99');
+
+  const withoutLink = parseCheckRunEvent(buildPayload({ check_run: { status: 'queued', check_suite: { head_branch: 'dev' }, output: {} } }));
+  assert.equal(withoutLink.buildUrl, null);
+});
+
+// Regression guard: builds on main/master (or any non-dev branch) used to be
+// dropped by the service layer and never reached the apps overview.
+test('parseCheckRunEvent tracks builds on main/master and other branches', () => {
+  for (const branch of ['main', 'master', 'feature/new-hero', 'release/1.4']) {
+    const parsed = parseCheckRunEvent(buildPayload({
+      action: 'completed',
+      check_run: {
+        status: 'completed', conclusion: 'success', check_suite: { head_branch: branch },
+        html_url: 'https://github.com/acme/field-notes-ssr/actions/runs/7',
+        output: {},
+      },
+    }));
+    assert.equal(parsed.buildStatus, 'succeeded', branch);
+    assert.equal(parsed.branch, branch);
+  }
+});
+
 test('parseCheckRunEvent maps queued and rerequested actions to running', () => {
   const queued = parseCheckRunEvent(buildPayload({ check_run: { status: 'queued', check_suite: { head_branch: 'dev' }, output: {} } }));
   assert.equal(queued.buildStatus, 'running');

@@ -135,9 +135,9 @@ User-facing surfaces deliberately hide all GitHub details. GitHub is an
 infrastructure/CI-CD concern of the administrator:
 
 - `/plugins/pluradash/apps` shows the app name, stored size (total bytes),
-  file count and the **preview build status** (running/succeeded/failed plus a
-  link to the running preview deployment) — no GitHub link, no branch
-  information, no repository URL.
+  file count and **per-branch build status** (running/succeeded/failed plus a
+  link — the running preview deployment when available, otherwise the build
+  link given by the check_run) — no GitHub link, no repository URL.
 - Workspace users can download the app files as a ZIP via the **ZIP** button
   (`GET /sync/archive`) for portability.
 - The storage stats in the PluraDash file overview include an **Apps**
@@ -196,9 +196,10 @@ Sync-engine pushes to `dev` trigger the Cloudflare "Workers Builds" GitHub
 Action, which runs as a check_run on the pushed commit. Repository webhooks
 (`events: ['check_run']`) are provisioned programmatically per assigned repo
 (the app needs **Webhooks: write** + **Checks: read-only**); the verified
-events feed the latest build status and the real preview URL into
-`pluradash.repo_deployments` and onto the tenant app card
-(`/plugins/pluradash/apps`). Full contract:
+events feed the latest build status, the real preview URL and the check_run
+build link into `pluradash.repo_deployments` — one row per **repository and
+branch**, covering `dev`, `main`/`master` and any other branch — and onto the
+tenant app card (`/plugins/pluradash/apps`). Full contract:
 `plugins/pluradash/specs/check-run-webhook.md` (plugin workspace).
 
 ## Private key format
