@@ -12,3 +12,4 @@ Cross-cutting platform concerns: hosting, tenancy, core extensions.
 | [`binding-management.md`](binding-management.md) | Binding Intent & Provisioning System (BIPS): per-environment plugin binding instances, resolution, provisioner, ledger, deployment paths |
 | [`db-snapshots.md`](db-snapshots.md) | Database snapshots (`/data/snapshots`) and critical action logs (`/data/logs`): snapshot/restore contract, setup TUI `DB Snapshots` menu |
 | [`unified-setup-tui.md`](unified-setup-tui.md) | Unified `npm run setup` TUI: phase-aware dispatcher, integrity gate, installation/deployment state model |
+| [`logging-and-retention.md`](logging-and-retention.md) | Request/sync logging pipeline: config & schema caches, batched log writes, `agent_logs`/`sync_logs` retention cron, mail-queue cron noise reduction |

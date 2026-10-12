@@ -351,15 +351,30 @@ export async function upsertMailConfig(env: Env, input: MailConfigValues): Promi
 }
 
 export async function getLoggingConfig(env: Env): Promise<LoggingConfigValues> {
-  const [mode, enabledEndpointKeys] = await Promise.all([
-    getConfigValue(env, LOGGING_NAMESPACE, 'mode'),
-    getConfigValue(env, LOGGING_NAMESPACE, 'enabled_endpoints'),
-  ]);
+  // Single query for both keys — this runs on the request hot path (via the
+  // agentLogger middleware cache), so every avoided REST round-trip also
+  // avoids a matching entry in the Supabase edge logs.
+  try {
+    const admin = await createSupabaseAdminClient(env);
+    const { data, error } = await admin
+      .from('system_config')
+      .select('key,value')
+      .eq('namespace', LOGGING_NAMESPACE)
+      .in('key', ['mode', 'enabled_endpoints']);
 
-  return {
-    mode: mode === 'custom' ? 'custom' : 'all',
-    enabledEndpointKeys: parseStringArray(enabledEndpointKeys),
-  };
+    if (!error && data) {
+      const map = new Map((data as Array<{ key: string; value: string }>).map((row) => [row.key, row.value]));
+      const mode = map.get('mode') ?? '';
+      return {
+        mode: mode === 'custom' ? 'custom' : 'all',
+        enabledEndpointKeys: parseStringArray(map.get('enabled_endpoints') ?? ''),
+      };
+    }
+  } catch {
+    // Local development or bootstrap path can fall back to defaults.
+  }
+
+  return { mode: 'all', enabledEndpointKeys: [] };
 }
 
 export async function upsertLoggingConfig(env: Env, input: LoggingConfigValues): Promise<void> {

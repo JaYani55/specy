@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import { createSupabaseClient, type Env } from '../lib/supabase';
+import { createLogBuffer, getWaitUntil } from '../lib/logBuffer';
 import { getLoggingConfig, type LoggingConfigValues } from '../lib/systemConfig';
 import { parseBearerToken, verifyAuthSession } from '../lib/auth';
 import { extractMcpRequestMetadata, extractMcpToolOutcome, parseMcpSseResponse } from '../lib/mcpObservability';
@@ -20,7 +21,11 @@ const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|api[-_]?key|
 const MAX_LOG_STRING_LENGTH = 512;
 const MAX_LOG_ARRAY_ITEMS = 50;
 const MAX_LOG_DEPTH = 4;
-const LOGGING_CONFIG_TTL_MS = 30_000;
+// Long-lived cache: this lookup sits on the request hot path and each miss
+// costs a Supabase REST round-trip (which itself lands in the edge logs).
+// Staleness is bounded by cache invalidation on every settings write
+// (see upsertLoggingConfig callers in routes/config.ts).
+const LOGGING_CONFIG_TTL_MS = 300_000;
 
 let loggingConfigCache:
   | {
@@ -31,6 +36,67 @@ let loggingConfigCache:
 
 export function invalidateLoggingConfigCache(): void {
   loggingConfigCache = null;
+}
+
+// Liveness/monitoring probes are high-frequency by definition and carry zero
+// diagnostic value — logging them would be pure edge-log noise.
+const MONITORING_PATH_PATTERN = /^\/api\/(health|healthz|ping|ready|live)(\/|$)/;
+
+export function isMonitoringPath(pathname: string): boolean {
+  return MONITORING_PATH_PATTERN.test(pathname);
+}
+
+// ─── Schema slug → id cache ─────────────────────────────────────────────────────
+
+const SCHEMA_ID_CACHE_TTL_MS = 300_000;
+
+let schemaIdCache: { expiresAt: number; byKey: Map<string, string | null> } | null = null;
+
+export function invalidateSchemaIdCache(): void {
+  schemaIdCache = null;
+}
+
+/**
+ * Resolves a schema slug (api_slug or slug) to its id, cached per isolate for
+ * 5 minutes. Without the cache every logged request cost one or two extra
+ * Supabase REST lookups — and therefore extra edge-log entries — just for log
+ * attribution. Staleness is bounded by the TTL (attribution is best-effort
+ * anyway); the cache is scoped by caller kind because the lookup honours RLS.
+ */
+async function resolveSchemaId(
+  env: Env,
+  schemaSlug: string,
+  lookupClient: Awaited<ReturnType<typeof createSupabaseClient>>,
+  callerScope: 'user' | 'anon',
+): Promise<string | null> {
+  const now = Date.now();
+  if (!schemaIdCache || schemaIdCache.expiresAt <= now) {
+    schemaIdCache = { expiresAt: now + SCHEMA_ID_CACHE_TTL_MS, byKey: new Map() };
+  }
+  const cacheKey = `${callerScope}:${schemaSlug}`;
+  if (schemaIdCache.byKey.has(cacheKey)) {
+    return schemaIdCache.byKey.get(cacheKey) ?? null;
+  }
+
+  let schemaId: string | null = null;
+  const { data: apiMatch } = await lookupClient
+    .from('page_schemas')
+    .select('id')
+    .eq('api_slug', schemaSlug)
+    .maybeSingle();
+  if (apiMatch) {
+    schemaId = apiMatch.id;
+  } else {
+    const { data: localMatches } = await lookupClient
+      .from('page_schemas')
+      .select('id')
+      .eq('slug', schemaSlug)
+      .limit(2);
+    if (localMatches?.length === 1) schemaId = localMatches[0].id;
+  }
+
+  schemaIdCache.byKey.set(cacheKey, schemaId);
+  return schemaId;
 }
 
 function escapeRegex(value: string): string {
@@ -78,6 +144,47 @@ function shouldSkipBodyLogging(pathname: string): boolean {
   return /^\/api\/forms\/(share\/[^/]+\/[^/]+\/answers|[^/]+\/answers)$/.test(pathname)
     || pathname === '/api/media/upload';
 }
+
+// ─── Buffered batch writes ─────────────────────────────────────────────────────
+
+type SupabaseClient = Awaited<ReturnType<typeof createSupabaseClient>>;
+
+interface AgentLogInsertRow {
+  schema_id: string | null;
+  schema_slug: string | null;
+  operation_name: string | null;
+  user_id: string | null;
+  user_email: string | null;
+  method: string;
+  path: string;
+  status_code: number;
+  transport_status_code: number;
+  request_body: JsonValue;
+  response_body: JsonValue;
+  duration_ms: number;
+  ip_address: string;
+  user_agent: string | null;
+  error: string | null;
+}
+
+/**
+ * agent_logs write buffer: rows from up to 10 requests share one batched
+ * INSERT (flushed immediately at the threshold, otherwise ~1 s after the
+ * first buffered row). Cuts the per-request REST insert — the biggest
+ * self-generated edge-log source — to a fraction.
+ */
+const agentLogBuffer = createLogBuffer<AgentLogInsertRow, Env>({
+  batchSize: 10,
+  flushDelayMs: 1_000,
+  insert: async (rows, env) => {
+    const supabase = await createSupabaseClient(env);
+    const { error } = await supabase.from('agent_logs').insert(rows);
+    if (error) throw new Error(error.message);
+  },
+  onError: (error, rowCount) => {
+    console.error(`[agent-logger] Failed to write log batch (${rowCount} rows):`, error);
+  },
+});
 
 async function readMcpSseResponse(response: Response): Promise<JsonValue | null> {
   const reader = response.clone().body?.getReader();
@@ -147,9 +254,10 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   const pathname = url.pathname;
   const path = pathname + url.search;
 
-  // Skip logging for the logs management endpoints themselves (avoid recursion)
-  // and for sensitive secrets/connections management to prevent token leaks.
-  if (pathname.startsWith('/api/schemas/logs') || pathname.startsWith('/api/secrets')) {
+  // Skip logging for the logs management endpoints themselves (avoid recursion),
+  // for sensitive secrets/connections management to prevent token leaks, and
+  // for high-frequency liveness/monitoring probes (zero diagnostic value).
+  if (pathname.startsWith('/api/schemas/logs') || pathname.startsWith('/api/secrets') || isMonitoringPath(pathname)) {
     return next();
   }
 
@@ -238,53 +346,46 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     }
   }
 
-  // Resolve schema_id with the verified caller's RLS context when available.
+  // Resolve schema_id via the in-isolate cache (one REST lookup per uncached
+  // slug instead of per request), using the verified caller's RLS context for
+  // MCP traffic when available.
   let schemaId: string | null = null;
-
-  // Fire-and-forget: write the log entry.
-  try {
-    const supabase = await createSupabaseClient(c.env);
-    const lookupClient = bearerToken && userId
-      ? await createSupabaseClient(c.env, bearerToken)
-      : supabase;
-
-    if (schemaSlug) {
-      const { data: apiMatch } = await lookupClient
-        .from('page_schemas')
-        .select('id')
-        .eq('api_slug', schemaSlug)
-        .maybeSingle();
-      if (apiMatch) {
-        schemaId = apiMatch.id;
-      } else {
-        const { data: localMatches } = await lookupClient
-          .from('page_schemas')
-          .select('id')
-          .eq('slug', schemaSlug)
-          .limit(2);
-        if (localMatches?.length === 1) schemaId = localMatches[0].id;
-      }
+  if (schemaSlug) {
+    try {
+      const lookupClient: SupabaseClient = bearerToken && userId
+        ? await createSupabaseClient(c.env, bearerToken)
+        : await createSupabaseClient(c.env);
+      schemaId = await resolveSchemaId(c.env, schemaSlug, lookupClient, userId ? 'user' : 'anon');
+    } catch {
+      // Attribution is best-effort — never let it break the log row or the request.
     }
+  }
 
-    await supabase.from('agent_logs').insert({
-      schema_id: schemaId,
-      schema_slug: schemaSlug,
-      operation_name: mcpMetadata?.operationName ?? null,
-      user_id: userId,
-      user_email: userEmail,
-      method,
-      path,
-      status_code: status,
-      transport_status_code: transportStatus,
-      request_body: requestBody as JsonValue,
-      response_body: responseBody as JsonValue,
-      duration_ms: duration,
-      ip_address: ip,
-      user_agent: userAgent,
-      error: logError,
-    });
+  // Buffer the row; the buffer flushes it as part of a batched insert.
+  try {
+    agentLogBuffer.push(
+      {
+        schema_id: schemaId,
+        schema_slug: schemaSlug,
+        operation_name: mcpMetadata?.operationName ?? null,
+        user_id: userId,
+        user_email: userEmail,
+        method,
+        path,
+        status_code: status,
+        transport_status_code: transportStatus,
+        request_body: requestBody as JsonValue,
+        response_body: responseBody as JsonValue,
+        duration_ms: duration,
+        ip_address: ip,
+        user_agent: userAgent,
+        error: logError,
+      },
+      c.env,
+      getWaitUntil(c),
+    );
   } catch (err) {
     // Never let logging break a real request
-    console.error('[agent-logger] Failed to write log:', err);
+    console.error('[agent-logger] Failed to buffer log:', err);
   }
 };

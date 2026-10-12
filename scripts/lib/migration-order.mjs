@@ -148,6 +148,23 @@ export const MIGRATION_ORDER_CORE = [
   // making specy_products_create impossible. Same remedy as
   // 202609290001_repair_current_user_roles_json_claims.sql. Must stay the
   // LAST migration defining these RPCs.
+  // Mail-queue cron tuning: reschedules 'mail-queue-processor' from every
+  // minute to every 5 minutes (Postgres log-noise reduction) and folds the
+  // two per-tick system_config lookups into one query. Needs
+  // mail_delivery_jobs (202609070001) and system_config.
+  '202610160001_mail_queue_cron_tuning.sql',
+  // agent_logs retention: batched cleanup function + daily pg_cron job
+  // (14-day default window). Needs agent_logs (agent_logs.sql) and pg_cron.
+  '202610160002_agent_logs_retention.sql',
+  // Repair: re-asserts the canonical catalogue product-aggregate RPC
+  // definitions (unified 'event' eligibility). The runner only re-applies
+  // checksum-drifted migrations, so a database that recorded the unification
+  // without effect keeps the pre-unification 'service-product' check forever —
+  // making specy_products_create impossible. Same remedy as
+  // 202609290001_repair_current_user_roles_json_claims.sql. Must stay the
+  // LAST migration defining these RPCs — and the LAST entry in this array
+  // (enforced by tests/catalogueEligibilityConsistency.test.mjs), so new
+  // migrations go above it.
   '202610120001_repair_catalogue_product_aggregate_rpcs.sql',
 ];
 
