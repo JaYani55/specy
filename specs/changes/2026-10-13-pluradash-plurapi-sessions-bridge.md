@@ -85,6 +85,15 @@ route `GET /v1/projects/<projectId>/sessions` (§5.1): one call per distinct
 tenant now returns all sessions of that project, so the aggregation reads
 projects instead of (tenant, user) pairs.
 
+**Read realm gate (same day, banner 403 „user token required“):** the
+sessions service enforces the **user realm** on the §5 read routes — the
+engine-realm token is rejected there (contract says "engine may do
+everything", the implementation doesn't cover reads). Resolution recorded in
+the bridge doc: recommended fix is a PluraPi one-liner (accept the engine
+realm on the read routes); fallback would be CMS-side user-session minting
+(Not implemented — heavy: session churn + refresh handling). Banner and
+triage table updated with the exact error signature.
+
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and
 the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and

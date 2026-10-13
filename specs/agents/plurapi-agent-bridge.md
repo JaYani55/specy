@@ -111,6 +111,22 @@ aggregation endpoint itself is never sync-logged (polled ~10 s).
 Leaving `PLURAPI_SESSIONS_API_TOKEN` unset degrades gracefully: build feedback
 still works, only the Agent-Sessions tab reports "nicht verbunden".
 
+### Read realm decision (open as of 2026-10-13)
+
+The PluraPi-Sessions service enforces `403: user token required` on the §5
+read routes — they accept **only Supabase user JWTs**, while the documented
+engine realm covers the §7 write/drain endpoints. Two resolutions:
+
+1. **Recommended (PluraPi one-liner):** accept the `engine` realm on the read
+   routes (`GET /v1/projects/<id>/sessions`, `.../messages`, `.../builds`).
+   This matches the contract's "engine may do everything" and needs no token
+   minting on the CMS side.
+2. **Fallback (not implemented):** Specy mints a real Supabase session for the
+   agent user (admin `generateLink` + verify), caches access/refresh tokens,
+   and reads with a genuine user JWT. Heavy: session bloat per mint, refresh
+   handling, and the overview polls every ~10 s — only viable with a cached,
+   refreshed token. Do not mint per request.
+
 ---
 
 ## 3. Data model & configuration
@@ -175,7 +191,7 @@ keying.
 | Injection enqueued (`injectionCreated: true`) but agent never reacts | Engine poller not draining: env vars missing, wrong DO instance key, session not idle, or drained-and-crashed (at-most-once) | DO live tail for `/v1/internal/.../injections/pending`; engine `[injectionPoller]` lines |
 | Poll hits `t/personal/…` while sessions live under the workspace tenant | Engine derives the tenant differently than it upserts | compare the poll URL tenant against the upsert URL tenant — must be identical |
 | Specy `logsFetched: 0` on a failed build | check_run output carried no `Build ID:` label | recovery chain: label → `details_url` → commit-SHA match against recent CF builds; if all fail the detail says so |
-| Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or project reads failed | the tab's warning banner shows the **per-project DO status + error body** (`readErrors` in the response): `401/403` = API token (engine realm) wrong or not accepted for reads · `405` = wrong method/route (e.g. listing via the POST-upsert path — use `/v1/projects/<id>/sessions`) · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
+| Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or project reads failed | the tab's warning banner shows the **per-project DO status + error body** (`readErrors` in the response): `403` with `user token required` = the read routes accept **only user JWTs** — allow the engine realm for reads on the sessions worker (recommended) or mint user sessions on the CMS side · `401/403` otherwise = API token (engine realm) wrong · `405` = wrong method/route (e.g. listing via the POST-upsert path — use `/v1/projects/<id>/sessions`) · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
 | Same build prompts the agent twice | duplicate check_run delivery before the dedupe fix (migration 029) | `build_targets.feedback_state`; only affects builds pushed pre-fix |
 
 ### 4.3 Verification flow after any change
