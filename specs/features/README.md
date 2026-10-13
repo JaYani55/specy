@@ -16,3 +16,4 @@ Feature-level subsystem documentation.
 | [`event-catalogue.md`](event-catalogue.md) | Optional event-owned schema pages, event aggregate lifecycle, tenant safeguards, and public event delivery |
 | [`pluradash-github-app-integration.md`](pluradash-github-app-integration.md) | PluraDash GitHub App & workspace repository management |
 | [`pluradash-r2-sync-engine.md`](pluradash-r2-sync-engine.md) | PluraDash R2 sync engine: GitHub ⇄ R2 workspace mirroring, dev/main branch protocol |
+| [`pluradash-plurapi-sessions-bridge.md`](pluradash-plurapi-sessions-bridge.md) | PluraDash ⇄ PluraPi-Sessions bridge: agent build feedback (check_run → build injections) and the admin agent-session overview |

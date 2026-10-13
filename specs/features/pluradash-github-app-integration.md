@@ -77,6 +77,9 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | POST | `/admin/github/token` | super-admin | Mint a short-lived installation access token |
 | POST | `/webhooks/check-run` | **public (HMAC)** | check_run webhook receiver — verifies `X-Hub-Signature-256`, upserts build status + preview URL into `pluradash.repo_deployments`, logs to `pluradash.sync_logs` |
 | GET | `/admin/github/webhooks` | super-admin | check_run webhook provisioning status per assigned repo (+ `secretConfigured`) |
+| GET | `/admin/github/agent-sessions` | super-admin | Aggregated live overview of agent sessions from the PluraPi-Sessions DO service — see [`plurapi-sessions-bridge.md`](plurapi-sessions-bridge.md) |
+| GET | `/admin/github/agent-sessions/messages` | super-admin | Chatlog delta proxy for one agent session (`?tenantId=&userId=&sessionId=&after=<seq>`) |
+| GET | `/admin/github/agent-sessions/builds` | super-admin | Build-history proxy for one project (`?tenantId=&userId=&limit=`, newest first) |
 | POST | `/admin/github/webhooks/sync` | super-admin | Idempotently create/repair the check_run webhook on every assigned repo |
 | GET | `/admin/github/logs` | super-admin | Recent sync operation logs + aggregate stats (filters: `operation`, `tenantId`, `status`, `limit`) |
 | DELETE | `/admin/github/logs` | super-admin | Bulk cleanup: `?before=<ISO>` or `?confirm=true` |
@@ -87,7 +90,7 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 |------|------|-----------|
 | `/plugins/pluradash/apps` | user | `AppsPage` (grid view) |
 | `/dashboard/apps` | user | `AppsPage` (alternative) |
-| `/admin/github-apps` | super-admin | `GitHubAppsAdminPage` |
+| `/admin/github-apps` | super-admin | `GitHubAppsAdminPage` (tabs: Repositories · Sync-Logs · Agent-Sessions) |
 | `/plugins/pluradash/admin/github-apps` | super-admin | `GitHubAppsAdminPage` |
 
 ## Provisioning lifecycle (Re-Sync)
