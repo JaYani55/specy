@@ -209,3 +209,59 @@ test('parseCloudflareLogLines tolerates malformed payloads', () => {
   assert.deepEqual(parseCloudflareLogLines('nope'), []);
   assert.deepEqual(parseCloudflareLogLines({ result: 'not-an-array' }), []);
 });
+
+// ─── Duplicate-delivery guard & exact-row lookup ────────────────────────────
+
+import {
+  findExactTargetRow,
+  isDuplicateDelivery,
+} from '../plugins/pluradash/api/sync/plurapiSessionsLogic.ts';
+import { extractBuildIdFromUrl } from '../plugins/pluradash/api/sync/webhookLogic.ts';
+
+test('findExactTargetRow matches repo + sha case-insensitively', () => {
+  const rows = [targetRow({ head_sha: 'AAAAAAAA' }), targetRow({ head_sha: 'bbbb' })];
+  const row = findExactTargetRow(rows, parsedCheckRun({ headSha: 'aaaaaaaa' }));
+  assert.ok(row);
+  assert.equal(row.head_sha, 'AAAAAAAA');
+  assert.equal(findExactTargetRow(rows, parsedCheckRun({ headSha: 'zzzz' })), null);
+  assert.equal(findExactTargetRow(rows, parsedCheckRun({ headSha: null })), null);
+  assert.equal(findExactTargetRow(rows, parsedCheckRun({ repoId: null })), null);
+});
+
+test('isDuplicateDelivery only fires for the already-reported state', () => {
+  const failed = parsedCheckRun({ buildStatus: 'failed', conclusion: 'failure' });
+  assert.equal(isDuplicateDelivery(targetRow({ feedback_state: 'failed' }), failed), true);
+  assert.equal(isDuplicateDelivery(targetRow({ feedback_state: 'succeeded' }), failed), false);
+  assert.equal(isDuplicateDelivery(targetRow({ feedback_state: null }), failed), false);
+  assert.equal(isDuplicateDelivery(null, failed), false);
+});
+
+// ─── extractBuildIdFromUrl ───────────────────────────────────────────────────
+
+test('extractBuildIdFromUrl pulls the build id out of a details URL', () => {
+  assert.equal(
+    extractBuildIdFromUrl('https://dash.cloudflare.com/abc123/workers/builds/b1c2d3e4-f5a6-4789-a012-3456789abcde'),
+    'b1c2d3e4-f5a6-4789-a012-3456789abcde',
+  );
+  assert.equal(extractBuildIdFromUrl('https://github.com/acme/website/actions/runs/123456'), null);
+  assert.equal(extractBuildIdFromUrl(null), null);
+});
+
+// ─── Session tenant preference (JWT tenant over workspace) ──────────────────
+
+test('selectBuildTarget prefers the JWT session tenant over the workspace', () => {
+  const rows = [targetRow({
+    session_tenant_id: 'personal',
+    session_id: 'sess_personal',
+  })];
+  const target = selectBuildTarget(rows, parsedCheckRun(), NOW);
+  assert.ok(target);
+  assert.equal(target.tenantId, 'personal');
+  assert.equal(target.sessionId, 'sess_personal');
+});
+
+test('selectBuildTarget falls back to the workspace when no JWT tenant was recorded', () => {
+  const rows = [targetRow()];
+  const target = selectBuildTarget(rows, parsedCheckRun(), NOW);
+  assert.equal(target?.tenantId, '11111111-1111-1111-1111-111111111111');
+});

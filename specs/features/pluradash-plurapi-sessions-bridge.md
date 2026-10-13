@@ -62,9 +62,11 @@ PluraPi identity. The missing link is the new plugin table
 |---|---|
 | `github_repo_id` + `head_sha` | Unique conflict target (one row per pushed commit) |
 | `branch` | Pushed branch (`dev` from `/sync/push`, `main` from `/sync/deploy`) |
-| `workspace_id` | Specy workspace UUID → DO `tenantId` |
+| `workspace_id` | Specy workspace UUID the repo is assigned to |
+| `session_tenant_id` | JWT `tenant_id` claim of the pushing caller — **preferred DO `tenantId`**: the engine registers its sessions under the JWT tenant, which may differ from the workspace (e.g. `personal`). Falls back to `workspace_id` |
 | `user_id` | User `sub` of the pushing caller → DO `userId` |
 | `session_id` | Optional PluraPi session id (`sess_<uuid>`); the sync routes accept an optional `sessionId` in the push body so the PluraPi engine can pin the exact session |
+| `feedback_state` / `feedback_at` | Build state already reported for this commit — dedupes the double check_run delivery Cloudflare emits (same build as `action: created` + terminal state, then `action: completed`) |
 | `created_at` | Retention/fallback ordering |
 
 - Written by `POST /sync/push` and `POST /sync/deploy` **after** a successful
@@ -96,6 +98,14 @@ PluraPi identity. The missing link is the new plugin table
 - Delivery failures are logged (operation `plurapi.build_feedback`) and never
   break the webhook's 202 response or the already-persisted
   `repo_deployments` row.
+- **DO instance keying matters:** DOs are keyed `"<tenantId>:<userId>"` — an
+  injection pushed to a different tenant key than the engine polls is
+  silently orphaned. That is why the push target prefers the caller's JWT
+  tenant over the workspace assignment. On the PluraPi side, the engine must
+  upsert and poll the same `(tenantId, userId, sessionId)` key; a poller that
+  requests `t/personal/…` while sessions are registered under the workspace
+  tenant answers 404 and nothing is ever delivered (observed in the first
+  live run via the DO live tail).
 
 ## Cloudflare build log retrieval (failure path)
 
@@ -162,7 +172,9 @@ dashboard has no UI for these), **not** on the actor: agent tokens without
 the agent claim are recorded as `actor_type: 'user'`, so the actor is not a
 reliable agent signal. Max 30 pairs per request, concurrency 4. The
 aggregation endpoint itself is **not** sync-logged — it is polled every ~10 s
-and is not a workspace operation.
+and is not a workspace operation. Per-pair DO read failures are surfaced in
+the tab (warning banner, `unreachablePairs`) instead of being dropped
+silently.
 
 **Log separation.** Agent-driven operations are hidden in the Sync-Logs tab
 by default (view filter `Menschliche Operationen`); they are visible in the

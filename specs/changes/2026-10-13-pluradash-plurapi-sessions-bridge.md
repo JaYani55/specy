@@ -39,6 +39,30 @@ spammed the sync logs). `GET /admin/github/logs` gains `?view=human|agent|all`
 and `?userId=`; the Sync-Logs tab hides agent operations by default — agent
 activity surfaces in the Agent-Sessions detail dialog instead.
 
+**Delivery hardening (same day, first live run):** Cloudflare delivers the
+same Workers Builds run as two check_run events (`action: created` with
+terminal state, then `action: completed`), which enqueued duplicate
+`build_feedback` injections. The bridge now records the reported state per
+commit (`build_targets.feedback_state`/`feedback_at`, migration 029 + down)
+and skips duplicate deliveries. When the check_run output carries no
+`Build ID:` label (first live run: `buildId: null` → no logs), the build id is
+recovered from the `details_url` or, as a last resort, by listing recent
+Cloudflare builds and matching the commit SHA — so failure logs reach the
+agent in the typical case.
+
+**Tenant-key alignment (same day, DO live tail):** the first injection was
+enqueued in the `<workspace-uuid>:<user>` DO instance but never drained — the
+engine's poller requests `t/personal/u/<user>` (404). The DO instance is keyed
+`"<tenantId>:<userId>"`, so a tenant mismatch orphans injections. Specy now
+records the pushing caller's **JWT `tenant_id` claim**
+(`build_targets.session_tenant_id`, migration 030 + down — the tenant the
+engine registers its sessions under) and prefers it over `workspace_id` when
+resolving the push target. The Agent-Sessions tab surfaces per-pair DO read
+failures (`unreachablePairs` warning banner) instead of failing silently.
+On the PluraPi side the engine must upsert **and** poll the same
+`(tenantId, userId)` key — polling `personal` while upserting under the
+workspace tenant (or not upserting at all, given the 404) must be fixed there.
+
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and
 the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and
@@ -53,8 +77,11 @@ the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and
   resolution (fail closed), Cloudflare build-log retrieval, `POST /v1/builds`
   push, build-target persistence, DO read proxies
 - `plugins/pluradash/src/pages/admin/AgentSessionsPanel.tsx` — live
-  agent-session overview tab (detail dialog: chatlog tail + build history)
+  agent-session overview tab (detail dialog: chatlog tail + build history +
+  workspace activity; `unreachablePairs` warning banner)
 - `plugins/pluradash/migrations/028_create_build_targets.sql` (+ down)
+- `plugins/pluradash/migrations/029_build_targets_feedback_columns.sql` (+ down)
+- `plugins/pluradash/migrations/030_build_targets_session_tenant.sql` (+ down)
 - `plugins/pluradash/specs/plurapi-sessions-bridge.md`
 - `plugins/pluradash/specs/changes/2026-10-13-plurapi-sessions-bridge.md`
 - `specs/features/pluradash-plurapi-sessions-bridge.md`
@@ -71,8 +98,8 @@ the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and
 - `plugins/pluradash/api/webhooks.ts` — dedicated `plurapi.build_feedback`
   sync-log entry for delivery attempts
 - `plugins/pluradash/api/sync/routes.ts` — `/sync/push` and `/sync/deploy`
-  record `build_targets` rows (background, best-effort), optional `sessionId`
-  request field on push
+  record `build_targets` rows (background, best-effort) incl. the caller's
+  JWT `tenant_id` claim, optional `sessionId` request field on push
 - `plugins/pluradash/api/sync/logger.ts` — `SyncOperation` += `plurapi.build_feedback`
 - `plugins/pluradash/api/index.ts` — three new super-admin
   `/admin/github/agent-sessions*` proxy routes; env fields for the bridge
