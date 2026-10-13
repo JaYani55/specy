@@ -85,14 +85,24 @@ route `GET /v1/projects/<projectId>/sessions` (§5.1): one call per distinct
 tenant now returns all sessions of that project, so the aggregation reads
 projects instead of (tenant, user) pairs.
 
-**Read realm gate (same day, banner 403 „user token required“):** the
-sessions service enforces the **user realm** on the §5 read routes — the
-engine-realm token is rejected there (contract says "engine may do
-everything", the implementation doesn't cover reads). Resolution recorded in
-the bridge doc: recommended fix is a PluraPi one-liner (accept the engine
-realm on the read routes); fallback would be CMS-side user-session minting
-(Not implemented — heavy: session churn + refresh handling). Banner and
-triage table updated with the exact error signature.
+**Sort crash fix (same day, 500 on aggregation):** the DO may return
+`updated_at` as an epoch number (SQLite), which crashed the aggregation route
+(`number.localeCompare is not a function`) — and the panel then misrendered
+the query error as "PluraPi-Sessions nicht verbunden". Fixed with an
+epoch-based comparator (string/number agnostic); the "not connected" card now
+renders only on an explicit `configured: false`, never on query errors.
+
+**Read realm gate (same day, banner 403 „user token required“, resolved):**
+the sessions service initially enforced the **user realm** on the §5 read
+routes — the engine-realm token was rejected there (contract said "engine may
+do everything", the implementation didn't cover reads). **Fixed on the
+PluraPi side:** the engine realm is now accepted on all read routes. Contract
+nuance adopted Specy-side: an engine token carries no user, so project-scoped
+reads require `?userId=<sub>` — the session list is now
+`GET /v1/projects/<projectId>/sessions?userId=<sub>` per (tenant, user) pair
+and the builds proxy passes `userId` (already did). Addressed
+routes (`/v1/t/<t>/u/<u>/…`) need no parameter. Fallback of CMS-side
+user-session minting was not needed and remains unimplemented.
 
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and
