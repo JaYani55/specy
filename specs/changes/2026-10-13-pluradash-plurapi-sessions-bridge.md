@@ -74,9 +74,16 @@ workspace tenant (or not upserting at all, given the 404) must be fixed there.
 
 **Read diagnosability (same day):** the DO read proxies return a
 discriminated result — failures carry the DO status + error body; the
-aggregation response exposes `pairErrors` (max 10) and the Agent-Sessions
-banner names the exact cause (401/403 token realm, 404 router vs. DO miss,
-network) instead of a silent empty list.
+aggregation response exposes `readErrors` (max 10) and the Agent-Sessions
+banner names the exact cause (401/403 token realm, 405 wrong method, 404
+router vs. DO miss, network) instead of a silent empty list.
+
+**Read route fix (same day, banner 405):** the session list used
+`GET /v1/t/<t>/u/<u>/sessions` — that path is the engine's POST-upsert route
+(§7) and answers 405 on GET. Corrected to the documented project-scoped list
+route `GET /v1/projects/<projectId>/sessions` (§5.1): one call per distinct
+tenant now returns all sessions of that project, so the aggregation reads
+projects instead of (tenant, user) pairs.
 
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and

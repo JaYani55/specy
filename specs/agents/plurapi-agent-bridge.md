@@ -85,15 +85,21 @@ plugin routes:
 
 | Plugin route | DO call |
 |---|---|
-| `GET /api/plugin/pluradash/admin/github/agent-sessions` | `GET /v1/t/<t>/u/<u>/sessions` per candidate pair (≤ 30, concurrency 4) |
+| `GET /api/plugin/pluradash/admin/github/agent-sessions` | `GET /v1/projects/<projectId>/sessions` — **project-scoped**: one call per distinct tenant returns all its sessions (≤ 30 tenants, concurrency 4) |
 | `.../agent-sessions/messages` | `GET /v1/t/<t>/u/<u>/sessions/<id>/messages?after=<seq>` |
 | `.../agent-sessions/builds` | `GET /v1/projects/<projectId>/builds?limit=` (`projectId` = `tenantId`) |
+
+> ⚠️ **Route trap:** the session **list** must use `/v1/projects/<projectId>/sessions`.
+> The path `/v1/t/<t>/u/<u>/sessions` is the engine's **POST-upsert** route —
+> a GET there answers **405 method not allowed** (cost us a debugging round;
+> recorded in the triage table below).
 
 Pair discovery: identities with agent-driven sync activity in the last 30
 days, keyed on the **operation set** (`pull`, `files.list`, `files.read`,
 `save`, `push`, `app.launch`) — **not** on `actor_type`, because agent tokens
-without the agent claim are logged as `actor_type: 'user'`. The aggregation
-endpoint itself is never sync-logged (polled ~10 s).
+without the agent claim are logged as `actor_type: 'user'`. Only the distinct
+tenants from those pairs are read (the list route is project-wide). The
+aggregation endpoint itself is never sync-logged (polled ~10 s).
 
 ### 2.3 Token realms (values must match per realm)
 
@@ -169,7 +175,7 @@ keying.
 | Injection enqueued (`injectionCreated: true`) but agent never reacts | Engine poller not draining: env vars missing, wrong DO instance key, session not idle, or drained-and-crashed (at-most-once) | DO live tail for `/v1/internal/.../injections/pending`; engine `[injectionPoller]` lines |
 | Poll hits `t/personal/…` while sessions live under the workspace tenant | Engine derives the tenant differently than it upserts | compare the poll URL tenant against the upsert URL tenant — must be identical |
 | Specy `logsFetched: 0` on a failed build | check_run output carried no `Build ID:` label | recovery chain: label → `details_url` → commit-SHA match against recent CF builds; if all fail the detail says so |
-| Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or per-pair reads failed | the tab's warning banner now shows the **per-pair DO status + error body** (`pairErrors` in the response): `401/403` = API token (engine realm) wrong or not accepted for reads · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
+| Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or project reads failed | the tab's warning banner shows the **per-project DO status + error body** (`readErrors` in the response): `401/403` = API token (engine realm) wrong or not accepted for reads · `405` = wrong method/route (e.g. listing via the POST-upsert path — use `/v1/projects/<id>/sessions`) · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
 | Same build prompts the agent twice | duplicate check_run delivery before the dedupe fix (migration 029) | `build_targets.feedback_state`; only affects builds pushed pre-fix |
 
 ### 4.3 Verification flow after any change
