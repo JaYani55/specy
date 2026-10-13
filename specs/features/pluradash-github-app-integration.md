@@ -81,7 +81,7 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | GET | `/admin/github/agent-sessions/messages` | super-admin | Chatlog delta proxy for one agent session (`?tenantId=&userId=&sessionId=&after=<seq>`) |
 | GET | `/admin/github/agent-sessions/builds` | super-admin | Build-history proxy for one project (`?tenantId=&userId=&limit=`, newest first) |
 | POST | `/admin/github/webhooks/sync` | super-admin | Idempotently create/repair the check_run webhook on every assigned repo |
-| GET | `/admin/github/logs` | super-admin | Recent sync operation logs + aggregate stats (filters: `operation`, `tenantId`, `status`, `limit`) |
+| GET | `/admin/github/logs` | super-admin | Recent sync operation logs + aggregate stats (filters: `operation`, `tenantId`, `userId`, `status`, `view` (`human`\|`agent`\|`all` — human hides agent-driven operations), `limit`) |
 | DELETE | `/admin/github/logs` | super-admin | Bulk cleanup: `?before=<ISO>` or `?confirm=true` |
 
 ### Frontend routes

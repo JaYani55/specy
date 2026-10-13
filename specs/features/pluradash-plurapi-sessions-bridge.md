@@ -26,7 +26,10 @@ The bridge has two directions:
    and passes them as the injection `detail` so the agent can troubleshoot.
 2. **Agent-session reads (inbound).** The super-admin panel
    (`/admin/github-apps` → tab **Agent-Sessions**) shows a live overview of all
-   agent sessions aggregated from the DO.
+   agent sessions aggregated from the DO. Agent-driven workspace operations
+   (pull/read/save/push) surface there — per session in the detail dialog —
+   while the Sync-Logs tab focuses on workspace operations (agent activity is
+   hidden by default via the `?view=` filter on `/admin/github/logs`).
 
 ```
 GitHub check_run ──► /webhooks/check-run (HMAC) ──► repo_deployments upsert
@@ -138,12 +141,13 @@ webhook and deployment status tracking keep working without it.
 endpoint and renders a live overview of all agent sessions: status badge
 (active/idle/beendet with pulse for active), title, workspace, user, last
 activity. A detail dialog shows the live chatlog tail (last 50 messages,
-10 s polling, injections labeled) and the build history (30 s polling) with
-state badges, preview and commit links.
+10 s polling, injections labeled), the build history (30 s polling) with
+state badges, preview and commit links, and the recent agent-driven
+workspace operations for that user.
 
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
-| GET | `/admin/github/agent-sessions` | super-admin | Aggregates candidate `(tenantId, userId)` pairs from `pluradash.sync_logs` (agent actors, last 30 days, max 30 pairs, concurrency 4) and reads each pair's sessions from the DO (`GET /v1/t/<t>/u/<u>/sessions`, engine-realm token). Response: `{ configured, sessions[], pairs[], unreachablePairs }` |
+| GET | `/admin/github/agent-sessions` | super-admin | Aggregates candidate `(tenantId, userId)` pairs from `pluradash.sync_logs` and reads each pair's sessions from the DO (`GET /v1/t/<t>/u/<u>/sessions`, engine-realm token). Response: `{ configured, sessions[], pairs[], unreachablePairs }` |
 | GET | `/admin/github/agent-sessions/messages` | super-admin | Chatlog delta proxy: `?tenantId=&userId=&sessionId=&after=<seq>` (§5.2) |
 | GET | `/admin/github/agent-sessions/builds` | super-admin | Build-history proxy: `?tenantId=&userId=&limit=` (§5.4, newest first) |
 
@@ -151,12 +155,29 @@ All three return `{ configured: false }` when the bridge/API token is not
 configured. Sessions whose pair became unreachable (DO error) are skipped and
 counted (`unreachablePairs`).
 
+**Pair discovery.** Candidate pairs are the identities with agent-driven
+sync activity in the last 30 days, keyed on the **operation set**
+(`pull`, `files.list`, `files.read`, `save`, `push`, `app.launch` — the
+dashboard has no UI for these), **not** on the actor: agent tokens without
+the agent claim are recorded as `actor_type: 'user'`, so the actor is not a
+reliable agent signal. Max 30 pairs per request, concurrency 4. The
+aggregation endpoint itself is **not** sync-logged — it is polled every ~10 s
+and is not a workspace operation.
+
+**Log separation.** Agent-driven operations are hidden in the Sync-Logs tab
+by default (view filter `Menschliche Operationen`); they are visible in the
+Agent-Sessions detail dialog (Workspace-Aktivität) and via the
+`?view=` filter:
+
+`GET /admin/github/logs` gains `?view=human|agent|all` (human: hides the
+agent operations; agent: only those; all: default previous behavior) and
+`?userId=` for per-user filtering.
+
 ## New sync-log operations
 
 | Operation | Meaning |
 |---|---|
 | `plurapi.build_feedback` | One entry per attempted build-outcome delivery (delivered / failed, injection created, logs fetched) |
-| `agent.sessions` | Aggregation read for the admin overview |
 
 ## Semantics & limits
 

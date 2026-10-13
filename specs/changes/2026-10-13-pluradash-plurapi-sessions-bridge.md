@@ -27,8 +27,17 @@ session; otherwise the DO attaches to the most recent open session).
 Additionally, the super-admin panel `/admin/github-apps` gained a third tab
 **Agent-Sessions** (alongside Repositories and Sync-Logs): a live overview
 (10 s polling) of all agent sessions aggregated from the PluraPi-Sessions DO,
-with a per-session detail dialog showing the live chatlog tail and build
-history.
+with a per-session detail dialog showing the live chatlog tail, build
+history, and the recent agent-driven workspace operations.
+
+**Log separation fix (same day):** pair discovery keys on the agent-driven
+operation set (`pull`, `files.list`, `files.read`, `save`, `push`,
+`app.launch`) instead of `actor_type`, because agent tokens without the agent
+claim are logged as `actor_type: 'user'` (the first run returned `pairs: 0`).
+The aggregation endpoint is no longer sync-logged (its ~10 s dashboard polling
+spammed the sync logs). `GET /admin/github/logs` gains `?view=human|agent|all`
+and `?userId=`; the Sync-Logs tab hides agent operations by default — agent
+activity surfaces in the Agent-Sessions detail dialog instead.
 
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and
@@ -64,10 +73,12 @@ the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and
 - `plugins/pluradash/api/sync/routes.ts` — `/sync/push` and `/sync/deploy`
   record `build_targets` rows (background, best-effort), optional `sessionId`
   request field on push
-- `plugins/pluradash/api/sync/logger.ts` — `SyncOperation` += `plurapi.build_feedback`, `agent.sessions`
+- `plugins/pluradash/api/sync/logger.ts` — `SyncOperation` += `plurapi.build_feedback`
 - `plugins/pluradash/api/index.ts` — three new super-admin
   `/admin/github/agent-sessions*` proxy routes; env fields for the bridge
-  config
+  config; pair discovery via agent-operation set (not actor); polling route
+  no longer sync-logged; `/admin/github/logs` gains `?view=` and `?userId=`
+  filters
 - `plugins/pluradash/src/pages/admin/GitHubAppsAdminPage.tsx` — third tab
   **Agent-Sessions**, new log filter entries
 - `plugins/pluradash/src/services/githubAppService.ts` — agent-session
