@@ -50,6 +50,15 @@ recovered from the `details_url` or, as a last resort, by listing recent
 Cloudflare builds and matching the commit SHA — so failure logs reach the
 agent in the typical case.
 
+**Routing incident (same day, resolved by PluraPi):** the first injection was
+enqueued but never drained — the engine's `/v1/internal/…` requests hit the
+sessions Worker's catch-all 404 (`{"error":"no route for …"}`) because its
+address parser only anchored on `/v1/t/…`. Triage distinction (now documented
+in the bridge doc): a **router 404** body means the request never reached the
+DO (Worker route table), while a **DO miss** (`{"error":"session not found"}`)
+means wrong keying. After the PluraPi redeploy, pending injections drain
+within ≤ 15 s.
+
 **Tenant-key alignment (same day, DO live tail):** the first injection was
 enqueued in the `<workspace-uuid>:<user>` DO instance but never drained — the
 engine's poller requests `t/personal/u/<user>` (404). The DO instance is keyed
@@ -62,6 +71,12 @@ failures (`unreachablePairs` warning banner) instead of failing silently.
 On the PluraPi side the engine must upsert **and** poll the same
 `(tenantId, userId)` key — polling `personal` while upserting under the
 workspace tenant (or not upserting at all, given the 404) must be fixed there.
+
+**Read diagnosability (same day):** the DO read proxies return a
+discriminated result — failures carry the DO status + error body; the
+aggregation response exposes `pairErrors` (max 10) and the Agent-Sessions
+banner names the exact cause (401/403 token realm, 404 router vs. DO miss,
+network) instead of a silent empty list.
 
 EUPL boundary: all code lives inside the `pluradash` plugin workspace and
 communicates with core only through the generated plugin route mounting and
@@ -84,7 +99,11 @@ the plugin `wrangler_intents` (binding intents). Core `src/`, `api/` and
 - `plugins/pluradash/migrations/030_build_targets_session_tenant.sql` (+ down)
 - `plugins/pluradash/specs/plurapi-sessions-bridge.md`
 - `plugins/pluradash/specs/changes/2026-10-13-plurapi-sessions-bridge.md`
-- `specs/features/pluradash-plurapi-sessions-bridge.md`
+- `specs/agents/plurapi-agent-bridge.md` — **canonical bridge entry point**
+  (architecture, contracts, configuration, triage playbook incl. the
+  Worker-router-404 vs. DO-miss distinction from the 2026-10-13 incident)
+- `specs/features/pluradash-plurapi-sessions-bridge.md` — pointer stub to the
+  canonical doc (consolidated)
 - `specs/changes/2026-10-13-pluradash-plurapi-sessions-bridge.md`
 - `tests/plurapiSessionsBridge.test.mjs` (17 cases: target resolution incl.
   fallback window, log truncation caps, failure detail composition, push
@@ -169,6 +188,6 @@ builds reads) — no PluraPi engine-internal endpoints.
 
 ## Related
 
-- `specs/features/pluradash-plurapi-sessions-bridge.md`
+- `specs/agents/plurapi-agent-bridge.md` — canonical bridge entry point
 - `specs/features/pluradash-github-app-integration.md`
 - `specs/changes/2026-09-13-pluradash-check-run-webhook.md`

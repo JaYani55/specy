@@ -35,3 +35,4 @@ rather than a flat file list. Each folder has a `README.md` indexing its documen
 - *"How do I store files?"* → [`agents/r2-file-storage.md`](agents/r2-file-storage.md)
 - *"How does my plugin use the database?"* → [`agents/database-integration.md`](agents/database-integration.md)
 - *"What must I document after a change?"* → [`changes/`](changes/) (see AGENTS.md §3)
+- *"PluraPi / agent sessions / build feedback for agents?"* → [`agents/plurapi-agent-bridge.md`](agents/plurapi-agent-bridge.md) — canonical bridge entry point incl. triage playbook
