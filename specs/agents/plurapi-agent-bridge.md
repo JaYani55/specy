@@ -104,6 +104,16 @@ days, keyed on the **operation set** (`pull`, `files.list`, `files.read`,
 without the agent claim are logged as `actor_type: 'user'`. The aggregation
 endpoint itself is never sync-logged (polled ~10 s).
 
+> ⚠️ **sync_logs are prunable.** A `logs.cleanup` (`DELETE /admin/github/logs`,
+> super-admin) with `before=<ISO>`/`?confirm=true` deletes `pluradash.sync_logs`
+> — if it covers the whole 30-day lookback, pair discovery finds nothing and
+> the Agent-Sessions tab goes empty (observed 2026-10-14: cleanup with
+> `"before": "all"`). The PluraPi-Sessions DO data is **not** affected; sessions
+> reappear with the agent's next sync operation. As a safety net, pair
+> discovery falls back to `pluradash.build_targets` (`session_tenant_id` →
+> `workspace_id` fallback, newest first) whenever sync_logs yield fewer pairs
+> than the 30-pair cap — build_targets is not touched by the log cleanup.
+
 ### 2.3 Token realms (values must match per realm)
 
 | Realm | Sessions worker secret | CMS worker secret (Secrets Store) | Purpose |
@@ -153,15 +163,67 @@ Local dev: plain values in `.dev.vars` (`PLURAPI_SESSIONS_URL`,
 `PLURAPI_SESSIONS_PUSH_TOKEN`, `PLURAPI_SESSIONS_API_TOKEN`; the single var
 `PLURAPI_SESSIONS_TOKEN` covers both realms).
 
-**Plugin routes** (all super-admin): the three `agent-sessions` proxies plus
-`GET /admin/github/logs` with `?view=human|agent|all` + `?userId=` — agent
-operations are hidden in the Sync-Logs tab by default and surface in the
-Agent-Sessions detail dialog ("Workspace-Aktivität").
+**Plugin routes** (all super-admin): the three `agent-sessions` proxies, the
+arbitrary-injection route (§2.4) plus `GET /admin/github/logs` with
+`?view=human|agent|all` + `?userId=` — agent operations are hidden in the
+Sync-Logs tab by default and surface in the Agent-Sessions detail dialog
+("Workspace-Aktivität").
 
 All DO read proxies return a discriminated result
 (`PlurapiReadResult<T>`): failures carry the DO **status + error body**, the
 aggregation response exposes them as `pairErrors`, and the panel banner
 names the cause — no more silent empty lists.
+
+### 2.4 Arbitrary injection (manual prompt)
+
+The dashboard can push a **manually typed prompt** into any agent session
+without waiting for a real build — useful for the triage checklist above,
+deliberate steering, and end-to-end verification of the poller chain.
+
+Specy-side endpoint (super-admin):
+
+| | |
+|---|---|
+| Route | `POST /api/plugin/pluradash/admin/github/agent-sessions/inject` |
+| Body | `{ "tenantId": "<workspace-or-session-tenant>", "userId": "<user sub>", "sessionId?": "sess_…", "prompt": "<free text, ≤ 8000 chars>" }` |
+| Response | `{ "delivered": true, "injectionCreated": true }` — `injectionCreated: false` means the DO accepted the event but created no injection (e.g. ended session) |
+| Errors | `400` missing/oversized fields · `502` DO push failed (carries the DO status + error body) · `503` bridge not configured |
+| Sync log | operation `arbitrary.inject`, actor `user`, detail carries `sessionId`, `promptLength`, `injectionCreated` |
+
+The dashboard UI lives in the session detail dialog (Agent-Sessions tab →
+session row → "Manuelle Injektion" card): textarea + send button; the live
+chatlog tail (10 s poll) shows the arriving `[injection · build_feedback]`
+message and the agent's autonomous turn.
+
+**Contract mapping — the prompt rides the `build_feedback` channel.** The
+PluraPi-Sessions DO currently only knows the `build_feedback` injection
+type, so the manual prompt is shaped as a synthetic failed build
+(`buildArbitraryInjectionPayload`):
+
+| `POST /v1/builds` field | Value for a manual injection |
+|---|---|
+| `tenantId` / `projectId` | request `tenantId` (the DO instance key — must match the engine's poll key, see §2.1 tenant trap) |
+| `userId` | request `userId` |
+| `sessionId` | request `sessionId` — **pinned**; without it the DO attaches to the user's most recent non-ended session |
+| `branch` | `manual` |
+| `state` | `failed` (this makes the DO pass `detail` verbatim into the agent prompt, §4.4) |
+| `summary` | first line of the prompt, truncated to 120 chars (UI-safe) |
+| `detail` | the full prompt verbatim |
+
+Caveats:
+
+- **Delivery is at-most-once** and needs a **running engine poller** — an
+  enqueued injection with no poller rots in the DO inbox (§4.2, row 1).
+  A successful inject that never reaches the agent is a poller/keying
+  problem on the PluraPi side, not a Specy one.
+- The prompt surfaces in the chatlog as `[injection · build_feedback]` with
+  a badge derived from the first bracketed segment — it is not labelled
+  differently from real build feedback (no dedicated injection type yet).
+  If PluraPi later adds a generic prompt-injection type, switch the payload
+  mapping here and keep the route/UI contract unchanged.
+- No dedupe: every call enqueues a new injection. The route is super-admin
+  only; the UI rate-limits itself by disabling the button while a request
+  is in flight.
 
 ---
 
@@ -194,7 +256,14 @@ keying.
 
 1. `curl $BASE/healthz` → `{"ok":true,"service":"plurapi-sessions"}`.
 2. Prompt the agent once → engine tail shows silent successes: `…/injections/pending` → `200 {"injections":[]}`.
-3. Push a test build (`POST /v1/builds`, `state: "failed"`, `detail`) → within ≤ 15 s the engine logs `[injectionPoller] 1 injection(s) for session …` → autonomous turn; the chatlog contains `[injection · build_feedback]`.
+3. Fire an **arbitrary injection** (§2.4) — dashboard: Agent-Sessions tab →
+   session row → "Manuelle Injektion" → send; or curl:
+   `POST /api/plugin/pluradash/admin/github/agent-sessions/inject` with
+   `{tenantId, userId, sessionId?, prompt}` → within ≤ 15 s the engine logs
+   `[injectionPoller] 1 injection(s) for session …` → autonomous turn; the
+   chatlog contains `[injection · build_feedback]`. If the inject answers
+   `200/injectionCreated: true` but nothing happens within ~30 s, go to §4.2
+   row 1 (poller/keying on the PluraPi side).
 4. The Agent-Sessions tab clears its warning banner on the next read cycle.
 
 ---
@@ -207,7 +276,7 @@ keying.
 | Runtime client, CF logs, dedupe, DO proxies | `plugins/pluradash/api/sync/plurapiSessions.ts` |
 | Webhook hook-in | `plugins/pluradash/api/sync/webhookService.ts` (+ `api/webhooks.ts` logging) |
 | Target recording | `plugins/pluradash/api/sync/routes.ts` (push/deploy) |
-| Admin routes | `plugins/pluradash/api/index.ts` |
+| Admin routes (incl. arbitrary injection `POST …/agent-sessions/inject`) | `plugins/pluradash/api/index.ts` |
 | Admin UI | `plugins/pluradash/src/pages/admin/AgentSessionsPanel.tsx`, `GitHubAppsAdminPage.tsx` |
 | Service client (frontend) | `plugins/pluradash/src/services/githubAppService.ts` |
 | Migrations | `plugins/pluradash/migrations/028–030` (+ `down/`) |

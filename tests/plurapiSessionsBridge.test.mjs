@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildArbitraryInjectionPayload,
   buildPlurapiPushPayload,
   composeBuildSummary,
   composeFailureDetail,
@@ -264,4 +265,54 @@ test('selectBuildTarget falls back to the workspace when no JWT tenant was recor
   const rows = [targetRow()];
   const target = selectBuildTarget(rows, parsedCheckRun(), NOW);
   assert.equal(target?.tenantId, '11111111-1111-1111-1111-111111111111');
+});
+
+// ─── buildArbitraryInjectionPayload ──────────────────────────────────────────
+
+test('buildArbitraryInjectionPayload rides the build_feedback channel as a failed push', () => {
+  const payload = buildArbitraryInjectionPayload({
+    tenantId: '11111111-1111-1111-1111-111111111111',
+    userId: '22222222-2222-2222-2222-222222222222',
+    sessionId: 'sess_abc',
+    prompt: '  Bitte prüfe die Build-Fehler im Workspace.  ',
+  });
+  assert.equal(payload.tenantId, '11111111-1111-1111-1111-111111111111');
+  assert.equal(payload.userId, '22222222-2222-2222-2222-222222222222');
+  assert.equal(payload.projectId, payload.tenantId);
+  assert.equal(payload.sessionId, 'sess_abc');
+  assert.equal(payload.state, 'failed');
+  assert.equal(payload.branch, 'manual');
+  // The prompt is passed verbatim as the detail (DO §4.4).
+  assert.equal(payload.detail, 'Bitte prüfe die Build-Fehler im Workspace.');
+  // Summary is the trimmed first line (UI-safe).
+  assert.equal(payload.summary, 'Bitte prüfe die Build-Fehler im Workspace.');
+});
+
+test('buildArbitraryInjectionPayload summarizes only the first line and omits sessionId when absent', () => {
+  const prompt = 'Erste Zeile\nZweite Zeile mit Details\nDritte Zeile';
+  const payload = buildArbitraryInjectionPayload({
+    tenantId: 't',
+    userId: 'u',
+    prompt,
+  });
+  assert.equal(payload.sessionId, undefined);
+  assert.equal(payload.detail, prompt);
+  assert.equal(payload.summary, 'Erste Zeile');
+});
+
+test('buildArbitraryInjectionPayload truncates long first lines in the summary only', () => {
+  const longLine = 'x'.repeat(300);
+  const payload = buildArbitraryInjectionPayload({
+    tenantId: 't',
+    userId: 'u',
+    prompt: `${longLine}\nrest`,
+  });
+  assert.equal(payload.detail.length, 305); // prompt verbatim (300 + \n + 'rest')
+  assert.equal(payload.summary, `${'x'.repeat(120)}…`);
+});
+
+test('buildArbitraryInjectionPayload falls back to a default summary for whitespace-only prompts', () => {
+  const payload = buildArbitraryInjectionPayload({ tenantId: 't', userId: 'u', prompt: '   \n  ' });
+  assert.equal(payload.summary, 'Manuelle Injektion');
+  assert.equal(payload.detail, '');
 });
