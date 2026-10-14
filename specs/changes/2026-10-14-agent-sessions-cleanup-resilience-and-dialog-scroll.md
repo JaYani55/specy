@@ -13,13 +13,20 @@ Two fixes in the PluraPi Agent-Sessions bridge area:
    PluraPi-Sessions DO data was intact. Pair discovery now falls back to
    `pluradash.build_targets` (not touched by the log cleanup) whenever
    `sync_logs` yield fewer pairs than the 30-pair cap.
-2. **Session detail dialog was not reliably scrollable.** The dialog fought the
-   shadcn `DialogContent` base (`grid gap-4 p-6`). It is now a flex column:
-   sticky header, `min-h-0 flex-1 overflow-y-auto overscroll-contain` body
-   (single scroll region). Reactivity: the chatlog tail polling moved from a
-   manual `setInterval`/`useState` loop to react-query (`refetchInterval`),
-   the chat auto-scrolls to the newest message on poll updates (unless the
-   user scrolled away), and the spinner shown in the *Build-Verlauf* header
+2. **Session detail dialog was not reliably scrollable.** Two layered causes:
+   (a) **Tailwind content gap (root cause, core):** the `content` globs in
+   `tailwind.config.ts` did not include `./plugins/**`, so every class used
+   *only* in plugin files was silently never generated — verified in the
+   built CSS (`max-h-[85vh]` and `overscroll-contain` absent before the fix).
+   The dialog's max-height therefore never applied; the fixed-positioned,
+   centered dialog grew taller than the viewport with nothing to scroll.
+   The glob is now added. (b) The dialog fought the shadcn `DialogContent`
+   base (`grid gap-4 p-6`); it is now a flex column: sticky header,
+   `min-h-0 flex-1 overflow-y-auto overscroll-contain` body (single scroll
+   region). Reactivity: the chatlog tail polling moved from a manual
+   `setInterval`/`useState` loop to react-query (`refetchInterval`), the
+   chat auto-scrolls to the newest message on poll updates (unless the user
+   scrolled away), and the spinner shown in the *Build-Verlauf* header
    (wrongly bound to `messagesLoading`) now tracks `buildsLoading`.
 
 Note: no data was lost — the sessions live in the PluraPi-Sessions DO; only
@@ -32,6 +39,8 @@ the agent's next sync operation even without this fix.
 
 ## Files Changed
 
+- `tailwind.config.ts` — add `./plugins/**/*.{ts,tsx}` to `content` (core
+  fix: plugin-only classes are now generated).
 - `plugins/pluradash/api/index.ts` — `GET /admin/github/agent-sessions`: after
   building pairs from `sync_logs`, if fewer than `AGENT_SESSION_MAX_PAIRS` (30),
   query `pluradash.build_targets` (`session_tenant_id, workspace_id, user_id`,
@@ -49,6 +58,10 @@ the agent's next sync operation even without this fix.
 
 - **Database:** none. `build_targets` already exists (plugin migrations 028–030)
   and is only read. No migration added.
+- **Build output:** the Tailwind content glob adds plugin-only classes to the
+  bundled CSS (dist CSS ~156 KB); expected and one-time. Any plugin class not
+  previously covered is now active — plugin UIs may render slightly
+  differently (correctly) than before.
 - **Runtime:** one extra service-role query per agent-sessions poll (~10 s) *only*
   when `sync_logs` produce fewer than 30 pairs (i.e. right after a cleanup or
   during low activity). Bounded by `limit(500)` on `build_targets`.

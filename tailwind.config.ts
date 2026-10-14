@@ -8,6 +8,10 @@ export default {
     "./components/**/*.{ts,tsx}",
     "./app/**/*.{ts,tsx}",
     "./src/**/*.{ts,tsx}",
+    // Plugin workspaces (gitignored, separate repos): without this glob,
+    // every Tailwind class used ONLY inside plugins/ is silently never
+    // generated (e.g. the Agent-Sessions dialog max-h → unscrollable modal).
+    "./plugins/**/*.{ts,tsx}",
   ],
   prefix: "",
   theme: {
