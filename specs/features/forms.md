@@ -194,6 +194,15 @@ Field properties:
 | `upload_provider` | conditional | Optional plugin-owned upload adapter, e.g. `pluradash` |
 | `upload_folder` | conditional | Folder template used by the active upload provider |
 | `reply_to` | no | Email-field flag: use the submitted address as notification reply-to (unique per form) |
+| `allow_custom` | no | Select/radio flag: adds a free-text "Other" answer alongside the fixed options (see below) |
+
+### Custom Answers ("Other")
+
+Option-bearing field types — `select`, `radio`, `single-select`, and `multi-select` — support an optional `allow_custom: true` flag that lets submitters provide their own answer in addition to the fixed options:
+
+- **Builder**: the *Formular-Editor* shows an *Eigene Antwort erlauben ("Sonstiges")* switch on every option field (including `radio`). The flag is stored as `allow_custom: true` in the schema entry; switching a field to a non-option type clears it. The field card shows an *Eigene Antwort erlaubt* badge while active.
+- **Share page**: single-choice fields render an extra *Sonstiges...* dropdown entry that reveals a free-text input; the submitted value is the typed text itself (no sentinel value is stored). `multi-select` renders a *Sonstiges...* checkbox with a free-text input appended to the chosen option array.
+- **API validation** (`normalizeSchema`/answer validation in `api/routes/forms.ts`): `allow_custom` is preserved on option field types and stripped elsewhere. With `allow_custom: true`, values outside `options` are accepted; without it, they are rejected. Empty-string placeholders from an untyped "Other" input are filtered client-side before submission.
 
 ---
 

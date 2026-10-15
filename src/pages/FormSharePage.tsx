@@ -54,6 +54,8 @@ const FormSharePage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
+  // Tracks whether the user explicitly picked the "Other..." entry of an option field.
+  const [customToggles, setCustomToggles] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -182,6 +184,7 @@ const FormSharePage = () => {
     const missingRequiredField = formDefinition.fields.find((field) => {
       if (!requiredFieldNames.has(field.name)) return false;
       if (field.type === 'checkbox') return answers[field.name] !== true;
+      if (field.type === 'multi-select') return !Array.isArray(answers[field.name]) || (answers[field.name] as unknown[]).length === 0;
       if (field.type === 'consent-vote' || field.type === 'consent-poll') {
         const val = answers[field.name] as { position?: string; reason?: string } | null;
         if (!val || !val.position) return true;
@@ -201,8 +204,16 @@ const FormSharePage = () => {
 
     try {
       setIsSubmitting(true);
+      // Drop empty "Other" placeholders (option not typed but toggle left open)
+      // from multi-select answers before submitting.
+      const cleanedAnswers = Object.fromEntries(
+        Object.entries(answers).map(([fieldName, value]) => [
+          fieldName,
+          Array.isArray(value) ? value.filter((entry) => entry !== '') : value,
+        ]),
+      );
       await submitFormAnswers({ tenantName, identifier: formShareSlug }, {
-        answers,
+        answers: cleanedAnswers,
         source_slug: formDefinition.form.share_slug || formShareSlug,
       }, 'share');
       setSubmitted(true);
@@ -543,7 +554,10 @@ const FormSharePage = () => {
                       <div className="space-y-3">
                         <Select
                           value={field.options.includes(String(answers[field.name] ?? '')) ? String(answers[field.name] ?? '') : (answers[field.name] ? '__other__' : '')}
-                          onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }))}
+                          onValueChange={(value) => {
+                            setCustomToggles((current) => ({ ...current, [field.name]: value === '__other__' }));
+                            setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }));
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder={field.placeholder || field.label} />
@@ -557,7 +571,7 @@ const FormSharePage = () => {
                             )}
                           </SelectContent>
                         </Select>
-                        {field.allow_custom && (answers[field.name] !== null && !field.options.includes(String(answers[field.name])) || answers[field.name] === '') && (
+                        {field.allow_custom && (customToggles[field.name] === true || (typeof answers[field.name] === 'string' && answers[field.name] !== '' && !field.options.includes(String(answers[field.name])))) && (
                           <Input
                             placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
                             value={String(answers[field.name] ?? '')}
@@ -572,7 +586,10 @@ const FormSharePage = () => {
                       <div className="space-y-3">
                         <Select
                           value={field.options.includes(String(answers[field.name] ?? '')) ? String(answers[field.name] ?? '') : (answers[field.name] ? '__other__' : '')}
-                          onValueChange={(value) => setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }))}
+                          onValueChange={(value) => {
+                            setCustomToggles((current) => ({ ...current, [field.name]: value === '__other__' }));
+                            setAnswers((current) => ({ ...current, [field.name]: value === '__other__' ? '' : value }));
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder={field.placeholder || field.label} />
@@ -586,7 +603,7 @@ const FormSharePage = () => {
                             )}
                           </SelectContent>
                         </Select>
-                        {field.allow_custom && (answers[field.name] !== null && !field.options.includes(String(answers[field.name])) || (answers[field.name] === '' && field.options.every(o => o !== ''))) && (
+                        {field.allow_custom && (customToggles[field.name] === true || (typeof answers[field.name] === 'string' && answers[field.name] !== '' && !field.options.includes(String(answers[field.name])))) && (
                           <Input
                             placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
                             value={String(answers[field.name] ?? '')}
@@ -618,44 +635,48 @@ const FormSharePage = () => {
                             </div>
                           );
                         })}
-                        {field.allow_custom && (
-                          <div className="space-y-3 pt-2 border-t mt-2">
-                            <div className="flex items-center gap-3">
-                              <Checkbox
-                                id={`${field.name}-other-toggle`}
-                                checked={Array.isArray(answers[field.name]) && (answers[field.name] as string[]).some(v => !field.options?.includes(v))}
-                                onCheckedChange={(checked) => {
-                                  if (!checked) {
-                                    // Remove any value that isn't in options
+                        {field.allow_custom && (() => {
+                          const hasCustomValue = Array.isArray(answers[field.name])
+                            && (answers[field.name] as string[]).some(v => !field.options?.includes(v));
+                          const otherActive = customToggles[field.name] === true || hasCustomValue;
+                          return (
+                            <div className="space-y-3 pt-2 border-t mt-2">
+                              <div className="flex items-center gap-3">
+                                <Checkbox
+                                  id={`${field.name}-other-toggle`}
+                                  checked={otherActive}
+                                  onCheckedChange={(checked) => {
+                                    setCustomToggles((current) => ({ ...current, [field.name]: checked === true }));
+                                    if (checked !== true) {
+                                      // Unchecking removes any value that isn't in options
+                                      const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
+                                      setAnswers(curr => ({ ...curr, [field.name]: currentValues.filter(v => field.options?.includes(v)) }));
+                                    }
+                                  }}
+                                />
+                                <Label htmlFor={`${field.name}-other-toggle`} className="mb-0 cursor-pointer">
+                                  {language === 'en' ? 'Other...' : 'Sonstiges...'}
+                                </Label>
+                              </div>
+                              {otherActive && (
+                                <Input
+                                  placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
+                                  value={(answers[field.name] as string[] || []).find(v => !field.options?.includes(v)) || ''}
+                                  onChange={(e) => {
                                     const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
-                                    setAnswers(curr => ({ ...curr, [field.name]: currentValues.filter(v => field.options?.includes(v)) }));
-                                  } else {
-                                    // Just visual - input handles the actual value
-                                  }
-                                }}
-                              />
-                              <Label htmlFor={`${field.name}-other-toggle`} className="mb-0 cursor-pointer">
-                                {language === 'en' ? 'Other...' : 'Sonstiges...'}
-                              </Label>
+                                    const baseValues = currentValues.filter(v => field.options?.includes(v));
+                                    if (e.target.value.trim()) {
+                                      setAnswers(curr => ({ ...curr, [field.name]: [...baseValues, e.target.value] }));
+                                    } else {
+                                      setAnswers(curr => ({ ...curr, [field.name]: baseValues }));
+                                    }
+                                  }}
+                                  className="animate-in fade-in slide-in-from-top-1"
+                                />
+                              )}
                             </div>
-                            {(Array.isArray(answers[field.name]) && (answers[field.name] as string[]).some(v => !field.options?.includes(v)) || (document.getElementById(`${field.name}-other-toggle`) as HTMLInputElement)?.checked) && (
-                              <Input
-                                placeholder={language === 'en' ? 'Please specify...' : 'Bitte angeben...'}
-                                value={(answers[field.name] as string[] || []).find(v => !field.options?.includes(v)) || ''}
-                                onChange={(e) => {
-                                  const currentValues = Array.isArray(answers[field.name]) ? answers[field.name] as string[] : [];
-                                  const baseValues = currentValues.filter(v => field.options?.includes(v));
-                                  if (e.target.value.trim()) {
-                                    setAnswers(curr => ({ ...curr, [field.name]: [...baseValues, e.target.value] }));
-                                  } else {
-                                    setAnswers(curr => ({ ...curr, [field.name]: baseValues }));
-                                  }
-                                }}
-                                className="animate-in fade-in slide-in-from-top-1"
-                              />
-                            )}
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     )}
                   </div>

@@ -379,6 +379,7 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, formType = 'form
 
     if (!supportsOptions(next[index].type)) {
       next[index].options = undefined;
+      next[index].allow_custom = undefined;
     } else if (!next[index].options || next[index].options.length === 0) {
       next[index].options = ['Option 1', 'Option 2'];
     }
@@ -472,6 +473,9 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, formType = 'form
                     <Badge variant="outline">{typeLabels[field.type]}</Badge>
                     <Badge variant="outline">{field.name || 'unnamed_field'}</Badge>
                     {field.required && <Badge>{language === 'en' ? 'Required' : 'Pflichtfeld'}</Badge>}
+                    {supportsOptions(field.type) && field.allow_custom && (
+                      <Badge variant="secondary">{language === 'en' ? 'Custom answer allowed' : 'Eigene Antwort erlaubt'}</Badge>
+                    )}
                     {field.type === 'email' && field.reply_to && (
                       <Badge variant="secondary">{language === 'en' ? 'Reply-To' : 'Reply-To'}</Badge>
                     )}
@@ -577,7 +581,7 @@ export const FormSchemaBuilder = ({ fields, language, tenantId, formType = 'form
                     language={language}
                     onChange={(options) => updateField(index, { options })}
                   />
-                  {(field.type === 'single-select' || field.type === 'multi-select' || field.type === 'select') && (
+                  {supportsOptions(field.type) && (
                     <div className="flex items-center space-x-2 pt-1">
                       <Switch
                         id={`allow-custom-${field.editorId || index}`}

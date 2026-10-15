@@ -121,6 +121,9 @@ const VALID_FIELD_TYPES = new Set<FormFieldType>([
 
 const DISPLAY_ONLY_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);
 
+/** Field types that carry an `options` list and can therefore allow a custom ("Other") answer. */
+const OPTION_FIELD_TYPES = new Set<FormFieldType>(['select', 'radio', 'single-select', 'multi-select']);
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const parseBearerToken = (value: string | undefined): string | undefined => {
@@ -791,6 +794,7 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       width: typeof value.width === 'number' && Number.isFinite(value.width) ? value.width : undefined,
       height: typeof value.height === 'number' && Number.isFinite(value.height) ? value.height : undefined,
       options: Array.isArray(value.options) ? value.options.filter((entry): entry is string => typeof entry === 'string') : undefined,
+      allow_custom: OPTION_FIELD_TYPES.has(type as FormFieldType) && value.allow_custom === true ? true : undefined,
       upload_provider: typeof value.upload_provider === 'string' ? value.upload_provider : undefined,
       upload_mount: typeof value.upload_mount === 'string' ? value.upload_mount : undefined,
       upload_bucket: typeof value.upload_bucket === 'string' ? value.upload_bucket : undefined,
@@ -806,7 +810,7 @@ const normalizeSchema = (rawSchema: Record<string, unknown>): { fields: FormFiel
       field.order = Math.max(0, Math.trunc(value.order));
     }
 
-    if ((field.type === 'select' || field.type === 'radio' || field.type === 'single-select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
+    if (OPTION_FIELD_TYPES.has(field.type) && (!field.options || field.options.length === 0)) {
       errors.push(`${name}.options is required.`);
       continue;
     }

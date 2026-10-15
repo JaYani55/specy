@@ -38,6 +38,9 @@ const VALID_FORM_FIELD_TYPES = new Set<FormFieldType>([
 
 const DISPLAY_ONLY_FORM_FIELD_TYPES = new Set<FormFieldType>(['help-text', 'image']);
 
+/** Field types that carry an `options` list and can therefore allow a custom ("Other") answer. */
+const OPTION_FORM_FIELD_TYPES = new Set<FormFieldType>(['select', 'radio', 'single-select', 'multi-select']);
+
 export const isDisplayOnlyFormFieldType = (type: FormFieldType): boolean => DISPLAY_ONLY_FORM_FIELD_TYPES.has(type);
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => (
@@ -142,7 +145,15 @@ const parseFieldEntry = (
     }
   }
 
-  if ((field.type === 'select' || field.type === 'radio' || field.type === 'single-select' || field.type === 'multi-select') && (!field.options || field.options.length === 0)) {
+  if (value.allow_custom !== undefined) {
+    if (typeof value.allow_custom !== 'boolean') {
+      warnings.push(`${path}.allow_custom must be a boolean when provided.`);
+    } else if (OPTION_FORM_FIELD_TYPES.has(field.type)) {
+      field.allow_custom = value.allow_custom;
+    }
+  }
+
+  if (OPTION_FORM_FIELD_TYPES.has(field.type) && (!field.options || field.options.length === 0)) {
     errors.push(`${path}.options is required for ${field.type} fields.`);
   }
 
@@ -270,6 +281,7 @@ export const formFieldsToSchema = (fields: FormFieldDefinition[]): FormSchemaDef
       width: field.width,
       height: field.height,
       options: field.options && field.options.length > 0 ? field.options : undefined,
+      allow_custom: OPTION_FORM_FIELD_TYPES.has(field.type) && field.allow_custom ? true : undefined,
       reply_to: field.type === 'email' && field.reply_to ? true : undefined,
       upload_provider: field.upload_provider || undefined,
       upload_mount: field.upload_mount || undefined,
