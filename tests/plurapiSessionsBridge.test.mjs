@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  buildArbitraryInjectionPayload,
+  buildBuildSessionOpenPayload,
+  buildBuildSessionResultPayload,
   buildPlurapiPushPayload,
+  buildSessionIdempotencyKey,
+  buildWorkflowInjectionPayload,
   composeBuildSummary,
   composeFailureDetail,
   MAX_DETAIL_CHARS,
@@ -267,52 +270,95 @@ test('selectBuildTarget falls back to the workspace when no JWT tenant was recor
   assert.equal(target?.tenantId, '11111111-1111-1111-1111-111111111111');
 });
 
-// ─── buildArbitraryInjectionPayload ──────────────────────────────────────────
+// ─── Build-session workflow (sessions-do/v2) ───────────────────────────────
 
-test('buildArbitraryInjectionPayload rides the build_feedback channel as a failed push', () => {
-  const payload = buildArbitraryInjectionPayload({
+test('buildSessionIdempotencyKey prefers the Cloudflare build id', () => {
+  const key = buildSessionIdempotencyKey(parsedCheckRun());
+  assert.equal(key, 'cf-build-b1c2d3e4-f5a6-4789-a012-3456789abcde');
+});
+
+test('buildSessionIdempotencyKey falls back to the commit identity', () => {
+  const key = buildSessionIdempotencyKey(parsedCheckRun({ buildId: null }));
+  assert.equal(key, `commit-${REPO_ID}-aaaaaaaaaaaaaaaaaaaa`);
+  assert.equal(
+    buildSessionIdempotencyKey(parsedCheckRun({ buildId: null, headSha: 'AAAAAAAA' })),
+    `commit-${REPO_ID}-aaaaaaaa`,
+  );
+});
+
+test('buildSessionIdempotencyKey falls back to the check-run identity without a sha', () => {
+  const key = buildSessionIdempotencyKey(parsedCheckRun({ buildId: null, headSha: null }));
+  assert.equal(key, `checkrun-${REPO_ID}-dev`);
+});
+
+test('buildBuildSessionOpenPayload shapes the build OPEN request', () => {
+  const target = selectBuildTarget([targetRow({ session_id: 'sess_1', session_tenant_id: 'personal' })], parsedCheckRun({ buildStatus: 'running', conclusion: null, previewUrl: null }), NOW);
+  const payload = buildBuildSessionOpenPayload(target, parsedCheckRun({ buildStatus: 'running', conclusion: null, previewUrl: null }));
+  assert.deepEqual(payload, {
+    tenantId: 'personal',
+    userId: '22222222-2222-2222-2222-222222222222',
+    projectId: 'personal',
+    sessionId: 'sess_1',
+    branch: 'dev',
+    commitSha: 'aaaaaaaaaaaaaaaaaaaa',
+    commitUrl: 'https://github.com/acme/website/commit/aaaaaaaaaaaaaaaaaaaa',
+    notifyBuilding: true,
+    idempotencyKey: 'cf-build-b1c2d3e4-f5a6-4789-a012-3456789abcde',
+  });
+});
+
+test('buildBuildSessionOpenPayload omits sessionId when unpinned and carries no state/summary', () => {
+  const target = selectBuildTarget([targetRow()], parsedCheckRun({ buildStatus: 'running', conclusion: null, previewUrl: null }), NOW);
+  const payload = buildBuildSessionOpenPayload(target, parsedCheckRun({ buildStatus: 'running', conclusion: null, previewUrl: null }));
+  assert.equal(payload.sessionId, undefined);
+  assert.equal('state' in payload, false);
+  assert.equal('summary' in payload, false);
+});
+
+test('buildBuildSessionResultPayload shapes a success result with the preview URL', () => {
+  const payload = buildBuildSessionResultPayload(parsedCheckRun(), undefined);
+  assert.deepEqual(payload, {
+    state: 'succeeded',
+    previewUrl: 'https://abc.pages.dev',
+    summary: composeBuildSummary(parsedCheckRun()),
+    commitSha: 'aaaaaaaaaaaaaaaaaaaa',
+    commitUrl: 'https://github.com/acme/website/commit/aaaaaaaaaaaaaaaaaaaa',
+  });
+  assert.equal('detail' in payload, false);
+});
+
+test('buildBuildSessionResultPayload carries the failure detail verbatim', () => {
+  const parsed = parsedCheckRun({ buildStatus: 'failed', conclusion: 'failure', previewUrl: null });
+  const payload = buildBuildSessionResultPayload(parsed, 'ERROR DETAILS');
+  assert.equal(payload.state, 'failed');
+  assert.equal(payload.detail, 'ERROR DETAILS');
+  assert.equal('previewUrl' in payload, false);
+  assert.equal(payload.summary, composeBuildSummary(parsed));
+});
+
+// ─── buildWorkflowInjectionPayload ──────────────────────────────────────────
+
+test('buildWorkflowInjectionPayload passes the prompt directly without a synthetic build shape', () => {
+  const payload = buildWorkflowInjectionPayload({
     tenantId: '11111111-1111-1111-1111-111111111111',
     userId: '22222222-2222-2222-2222-222222222222',
     sessionId: 'sess_abc',
     prompt: '  Bitte prüfe die Build-Fehler im Workspace.  ',
   });
-  assert.equal(payload.tenantId, '11111111-1111-1111-1111-111111111111');
-  assert.equal(payload.userId, '22222222-2222-2222-2222-222222222222');
-  assert.equal(payload.projectId, payload.tenantId);
-  assert.equal(payload.sessionId, 'sess_abc');
-  assert.equal(payload.state, 'failed');
-  assert.equal(payload.branch, 'manual');
-  // The prompt is passed verbatim as the detail (DO §4.4).
-  assert.equal(payload.detail, 'Bitte prüfe die Build-Fehler im Workspace.');
-  // Summary is the trimmed first line (UI-safe).
-  assert.equal(payload.summary, 'Bitte prüfe die Build-Fehler im Workspace.');
+  assert.deepEqual(payload, {
+    tenantId: '11111111-1111-1111-1111-111111111111',
+    userId: '22222222-2222-2222-2222-222222222222',
+    sessionId: 'sess_abc',
+    prompt: 'Bitte prüfe die Build-Fehler im Workspace.',
+  });
+  assert.equal('state' in payload, false);
+  assert.equal('branch' in payload, false);
+  assert.equal('detail' in payload, false);
 });
 
-test('buildArbitraryInjectionPayload summarizes only the first line and omits sessionId when absent', () => {
-  const prompt = 'Erste Zeile\nZweite Zeile mit Details\nDritte Zeile';
-  const payload = buildArbitraryInjectionPayload({
-    tenantId: 't',
-    userId: 'u',
-    prompt,
-  });
+test('buildWorkflowInjectionPayload omits sessionId when absent and keeps the prompt verbatim', () => {
+  const prompt = 'Erste Zeile\nZweite Zeile mit Details';
+  const payload = buildWorkflowInjectionPayload({ tenantId: 't', userId: 'u', prompt });
   assert.equal(payload.sessionId, undefined);
-  assert.equal(payload.detail, prompt);
-  assert.equal(payload.summary, 'Erste Zeile');
-});
-
-test('buildArbitraryInjectionPayload truncates long first lines in the summary only', () => {
-  const longLine = 'x'.repeat(300);
-  const payload = buildArbitraryInjectionPayload({
-    tenantId: 't',
-    userId: 'u',
-    prompt: `${longLine}\nrest`,
-  });
-  assert.equal(payload.detail.length, 305); // prompt verbatim (300 + \n + 'rest')
-  assert.equal(payload.summary, `${'x'.repeat(120)}…`);
-});
-
-test('buildArbitraryInjectionPayload falls back to a default summary for whitespace-only prompts', () => {
-  const payload = buildArbitraryInjectionPayload({ tenantId: 't', userId: 'u', prompt: '   \n  ' });
-  assert.equal(payload.summary, 'Manuelle Injektion');
-  assert.equal(payload.detail, '');
+  assert.equal(payload.prompt, prompt);
 });

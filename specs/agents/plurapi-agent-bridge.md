@@ -21,28 +21,43 @@ GitHub check_run ──► PluraDash /webhooks/check-run (HMAC)
                         └─► build-target resolution (pluradash.build_targets)
                               │  commit SHA → sessionTenantId / userId / sessionId
                               │
-              succeeded ──────┼────── failed
-                  │                          │
-                  │                          ├─► Cloudflare Builds API (exact logs,
-                  │                          │   CF_API_TOKEN + CF_ACCOUNT_ID)
-                  │                          │
-                  └────────────┬─────────────┘
-                               ▼
-              POST $BASE/v1/builds   ("specy" realm token)
-                               ▼
-              PluraPi-Sessions DO ──► build_feedback injection (inbox)
-                               ▼
+   running (created) ─────────┼────── succeeded / failed
+        │                     │                 │
+        ▼                     │                 ├─► Cloudflare Builds API (exact logs,
+POST $BASE/v1/build-sessions │                 │   CF_API_TOKEN + CF_ACCOUNT_ID)
+("specy" realm, idempotent)  │                 │
+        │                     │                 ▼
+        ▼                     │     POST $BASE/v1/build-sessions/<wfId>/result
+workflowInstanceId ───────────┘     ("specy" realm; 409 = already finalized)
+stored on build_targets             ▼
+(build opens the orchestration) PluraPi Workflow: notification → result wait
+                                     → injection → approval tracking
+                                     ▼
               PluraPi engine poller (≤ 15 s) ──► autonomous agent turn
                                ▼
-              chatlog message `[injection · build_feedback]`
+              chatlog messages `[build-status · <branch>]` (role system)
+                               and `[injection · build_feedback]`
 ```
 
 Two directions:
 
-1. **Build feedback (outbound).** A completed preview build is pushed to the
-   agent's session. Success → short confirmation prompt. Failure → the exact
-   Cloudflare build logs are fetched and passed as the injection `detail` so
-   the agent can diagnose and fix the build autonomously.
+1. **Build feedback (outbound).** The bridge is **workflow-first**
+   (sessions-do/v2): when the build starts (check_run `created`/`running`) it
+   opens one durable Cloudflare Workflow instance per build via
+   `POST /v1/build-sessions` and stores the returned `workflowInstanceId` on
+   the `build_targets` row. When the build finishes, the outcome is sent to
+   `POST /v1/build-sessions/<workflowInstanceId>/result` — the workflow drives
+   notification → result wait → injection → approval tracking with automatic
+   retries (a missed push marks the build `cancelled` after
+   `resultTimeoutSeconds` instead of stranding it). The legacy
+   `POST /v1/builds` push remains the **fallback/rollback path** for builds
+   that were never opened as build-sessions (pre-migration pushes,
+   single-delivery Cloudflare Pages check_runs, 404 instances). Success →
+   short confirmation prompt. Failure → the exact Cloudflare build logs are
+   fetched and passed as the result `detail` so the agent can diagnose and fix
+   the build autonomously. The approval lifecycle (user accepts/rejects the
+   injected fix prompt, 24 h window) is tracked entirely by PluraPi — Specy
+   has no involvement.
 2. **Agent-session reads (inbound).** The super-admin panel
    (`/admin/github-apps` → tab **Agent-Sessions**) aggregates all agent
    sessions from the DO: live overview (10 s polling), per-session detail
@@ -57,9 +72,50 @@ repository).
 
 ## 2. Contract summary
 
-### 2.1 Push (Specy → DO)
+### 2.1 Push (Specy → DO) — workflow-first (sessions-do/v2)
 
-`POST $BASE/v1/builds`, `Authorization: Bearer <"specy" realm token>`:
+**Primary path — `POST $BASE/v1/build-sessions`** (build OPEN, fired on the
+check_run `created`/`rerequested` → `running` event),
+`Authorization: Bearer <"specy" realm token>`:
+
+| Field | Value / source |
+|---|---|
+| `tenantId` / `userId` / `projectId` | as in the legacy table below (`projectId` = `tenantId`) |
+| `sessionId` | `build_targets.session_id` (optional pin; else most recent non-ended session) |
+| `branch` / `commitSha` / `commitUrl` | from the check_run |
+| `notifyBuilding` | `true` — the DO writes a `[build-status · <branch>]` status line (`role: "system"`) into the chatlog as soon as the build opens |
+| `idempotencyKey` | deterministic: `cf-build-<buildId>` when the check_run carried a build id, else `commit-<repoId>-<sha>` — a retry returns the same instance instead of duplicating |
+| `resultTimeoutSeconds` / `approvalTimeoutSeconds` | not sent — service defaults (30 min / 24 h) apply |
+
+→ `200 { buildId, workflowInstanceId, created, sessionId }`. The
+`workflowInstanceId` is stored on the exact `build_targets` row
+(`workflow_instance_id`, migration 031) and is the correlation handle for the
+result push. `sessionId: null` means no open session exists — the build is
+still recorded, but no notification/prompt is created.
+
+**Result path — `POST /v1/build-sessions/<workflowInstanceId>/result`** (build
+finished):
+
+| Field | Value / source |
+|---|---|
+| `state` | `succeeded` / `failed` (a GitHub `cancelled` conclusion maps to `failed` with logs — the agent should still see why) |
+| `previewUrl` | success only |
+| `summary` | one-line, UI-safe |
+| `detail` | **failure only**: context header (branch, commit, CF build id) + verbatim log excerpt (tail ≤ 120 lines / 12 KB) — passed verbatim into the agent prompt |
+| `commitSha` / `commitUrl` | check_run `head_sha` + GitHub commit link |
+
+→ `200 { sent: true }` · `409 { error: "instance not running: …" }` = already
+finalized (duplicate delivery) — **safe to ignore**, booked as delivered ·
+`404` = unknown instance → legacy fallback below. Other failures are **not**
+fallback-pushed (a fallback could double-deliver); PluraPi's result timeout
+marks the build `cancelled` instead.
+
+**Legacy fallback — `POST $BASE/v1/builds`** (unchanged contract): used when
+the exact `build_targets` row carries no `workflow_instance_id`
+(pre-migration builds, Cloudflare Pages single completed delivery) or the
+result endpoint answered `404`. Never mix paths for one build: once a build
+is opened via `/v1/build-sessions`, its final state must NOT also be pushed
+via `POST /v1/builds` (duplicate build row + duplicate agent prompt).
 
 | Field | Value / source |
 |---|---|
@@ -76,7 +132,7 @@ repository).
 The bridge is **fail-closed**: without `PLURAPI_SESSIONS_URL` or the push
 token it disables itself (sync-log warning), webhook + status tracking keep
 working. Delivery is at-most-once (DO inbox semantics — consumed on read); no
-retries.
+retries. Workflow-mode retries are handled inside the PluraPi Workflow.
 
 ### 2.2 Reads (Specy ← DO)
 
@@ -87,7 +143,12 @@ plugin routes:
 |---|---|
 | `GET /api/plugin/pluradash/admin/github/agent-sessions` | `GET /v1/projects/<projectId>/sessions?userId=<sub>` per pair (≤ 30 pairs, concurrency 4) — returns exactly that user's sessions |
 | `.../agent-sessions/messages` | `GET /v1/t/<t>/u/<u>/sessions/<id>/messages?after=<seq>` (addressed route — user already in the path) |
-| `.../agent-sessions/builds` | `GET /v1/projects/<projectId>/builds?userId=<sub>&limit=` (`projectId` = `tenantId`) |
+| `.../agent-sessions/builds` | `GET /v1/projects/<projectId>/builds?userId=<sub>&limit=` (`projectId` = `tenantId`) — rows now carry `workflow_instance_id` (NULL for legacy pushes) |
+
+Chatlog reads include `role: "system"` entries tagged
+`[build-status · <branch>]` (workflow-mode build openings) — the
+Agent-Sessions dialog renders them as status lines, not as user/assistant
+turns.
 
 > ⚠️ **Two engine-realm addressing rules (both cost a debugging round):**
 > 1. **Route trap:** the session **list** must use `/v1/projects/<projectId>/sessions`.
@@ -118,7 +179,7 @@ endpoint itself is never sync-logged (polled ~10 s).
 
 | Realm | Sessions worker secret | CMS worker secret (Secrets Store) | Purpose |
 |---|---|---|---|
-| `specy` | `SPECY_PUSH_TOKEN` | `PLURAPI_SESSIONS_PUSH_TOKEN` (binding `SS_PLURAPI_SESSIONS_PUSH_TOKEN`) | `POST /v1/builds` only |
+| `specy` | `SPECY_PUSH_TOKEN` | `PLURAPI_SESSIONS_PUSH_TOKEN` (binding `SS_PLURAPI_SESSIONS_PUSH_TOKEN`) | build-sessions (open/result), workflow-injections, legacy `POST /v1/builds` |
 | `engine` | `INTERNAL_TOKEN` (engine copies it as `SESSIONS_INTERNAL_TOKEN`) | `PLURAPI_SESSIONS_API_TOKEN` (binding `SS_PLURAPI_SESSIONS_API_TOKEN`) | DO reads for the admin overview |
 
 Leaving `PLURAPI_SESSIONS_API_TOKEN` unset degrades gracefully: build feedback
@@ -182,45 +243,44 @@ deliberate steering, and end-to-end verification of the poller chain.
 
 Specy-side endpoint (super-admin):
 
+The prompt is pushed via the **workflow-mediated route**
+`POST $BASE/v1/workflow-injections` (sessions-do/v2 §3.11): the prompt is
+passed directly (no synthetic failed-build shape), the DO accepts it, creates
+the injection row **asynchronously** (usually well under a second) and tracks
+the approval lifecycle.
+
+Specy-side endpoint (super-admin):
+
 | | |
 |---|---|
 | Route | `POST /api/plugin/pluradash/admin/github/agent-sessions/inject` |
 | Body | `{ "tenantId": "<workspace-or-session-tenant>", "userId": "<user sub>", "sessionId?": "sess_…", "prompt": "<free text, ≤ 8000 chars>" }` |
-| Response | `{ "delivered": true, "injectionCreated": true }` — `injectionCreated: false` means the DO accepted the event but created no injection (e.g. ended session) |
+| Response | `{ "delivered": true, "injectionCreated": true, "workflowInstanceId": "wf-…" }` — accepted means the workflow took the prompt; the injection row appears asynchronously |
 | Errors | `400` missing/oversized fields · `502` DO push failed (carries the DO status + error body) · `503` bridge not configured |
-| Sync log | operation `arbitrary.inject`, actor `user`, detail carries `sessionId`, `promptLength`, `injectionCreated` |
+| Sync log | operation `arbitrary.inject`, actor `user`, detail carries `sessionId`, `promptLength`, `accepted`, `workflowInstanceId` |
 
 The dashboard UI lives in the session detail dialog (Agent-Sessions tab →
 session row → "Manuelle Injektion" card): textarea + send button; the live
 chatlog tail (10 s poll) shows the arriving `[injection · build_feedback]`
 message and the agent's autonomous turn.
 
-**Contract mapping — the prompt rides the `build_feedback` channel.** The
-PluraPi-Sessions DO currently only knows the `build_feedback` injection
-type, so the manual prompt is shaped as a synthetic failed build
-(`buildArbitraryInjectionPayload`):
+**Contract mapping** (`buildWorkflowInjectionPayload`):
 
-| `POST /v1/builds` field | Value for a manual injection |
+| `POST /v1/workflow-injections` field | Value for a manual injection |
 |---|---|
-| `tenantId` / `projectId` | request `tenantId` (the DO instance key — must match the engine's poll key, see §2.1 tenant trap) |
+| `tenantId` | request `tenantId` (the DO instance key — must match the engine's poll key, see §2.1 tenant trap) |
 | `userId` | request `userId` |
 | `sessionId` | request `sessionId` — **pinned**; without it the DO attaches to the user's most recent non-ended session |
-| `branch` | `manual` |
-| `state` | `failed` (this makes the DO pass `detail` verbatim into the agent prompt, §4.4) |
-| `summary` | first line of the prompt, truncated to 120 chars (UI-safe) |
-| `detail` | the full prompt verbatim |
+| `prompt` | the full prompt verbatim (≤ 8000 chars, enforced Specy-side) |
+| `idempotencyKey` / `source` / `approvalTimeoutSeconds` | not sent — service defaults apply |
 
 Caveats:
 
-- **Delivery is at-most-once** and needs a **running engine poller** — an
-  enqueued injection with no poller rots in the DO inbox (§4.2, row 1).
-  A successful inject that never reaches the agent is a poller/keying
-  problem on the PluraPi side, not a Specy one.
-- The prompt surfaces in the chatlog as `[injection · build_feedback]` with
-  a badge derived from the first bracketed segment — it is not labelled
-  differently from real build feedback (no dedicated injection type yet).
-  If PluraPi later adds a generic prompt-injection type, switch the payload
-  mapping here and keep the route/UI contract unchanged.
+- **Delivery needs a running engine poller** — an accepted injection with no
+  poller rots in the DO inbox (§4.2, row 1). A successful inject that never
+  reaches the agent is a poller/keying problem on the PluraPi side, not a
+  Specy one.
+- The prompt surfaces in the chatlog as `[injection · build_feedback]`.
 - No dedupe: every call enqueues a new injection. The route is super-admin
   only; the UI rate-limits itself by disabling the button while a request
   is in flight.
@@ -251,6 +311,9 @@ keying.
 | Specy `logsFetched: 0` on a failed build | check_run output carried no `Build ID:` label | recovery chain: label → `details_url` → commit-SHA match against recent CF builds; if all fail the detail says so |
 | Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or pair reads failed | the tab's warning banner shows the **per-pair DO status + error body** (`readErrors` in the response): `400` naming `userId` = project read without `?userId=<sub>` (engine realm must name the user) · `403` `user token required` = read routes accept **only user JWTs** — engine realm for reads not allowed on the sessions worker yet (fixed on PluraPi side 2026-10-13) · `401/403` otherwise = API token (engine realm) wrong · `405` = wrong method/route (e.g. listing via the POST-upsert path) · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
 | Same build prompts the agent twice | duplicate check_run delivery before the dedupe fix (migration 029) | `build_targets.feedback_state`; only affects builds pushed pre-fix |
+| Build marked `cancelled` although it succeeded | Specy never sent the result (bridge unconfigured at terminal time, result push network/5xx failure — no legacy fallback to avoid double delivery) | sync log `plurapi.build_feedback` for the terminal event; the workflow's `resultTimeoutSeconds` (default 30 min) turned the wait into a cancellation |
+| Build prompted the agent twice with one outcome | mixed paths: build opened via `/v1/build-sessions` AND terminal state also pushed via legacy `POST /v1/builds` | the bridge never mixes (workflow result wins; legacy only without a stored `workflow_instance_id` or on 404); check for manual/curl interference |
+| `[build-status · <branch>]` lines clutter the chatlog read | not a failure — workflow-mode build openings | render `role: "system"` entries as status lines (the Agent-Sessions dialog does) |
 
 ### 4.3 Verification flow after any change
 
@@ -273,16 +336,18 @@ keying.
 | Concern | File |
 |---|---|
 | Pure logic (unit-tested) | `plugins/pluradash/api/sync/plurapiSessionsLogic.ts` |
-| Runtime client, CF logs, dedupe, DO proxies | `plugins/pluradash/api/sync/plurapiSessions.ts` |
+| Runtime client (build-sessions open/result, workflow-injections, legacy push), CF logs, dedupe, DO proxies | `plugins/pluradash/api/sync/plurapiSessions.ts` |
 | Webhook hook-in | `plugins/pluradash/api/sync/webhookService.ts` (+ `api/webhooks.ts` logging) |
 | Target recording | `plugins/pluradash/api/sync/routes.ts` (push/deploy) |
 | Admin routes (incl. arbitrary injection `POST …/agent-sessions/inject`) | `plugins/pluradash/api/index.ts` |
 | Admin UI | `plugins/pluradash/src/pages/admin/AgentSessionsPanel.tsx`, `GitHubAppsAdminPage.tsx` |
 | Service client (frontend) | `plugins/pluradash/src/services/githubAppService.ts` |
-| Migrations | `plugins/pluradash/migrations/028–030` (+ `down/`) |
+| Migrations | `plugins/pluradash/migrations/028–031` (+ `down/`) |
 | Tests | `tests/plurapiSessionsBridge.test.mjs`, `tests/checkRunWebhook.test.mjs` |
 
 Change records: `specs/changes/2026-10-13-pluradash-plurapi-sessions-bridge.md`
-(consolidated, incl. the routing incident) and
-`plugins/pluradash/specs/changes/2026-10-13-plurapi-sessions-bridge.md`.
+(consolidated, incl. the routing incident),
+`specs/changes/2026-10-15-plurapi-build-workflow-sessions.md`
+(sessions-do/v2 workflow orchestration) and the plugin-internal counterparts
+in `plugins/pluradash/specs/changes/`.
 Plugin-internal contract: `plugins/pluradash/specs/plurapi-sessions-bridge.md`.
