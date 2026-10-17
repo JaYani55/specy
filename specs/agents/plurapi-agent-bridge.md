@@ -23,20 +23,21 @@ GitHub check_run ──► PluraDash /webhooks/check-run (HMAC)
                               │
    running (created) ─────────┼────── succeeded / failed
         │                     │                 │
-        ▼                     │                 ├─► Cloudflare Builds API (exact logs,
-POST $BASE/v1/build-sessions │                 │   CF_API_TOKEN + CF_ACCOUNT_ID)
-("specy" realm, idempotent)  │                 │
-        │                     │                 ▼
-        ▼                     │     POST $BASE/v1/build-sessions/<wfId>/result
-workflowInstanceId ───────────┘     ("specy" realm; 409 = already finalized)
-stored on build_targets             ▼
-(build opens the orchestration) PluraPi Workflow: notification → result wait
+        ▼                     │                 ├─► forward Cloudflare build id
+POST $BASE/v1/build-sessions │                 │   (build_uuid, v2.3) — the
+("specy" realm, idempotent)  │                 │   WORKFLOW retrieves the log
+        │                     │                 │   itself (CF Builds API)
+        ▼                     │                 ▼
+workflowInstanceId ───────────┘     POST $BASE/v1/build-sessions/<wfId>/result
+stored on build_targets             ("specy" realm; 409 = already finalized)
+(build opens the orchestration)     ▼
+PluraPi Workflow: notification → result wait
                                      → injection → approval tracking
                                      ▼
               PluraPi engine poller (≤ 15 s) ──► autonomous agent turn
                                ▼
-              chatlog messages `[build-status · <branch>]` (role system)
-                               and `[injection · build_feedback]`
+              chatlog messages `[workflow · …]` / `[build-status · <branch>]`
+                               (role system) and `[injection · build_feedback]`
 ```
 
 Two directions:
@@ -52,11 +53,14 @@ Two directions:
    `resultTimeoutSeconds` instead of stranding it). The legacy
    `POST /v1/builds` push remains the **fallback/rollback path** for builds
    that were never opened as build-sessions (pre-migration pushes,
-   single-delivery Cloudflare Pages check_runs, 404 instances). Success →
-   short confirmation prompt. Failure → the exact Cloudflare build logs are
-   fetched and passed as the result `detail` so the agent can diagnose and fix
-   the build autonomously. The approval lifecycle (user accepts/rejects the
-   injected fix prompt, 24 h window) is tracked entirely by PluraPi — Specy
+   single-delivery Cloudflare Pages check_runs, 404 instances — there Specy
+   still fetches the logs itself, since the legacy DO does not). Success →
+   short confirmation prompt. Failure → Specy forwards the Cloudflare build
+   id (`build_uuid`, v2.3) and the **workflow retrieves the build log itself**
+   and composes the diagnose-fix-repush prompt — Specy sends no failure
+   prompt/detail for orchestrated builds. The approval lifecycle (user
+   accepts/rejects the injected fix prompt, 24 h window) is tracked entirely
+   by PluraPi — Specy
    has no involvement.
 2. **Agent-session reads (inbound).** The super-admin panel
    (`/admin/github-apps` → tab **Agent-Sessions**) aggregates all agent
@@ -83,26 +87,35 @@ check_run `created`/`rerequested` → `running` event),
 | `tenantId` / `userId` / `projectId` | as in the legacy table below (`projectId` = `tenantId`) |
 | `sessionId` | `build_targets.session_id` (optional pin; else most recent non-ended session) |
 | `branch` / `commitSha` / `commitUrl` | from the check_run |
-| `notifyBuilding` | `true` — the DO writes a `[build-status · <branch>]` status line (`role: "system"`) into the chatlog as soon as the build opens |
+| `notifyBuilding` | `true` — the DO writes a `[build-status · <branch>]` / `[workflow · …]` status line (`role: "system"`) into the chatlog as soon as the build opens |
 | `idempotencyKey` | deterministic: `cf-build-<buildId>` when the check_run carried a build id, else `commit-<repoId>-<sha>` — a retry returns the same instance instead of duplicating |
 | `resultTimeoutSeconds` / `approvalTimeoutSeconds` | not sent — service defaults (30 min / 24 h) apply |
 
 → `200 { buildId, workflowInstanceId, created, sessionId }`. The
 `workflowInstanceId` is stored on the exact `build_targets` row
 (`workflow_instance_id`, migration 031) and is the correlation handle for the
-result push. `sessionId: null` means no open session exists — the build is
+result push (the response `buildId` is PluraPi-side only — recorded in the
+`plurapi.build_feedback` sync log for observability, no Specy column).
+`sessionId: null` means no open session exists — the build is
 still recorded, but no notification/prompt is created.
 
 **Result path — `POST /v1/build-sessions/<workflowInstanceId>/result`** (build
-finished):
+finished) — **sessions-do/v2.3: the workflow owns log retrieval**:
 
 | Field | Value / source |
 |---|---|
-| `state` | `succeeded` / `failed` (a GitHub `cancelled` conclusion maps to `failed` with logs — the agent should still see why) |
+| `state` | `succeeded` / `failed` (a GitHub `cancelled` conclusion maps to `failed` — the agent should still see why) |
+| `buildId` | **failure only, strongly recommended**: the Cloudflare Workers Builds `build_uuid` (the same id the check_run pipeline already extracts/recovers). The workflow fetches the build log itself via the Cloudflare Builds API (user-scoped token, tail-capped ~12k chars) and composes the diagnose-fix-repush prompt |
 | `previewUrl` | success only |
 | `summary` | one-line, UI-safe |
-| `detail` | **failure only**: context header (branch, commit, CF build id) + verbatim log excerpt (tail ≤ 120 lines / 12 KB) — passed verbatim into the agent prompt |
+| `detail` | **NOT sent when `buildId` is present** (ignored by the DO anyway) — legacy fallback only: sent solely when no build id is recoverable; the workflow uses it verbatim if its own retrieval fails/is unconfigured |
 | `commitSha` / `commitUrl` | check_run `head_sha` + GitHub commit link |
+
+*Why (v2.3):* the workflow calls the Cloudflare Builds API with its own
+user-scoped token — Specy no longer fetches logs or composes the failure
+prompt for orchestrated builds. If retrieval fails (wrong/missing `buildId`),
+the prompt still goes out with `summary` (+ fallback `detail`) plus an
+explanatory note — nothing is lost.
 
 → `200 { sent: true }` · `409 { error: "instance not running: …" }` = already
 finalized (duplicate delivery) — **safe to ignore**, booked as delivered ·
@@ -127,7 +140,7 @@ via `POST /v1/builds` (duplicate build row + duplicate agent prompt).
 | `commitSha` / `commitUrl` | check_run `head_sha` + GitHub commit link |
 | `previewUrl` | success only |
 | `summary` | one-line, UI-safe |
-| `detail` | **failure only**: context header (branch, commit, CF build id) + verbatim log excerpt (tail ≤ 120 lines / 12 KB) — the DO passes this verbatim into the agent prompt |
+| `detail` | **failure only** (legacy DO does NOT retrieve logs): context header (branch, commit, CF build id) + verbatim log excerpt (tail ≤ 120 lines / 12 KB) — Specy fetches the logs itself (CF_API_TOKEN + CF_ACCOUNT_ID) and the DO passes this verbatim into the agent prompt |
 
 The bridge is **fail-closed**: without `PLURAPI_SESSIONS_URL` or the push
 token it disables itself (sync-log warning), webhook + status tracking keep
@@ -146,8 +159,9 @@ plugin routes:
 | `.../agent-sessions/builds` | `GET /v1/projects/<projectId>/builds?userId=<sub>&limit=` (`projectId` = `tenantId`) — rows now carry `workflow_instance_id` (NULL for legacy pushes) |
 
 Chatlog reads include `role: "system"` entries tagged
-`[build-status · <branch>]` (workflow-mode build openings) — the
-Agent-Sessions dialog renders them as status lines, not as user/assistant
+`[workflow · …]` / `[build-status · <branch>]` (workflow-mode build
+openings) — the Agent-Sessions dialog renders them as status/flowchart
+lines, not as user/assistant
 turns.
 
 > ⚠️ **Two engine-realm addressing rules (both cost a debugging round):**
@@ -241,13 +255,13 @@ The dashboard can push a **manually typed prompt** into any agent session
 without waiting for a real build — useful for the triage checklist above,
 deliberate steering, and end-to-end verification of the poller chain.
 
-Specy-side endpoint (super-admin):
-
 The prompt is pushed via the **workflow-mediated route**
 `POST $BASE/v1/workflow-injections` (sessions-do/v2 §3.11): the prompt is
 passed directly (no synthetic failed-build shape), the DO accepts it, creates
 the injection row **asynchronously** (usually well under a second) and tracks
-the approval lifecycle.
+the approval lifecycle. The legacy failstate-shaped channel (riding
+`POST /v1/builds` as a synthetic failed check_run build) is **removed** —
+there is no reason to inject via the build channel anymore.
 
 Specy-side endpoint (super-admin):
 
@@ -308,12 +322,12 @@ keying.
 |---|---|---|
 | Injection enqueued (`injectionCreated: true`) but agent never reacts | Engine poller not draining: env vars missing, wrong DO instance key, session not idle, or drained-and-crashed (at-most-once) | DO live tail for `/v1/internal/.../injections/pending`; engine `[injectionPoller]` lines |
 | Poll hits `t/personal/…` while sessions live under the workspace tenant | Engine derives the tenant differently than it upserts | compare the poll URL tenant against the upsert URL tenant — must be identical |
-| Specy `logsFetched: 0` on a failed build | check_run output carried no `Build ID:` label | recovery chain: label → `details_url` → commit-SHA match against recent CF builds; if all fail the detail says so |
+| Specy `logsFetched: 0` on a failed build | expected in workflow mode (the WORKFLOW retrieves the log itself, v2.3 — Specy only forwards the `buildId`); in legacy mode it means the check_run output carried no `Build ID:` label | recovery chain: label → `details_url` → commit-SHA match against recent CF builds; if all fail Specy sends the explanatory-note detail as the workflow's verbatim fallback |
 | Agent-Sessions tab empty but `configured: true` | pair discovery found nothing, or pair reads failed | the tab's warning banner shows the **per-pair DO status + error body** (`readErrors` in the response): `400` naming `userId` = project read without `?userId=<sub>` (engine realm must name the user) · `403` `user token required` = read routes accept **only user JWTs** — engine realm for reads not allowed on the sessions worker yet (fixed on PluraPi side 2026-10-13) · `401/403` otherwise = API token (engine realm) wrong · `405` = wrong method/route (e.g. listing via the POST-upsert path) · `404` with `no route` = sessions-Worker router problem · `404` with `session not found` = tenant key mismatch · network error = service unreachable |
 | Same build prompts the agent twice | duplicate check_run delivery before the dedupe fix (migration 029) | `build_targets.feedback_state`; only affects builds pushed pre-fix |
 | Build marked `cancelled` although it succeeded | Specy never sent the result (bridge unconfigured at terminal time, result push network/5xx failure — no legacy fallback to avoid double delivery) | sync log `plurapi.build_feedback` for the terminal event; the workflow's `resultTimeoutSeconds` (default 30 min) turned the wait into a cancellation |
 | Build prompted the agent twice with one outcome | mixed paths: build opened via `/v1/build-sessions` AND terminal state also pushed via legacy `POST /v1/builds` | the bridge never mixes (workflow result wins; legacy only without a stored `workflow_instance_id` or on 404); check for manual/curl interference |
-| `[build-status · <branch>]` lines clutter the chatlog read | not a failure — workflow-mode build openings | render `role: "system"` entries as status lines (the Agent-Sessions dialog does) |
+| `[workflow · …]` / `[build-status · <branch>]` lines clutter the chatlog read | not a failure — workflow-mode build openings | render `role: "system"` entries as status/flowchart lines (the Agent-Sessions dialog does) |
 
 ### 4.3 Verification flow after any change
 

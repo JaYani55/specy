@@ -316,7 +316,7 @@ test('buildBuildSessionOpenPayload omits sessionId when unpinned and carries no 
 });
 
 test('buildBuildSessionResultPayload shapes a success result with the preview URL', () => {
-  const payload = buildBuildSessionResultPayload(parsedCheckRun(), undefined);
+  const payload = buildBuildSessionResultPayload(parsedCheckRun(), { buildId: null });
   assert.deepEqual(payload, {
     state: 'succeeded',
     previewUrl: 'https://abc.pages.dev',
@@ -325,15 +325,35 @@ test('buildBuildSessionResultPayload shapes a success result with the preview UR
     commitUrl: 'https://github.com/acme/website/commit/aaaaaaaaaaaaaaaaaaaa',
   });
   assert.equal('detail' in payload, false);
+  assert.equal('buildId' in payload, false);
 });
 
-test('buildBuildSessionResultPayload carries the failure detail verbatim', () => {
+test('buildBuildSessionResultPayload forwards the Cloudflare buildId and NO detail on failure (v2.3)', () => {
   const parsed = parsedCheckRun({ buildStatus: 'failed', conclusion: 'failure', previewUrl: null });
-  const payload = buildBuildSessionResultPayload(parsed, 'ERROR DETAILS');
+  const payload = buildBuildSessionResultPayload(parsed, {
+    buildId: '510f87b2-c95a-4177-9a72-1a2b3c4d5e6f',
+    detail: 'SHOULD NOT BE SENT',
+  });
   assert.equal(payload.state, 'failed');
-  assert.equal(payload.detail, 'ERROR DETAILS');
+  assert.equal(payload.buildId, '510f87b2-c95a-4177-9a72-1a2b3c4d5e6f');
+  assert.equal('detail' in payload, false);
   assert.equal('previewUrl' in payload, false);
   assert.equal(payload.summary, composeBuildSummary(parsed));
+});
+
+test('buildBuildSessionResultPayload falls back to the Specy detail without a buildId', () => {
+  const parsed = parsedCheckRun({ buildStatus: 'failed', conclusion: 'failure', previewUrl: null, buildId: null });
+  const payload = buildBuildSessionResultPayload(parsed, { buildId: null, detail: 'FALLBACK DETAIL' });
+  assert.equal(payload.state, 'failed');
+  assert.equal(payload.detail, 'FALLBACK DETAIL');
+  assert.equal('buildId' in payload, false);
+});
+
+test('buildBuildSessionResultPayload omits both fallback fields when neither exists', () => {
+  const parsed = parsedCheckRun({ buildStatus: 'failed', conclusion: 'failure', previewUrl: null, buildId: null });
+  const payload = buildBuildSessionResultPayload(parsed, { buildId: null });
+  assert.equal('detail' in payload, false);
+  assert.equal('buildId' in payload, false);
 });
 
 // ─── buildWorkflowInjectionPayload ──────────────────────────────────────────
