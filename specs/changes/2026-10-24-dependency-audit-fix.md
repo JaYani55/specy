@@ -48,7 +48,13 @@ verwundbares Package wieder installiert, schlägt der Test fehl.
   vite, wrangler, shadcn, @hono/mcp, pi-coding-agent/pi-agent-core/pi-ai); 3
   Security-Overrides ergänzt (`minimatch`-Override blieb unverändert)
 - `package-lock.json` — neu aufgelöster Dependency-Baum (npm install + audit fix)
+- `wrangler.default.jsonc` — `alias: { "zod/v4": "zod" }` (Deploy-Incident-Fix,
+  siehe unten)
 - `tests/mcpSdkProtocol.test.mjs` — MCP-SDK-Protokoll-Integrity-Tests (siehe unten)
+- `tests/dependencyIntegrity.test.mjs` — Suite „worker bundle zod init guard“
+  ergänzt (Alias- und SDK-Binding-Surface-Guard)
+- `tests/logBuffer.test.mjs` — Timing-Margen des Coalescing-Tests robuster
+  gemacht (unter Last flaky; Semantik unverändert)
 
 ## Impact-Analyse
 
@@ -105,13 +111,65 @@ implementiert (keine SDK-Auth-Subpfade im Core). Verifiziert mit
 - **Tool-Fehlerkontrakt:** Auslösen im Handler → `isError: true` mit
   Fehlermeldung (identisch zum `mcpToolFailure`-Verhalten der Repo-Tools).
 
+## Deploy-Incident (2026-10-24, nach dem Audit-Fix behoben)
+
+Der erste Produktions-Deploy nach dem Update schlug bei der Cloudflare-
+Validierung fehl (Fehler 10021):
+
+```
+Uncaught TypeError: Class2 is not a constructor
+  at zod/v4/core/api.js:959 in _custom
+  at zod/v4/classic/schemas.js:1472 in custom
+  at @modelcontextprotocol/sdk/src/types.ts:22
+```
+
+**Ursache (bundle-forensisch verifiziert):** zod ≥ 4.6 hat mit dem neuen
+`compile`-Feature sein Modul-Graph umstrukturiert. Dadurch landet
+`zod/v4/classic/schemas.js` in einem lazy esbuild `__esm`-Init-Wrapper
+(interner Zyklus). Alle zod-Factory-Funktionen sind mit
+`@__NO_SIDE_EFFECTS__` annotiert und das Package deklariert seine Module als
+side-effect-frei — esbuild emittert daraufhin **keinen** Top-Level-Init-Aufruf
+für die Kette, wenn sie über die pure Re-Export-Schicht `zod/v4/index.js`
+erreicht wird. Das Top-Level `z.custom(...)` des MCP-SDK (`types.js`, das
+erste Top-Level-zod-Statement im Bundle) läuft vor jeder Initialisierung →
+`new undefined` → Start-Crash. In Node (echtes ESM, korrekte Init-Reihenfolge)
+ist das Verhalten fehlerfrei — deshalb haben die Node-Tests das nicht
+gfangen. SDK 1.27.1 hatte denselben Code und funktionierte mit zod 4.3.6
+(anderer Modul-Graph, kein Wrapper).
+
+**Fix (config-only):** `wrangler.default.jsonc` aliasiert `"zod/v4": "zod"`.
+Das Root-Entry (`zod/index.js`) wird von esbuild korrekt initialisiert (der
+SDK-`server/mcp.js` importiert es selbst und bekommt `init_zod()` emittiert);
+über den Alias läuft auch `types.js`' `zod/v4`-Import durch diese Kette.
+Oberflächen-Parität root `zod` ↔ `zod/v4` ist verifiziert (alle vom SDK
+genutzten Bindings vorhanden; `classic/external.js` ⊇ `classic/index.js`).
+Verifiziert: `wrangler dev` startet sauber („Ready on …“), `/mcp` antwortet
+mit dem erwarteten OAuth-401-Challenge statt eines Worker-Crashs.
+
+**Nicht funktionierende Alternativen (dokumentiert, damit sie niemand erneut
+probiert):** bare `import 'zod'` im Entry (wird von esbuild als
+side-effect-frei verworfen), Init-Shim mit indirektem `z.custom`-Aufruf
+(esbuild emittert weiterhin keinen Init), direkter Deep-Import
+`zod/v4/classic/schemas.js` (durch zod's exports map blockiert),
+`import 'zod/compile'` (initialisiert nur core, nicht classic).
+patch-package wurde evaluiert und bewusst **nicht** eingeführt — der Alias
+ist config-only und greift exakt die fehlerhafte Kante.
+
+**Regression-Schutz:** `tests/dependencyIntegrity.test.mjs` (Suite „worker
+bundle zod init guard“) prüft (a) dass der Alias im Template vorhanden ist
+und (b) dass das Root-zod-Entry jede vom installierten SDK `types.js`
+genutzte `z.*`-Binding tatsächlich exportiert — bei SDK-Updates, die neue
+Bindings einführen, schlägt der Test, bevor der nächste Deploy es tut.
+
 ## Verifikation
 
 - `npm audit` → **0 vulnerabilities** (vorher: 24 / 1 critical)
-- `npm test` → 543 Tests, alle grün (inkl. 33 Dependency-Integrity- und 4
+- `npm test` → 545 Tests, alle grün (inkl. 35 Dependency-Integrity- und 4
   MCP-Protokoll-Tests)
 - `npm run build` (prebuild → typecheck → vite build) → erfolgreich
 - `npm run typecheck:api` → Core `api/` fehlerfrei; einzige Meldung in
   generiertem, gitignored Plugin-Metadaten (vorbestehend, siehe oben)
 - `tests/mcpSdkProtocol.test.mjs` → MCP-Round-Trips (InMemory +
   StreamableHTTPTransport) grün gegen SDK 1.32.2 / @hono/mcp 0.3.2 / zod 4.6.7
+- `wrangler dev --local` → Worker startet sauber (Init-Guard verifiziert);
+  `POST /mcp` liefert den erwarteten OAuth-401-Challenge (kein Crash)

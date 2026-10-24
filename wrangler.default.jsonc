@@ -5,6 +5,17 @@
   "main": "api/index.ts",
   "compatibility_date": "2026-02-19",
   "compatibility_flags": ["nodejs_compat"],
+
+  // zod/v4 → zod: zod >= 4.6 wraps its classic modules in lazy esbuild init
+  // wrappers (new module graph with the compile feature). When the MCP SDK's
+  // types.js imports "zod/v4" (which resolves through a pure re-export layer),
+  // esbuild skips the init call and the Worker crashes at startup with
+  // "Class2 is not a constructor" (Cloudflare validation error 10021).
+  // The root "zod" entry is initialized correctly (see SDK server/mcp.js), so
+  // we route "zod/v4" through it. Keep in sync with wrangler.default.jsonc.
+  "alias": {
+    "zod/v4": "zod"
+  },
   "account_id": "REPLACE_WITH_YOUR_CF_ACCOUNT_ID",
 
   // ╔══════════════════════════════════════════════════════════════════════════╗

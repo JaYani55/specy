@@ -48,15 +48,17 @@ test('logBuffer: flushes immediately when the batch size threshold is reached', 
 
 test('logBuffer: coalesces rows arriving within the delay window into one insert', async () => {
   const { insert, state } = makeFakeInsert();
-  const buffer = createLogBuffer({ batchSize: 10, flushDelayMs: 20, insert });
+  // Generous margins: sub-10ms scheduling hiccups under load must not split the
+  // batch (this test is about coalescing semantics, not timer precision).
+  const buffer = createLogBuffer({ batchSize: 10, flushDelayMs: 50, insert });
 
   buffer.push({ id: 1 }, 'env');
-  await sleep(5);
+  await sleep(10);
   buffer.push({ id: 2 }, 'env');
-  await sleep(5);
+  await sleep(10);
   buffer.push({ id: 3 }, 'env');
 
-  await sleep(40);
+  await sleep(100);
   assert.equal(state.batches.length, 1, 'one shared insert for all three rows');
   assert.equal(state.batches[0].rows.length, 3);
 });

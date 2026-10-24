@@ -236,3 +236,38 @@ describe('dependency functional smoke tests (post-update integrity)', () => {
     assert.ok(compareVersions(version, '1.42.3') >= 0);
   });
 });
+
+describe('worker bundle zod init guard (deploy incident 2026-10-24)', () => {
+  // zod >= 4.6 wraps its classic modules in lazy esbuild init wrappers. When the
+  // MCP SDK's types.js imports "zod/v4" (pure re-export layer), esbuild skips
+  // the init call and workerd fails at startup: "Class2 is not a constructor"
+  // (Cloudflare validation error 10021). The fix is a wrangler alias routing
+  // "zod/v4" through the root "zod" entry, which esbuild initializes correctly.
+  // This test guards the alias in the committed template — if zod ever ships a
+  // version where the alias is no longer needed (or the entry surfaces diverge),
+  // revisit specs/changes/2026-10-24-dependency-audit-fix.md before removing it.
+  const template = JSON.parse(
+    readFileSync(path.join(ROOT, 'wrangler.default.jsonc').replace(/\.jsonc$/, '.jsonc'), 'utf8')
+      // wrangler.default.jsonc contains comments — strip them before parsing.
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/,(\s*[}\]])/g, '$1')
+  );
+
+  it('wrangler.default.jsonc aliases zod/v4 to the root zod entry', () => {
+    assert.equal(template.alias?.['zod/v4'], 'zod',
+      'missing "zod/v4": "zod" alias — the MCP SDK bundle would crash workerd at startup');
+  });
+
+  it('root zod entry covers the @modelcontextprotocol/sdk v4 surface', async () => {
+    // The alias routes the SDK's `import * as z from 'zod/v4'` to the root entry;
+    // every binding the SDK uses must exist there (verified against the SDK dist).
+    const sdkTypes = readFileSync(
+      path.join(findPackageDir('@modelcontextprotocol/sdk'), 'dist', 'esm', 'types.js'),
+      'utf8'
+    );
+    const used = [...new Set([...sdkTypes.matchAll(/\bz\.(\w+)/g)].map((m) => m[1]))];
+    const rootZod = await import('zod');
+    const missing = used.filter((k) => rootZod[k] === undefined && k !== 'default');
+    assert.deepEqual(missing, [], `root zod is missing SDK bindings: ${missing.join(', ')}`);
+  });
+});
