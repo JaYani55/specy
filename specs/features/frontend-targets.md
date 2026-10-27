@@ -80,6 +80,27 @@ Two equivalent models deliver draft/preview content to a registered frontend:
   tools; the dashboard additionally triggers client-side (POSTs are
   idempotent).
 
+## Multiple schemas on one domain (shared revalidation secret)
+
+The revalidation secret is **per schema**, not per domain/TLD: every
+`page_schemas` row carries its own secret (caller-supplied at
+`register_frontend`, stored as a managed secret named after the schema —
+legacy schemas store plaintext). Push revalidation signs each request with
+**the revalidating schema's** secret; pull-based draft delivery checks against
+**that schema's** secret. Two schemas registered against the same frontend
+domain therefore hold two independent secrets.
+
+A frontend that serves multiple schemas (e.g. a blog schema and an events
+schema on one TLD) must either accept every registered schema's secret, or —
+the recommended pattern — register **all** schemas with the **same secret
+value**: since the caller chooses the secret at registration, re-registering
+each schema (`start_schema_registration` → `register_frontend`, MCP or REST)
+with one shared value means the frontend needs only a single
+`REVALIDATION_SECRET`. The CMS sends the identical Bearer token for every
+schema's push, and draft pulls work for every schema with the same token.
+Registration is idempotent per schema and can be re-run to rotate the value;
+configure the frontend before or immediately after rotating.
+
 ## Preview resolution order (`specy_pages_schemas_preview` / dashboard)
 
 1. With `preview_slug_structure` set → **only** the enabled `detail-page` target with `supports_preview: true`.

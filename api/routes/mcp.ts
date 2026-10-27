@@ -53,7 +53,7 @@ const mcpRoute = new Hono<{ Bindings: Env }>();
 const eventPageCreateDetailsSchema = z.object({
   company: z.string().min(1).describe('Legacy operational company label; it is not included in public event delivery.'),
   company_id: z.string().uuid().nullable().optional(),
-  product_id: z.string().uuid().optional().describe('Service-product UUID from specy_products_list; must belong to the same workspace.'),
+  product_id: z.string().uuid().optional().describe('Service-product UUID from specy_products_list; must belong to the same workspace. Required for MCP event creation — create the product first with specy_products_create, then pass its UUID here.'),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   duration_minutes: z.number().int().min(1),
@@ -151,6 +151,30 @@ function mcpToolFailure(message: string, httpStatus: number, extra: Record<strin
     structuredContent: payload,
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
   };
+}
+
+/**
+ * Soft-failure guard for MCP event creation: every event must reference a
+ * service product. Violations return a structured tool failure (isError +
+ * stable `product_required` code) — never an exception — so the MCP session
+ * stays intact, the agent can recover by creating the product first
+ * (`specy_products_create`), and the agentLogger middleware still persists
+ * the attempt (error, http_status, code) to agent_logs.
+ */
+function requireEventProductGuard(
+  entityKind: string | null | undefined,
+  event: { product_id?: string | null } | undefined,
+) {
+  if (entityKind !== 'event') return null;
+  if (event && event.product_id) return null;
+  return mcpToolFailure(
+    'Events must reference a service product. Create the product first with specy_products_create (including its product information/content), then pass the product UUID as event.product_id.',
+    422,
+    {
+      code: 'product_required',
+      next_step: 'Create the product via specy_products_create (tenant_id, product schema_id, expected_definition_revision, name, content with the product information), then retry event creation with event.product_id set to the returned product UUID.',
+    },
+  );
 }
 
 /**
@@ -315,7 +339,7 @@ async function createMcpServerWithTools(
             '6. Authenticated tools include create_schema, start_schema_registration, register_frontend, ordinary page tools, schema-management tools, and specy_products_* aggregate tools.',
             '7. For a new frontend, call create_schema with the schema definition, then start_schema_registration.',
             '8. Build the frontend from get_schema_spec, then call register_frontend with the generated code and deployed URL.',
-            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details; it creates a linked draft event page. Product schemas use specy_products_create/get/update/publish/archive.',
+            '9. For ordinary schemas, create pages with create_page or specy_pages_schemas_create_page. For event schemas, use the same pages post tool with an explicit tenant_id, expected_definition_revision, and event details — every event MUST reference a service product (event.product_id); create the product with specy_products_create first, and MCP event creation without a product soft-fails with code product_required. Product schemas use specy_products_create/get/update/publish/archive.',
             '10. Page previews are optional and only exist when the preview slug structure is explicitly set: an enabled detail-page frontend target whose host_path contains ":slug" (e.g. "/blog/:slug") plus a registered frontend_url. Schemas work fully without previews. For a separate non-public preview route alongside the public detail route, set integration_requirements.preview_slug_structure via specy_pages_schemas_update_definition and register a supports_preview target with specy_pages_schemas_replace_frontend_targets. Inspect or resolve a preview URL with specy_pages_schemas_preview, which fails with preview_not_configured when no preview structure is configured.'
           ],
           how_to_authenticate: {
@@ -536,7 +560,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'create_page',
-      'Create a schema page entry with a valid OAuth bearer token. For event schemas, supply tenant_id, expected_definition_revision, and event details; this atomically creates an operational event plus a linked draft page. Service products use specy_products_create.',
+      'Create a schema page entry with a valid OAuth bearer token. For event schemas, supply tenant_id, expected_definition_revision, and event details — the event MUST reference a service product (event.product_id); create the product first with specy_products_create, missing products soft-fail with code product_required. This atomically creates an operational event plus a linked draft page. Service products use specy_products_create.',
       {
       schema_slug: z.string().min(1).describe('Schema API slug (api_slug) returned by list_schemas/create_schema'),
       name: z.string().min(1).describe('Page display name'),
@@ -568,6 +592,8 @@ async function createMcpServerWithTools(
         if (!event || !tenant_id || expected_definition_revision === undefined) {
           return mcpToolFailure('tenant_id, expected_definition_revision, and event details are required for an event schema.', 400);
         }
+        const eventProductGuard = requireEventProductGuard(schema.entity_kind, event);
+        if (eventProductGuard) return eventProductGuard;
         const parsed = parseEventPageCreateInput({
           tenant_id, expected_definition_revision, name, slug, content, event,
         });
@@ -762,7 +788,7 @@ async function createMcpServerWithTools(
 
     server.tool(
       'specy_pages_schemas_create_page',
-      '[specy-pages > schemas > pages] Create a schema page entry. For event schemas include tenant_id, expected_definition_revision, and operational event details; this creates an atomic event plus draft event page. Event pages are published separately.',
+      '[specy-pages > schemas > pages] Create a schema page entry. For event schemas include tenant_id, expected_definition_revision, and operational event details — the event MUST reference a service product (event.product_id, created via specy_products_create); missing products soft-fail with code product_required. Event pages are published separately.',
       {
         schema_slug: z.string().min(1).describe('Stable schema API slug (api_slug)'),
         name: z.string().min(1),
@@ -786,6 +812,8 @@ async function createMcpServerWithTools(
           if (!event || !tenant_id || expected_definition_revision === undefined) {
             return mcpToolFailure('tenant_id, expected_definition_revision, and event details are required for an event schema.', 400);
           }
+          const eventProductGuard = requireEventProductGuard(schema.entity_kind, event);
+          if (eventProductGuard) return eventProductGuard;
           const parsed = parseEventPageCreateInput({ tenant_id, expected_definition_revision, name, slug, content, event });
           if (!parsed.ok) return mcpToolFailure(parsed.error, 400);
           try {

@@ -6,6 +6,7 @@ import {
   buildWebhookUrl,
   extractBuildDetails,
   findWebhookByUrl,
+  groupRepoDeploymentRows,
   parseCheckRunEvent,
   timingSafeBytesEqual,
   verifyWebhookSignature,
@@ -322,5 +323,45 @@ test('webhookNeedsRecreation detects inactive or mismatched hooks', () => {
   assert.equal(webhookNeedsRecreation({ id: 1, active: false, events: ['check_run'], config: { url: WEBHOOK_URL } }, WEBHOOK_URL), true);
   assert.equal(webhookNeedsRecreation({ id: 1, active: true, events: ['push'], config: { url: WEBHOOK_URL } }, WEBHOOK_URL), true);
   assert.equal(webhookNeedsRecreation({ id: 1, active: true, events: ['check_run'], config: { url: 'https://other' } }, WEBHOOK_URL), true);
+});
+
+// ─── Deployment row grouping ─────────────────────────────────────────────────
+
+test('groupRepoDeploymentRows groups every per-branch row under its repo id', () => {
+  const devRow = { github_repo_id: 101, branch: 'dev', build_status: 'succeeded', preview_url: 'https://dev.acme-app.workers.dev' };
+  const mainRow = { github_repo_id: 101, branch: 'main', build_status: 'succeeded', preview_url: 'https://main.acme-app.workers.dev' };
+  const otherRepoRow = { github_repo_id: 202, branch: 'dev', build_status: 'failed', preview_url: null };
+
+  const grouped = groupRepoDeploymentRows([devRow, mainRow, otherRepoRow]);
+
+  assert.equal(grouped.size, 2);
+  assert.equal(grouped.get(101).length, 2);
+  assert.equal(grouped.get(101)[0].branch, 'dev');
+  assert.equal(grouped.get(101)[0].preview_url, 'https://dev.acme-app.workers.dev');
+  assert.equal(grouped.get(101)[1].branch, 'main');
+  assert.deepEqual(grouped.get(202), [otherRepoRow]);
+});
+
+test('groupRepoDeploymentRows never collapses branch rows for one repo (regression)', () => {
+  // Regression for GET /apps: the previous flat Map<number, Row> keyed only
+  // by github_repo_id kept just the LAST row per repo, silently dropping the
+  // other branch's build feedback (and its preview URL). Every row must
+  // survive the grouping so every tracked branch gets a build tile.
+  const devRow = { github_repo_id: 7, branch: 'dev', build_status: 'succeeded', preview_url: 'https://dev-preview.example.com' };
+  const prodRow = { github_repo_id: 7, branch: 'main', build_status: 'succeeded', preview_url: 'https://prod-preview.example.com' };
+
+  const grouped = groupRepoDeploymentRows([devRow, prodRow]);
+
+  assert.equal(grouped.size, 1);
+  const list = grouped.get(7);
+  assert.equal(list.length, 2);
+  assert.ok(list.some((row) => row.branch === 'dev' && row.preview_url === 'https://dev-preview.example.com'));
+  assert.ok(list.some((row) => row.branch === 'main' && row.preview_url === 'https://prod-preview.example.com'));
+});
+
+test('groupRepoDeploymentRows handles empty input', () => {
+  const grouped = groupRepoDeploymentRows([]);
+  assert.equal(grouped.size, 0);
+  assert.ok(grouped instanceof Map);
 });
 

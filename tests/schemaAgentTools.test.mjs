@@ -103,6 +103,40 @@ test('MCP products tooling mirrors the full authenticated REST product lifecycle
   }
 });
 
+test('MCP event creation soft-fails with product_required when no service product is referenced', () => {
+  const mcpSource = readFileSync(new URL('../api/routes/mcp.ts', import.meta.url), 'utf8');
+  // Guard exists with the stable code + structured, recoverable failure shape.
+  assert.match(mcpSource, /function requireEventProductGuard\(/);
+  assert.match(mcpSource, /code: 'product_required'/);
+  assert.match(mcpSource, /422/);
+  assert.match(mcpSource, /next_step: 'Create the product via specy_products_create/);
+  // Guard applies ONLY to event schemas and passes through events with a product.
+  assert.match(mcpSource, /if \(entityKind !== 'event'\) return null;/);
+  assert.match(mcpSource, /if \(event && event\.product_id\) return null;/);
+  // Wired into BOTH event-creation tool paths (compat alias + namespaced tool).
+  const guardCall = 'requireEventProductGuard(schema.entity_kind, event)';
+  const guardPositions = [];
+  let from = 0;
+  while ((from = mcpSource.indexOf(guardCall, from)) !== -1) {
+    guardPositions.push(from);
+    from += guardCall.length;
+  }
+  assert.equal(guardPositions.length, 2, 'guard must be wired into create_page and specy_pages_schemas_create_page');
+  // Guard runs BEFORE the aggregate write in each path (no event is created
+  // without a product): guard₁ < create₁ < guard₂ < create₂.
+  const createCall = 'createEventPageAggregate(supabase';
+  const createPositions = [];
+  from = 0;
+  while ((from = mcpSource.indexOf(createCall, from)) !== -1) {
+    createPositions.push(from);
+    from += createCall.length;
+  }
+  assert.equal(createPositions.length, 2);
+  assert.ok(guardPositions[0] < createPositions[0], 'guard must precede the aggregate write in the first tool path');
+  assert.ok(createPositions[0] < guardPositions[1], 'second tool path must come after the first create call');
+  assert.ok(guardPositions[1] < createPositions[1], 'guard must precede the aggregate write in the second tool path');
+});
+
 test('REST schema system data repair is authenticated and restricted to non-secret integration fields', () => {
   const routeSource = readFileSync(new URL('../api/routes/schemas.ts', import.meta.url), 'utf8');
   const validationSource = readFileSync(new URL('../api/lib/schemaSystemData.ts', import.meta.url), 'utf8');

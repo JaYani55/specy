@@ -39,6 +39,8 @@ Product schema reassignment is available through authenticated `PATCH /api/produ
 
 Generic page writes remain disallowed for catalogue pages, which belong to an aggregate: product canonical pages are managed through `specy_products_*`; for event pages, `specy_pages_schemas_create_page` and `specy_pages_schemas_update_page` dispatch to the event aggregate workflow when the caller supplies the required tenant, schema revision, event fields, and page revision. Ordinary page schemas continue using generic page operations. Catalogue eligibility is `entity_kind = 'event'` with `content_scope = 'page-collection'`.
 
+**Workflow ordering — products before events:** MCP event creation requires a service product. Create the product with `specy_products_create` (including its product information/content), publish it when ready, and pass its UUID as `event.product_id` when creating events. A missing `event.product_id` soft-fails with HTTP 422 / code `product_required` — a structured, logged MCP tool failure that leaves the session intact so the agent can create the product and retry (see [`event-catalogue-integration.md`](event-catalogue-integration.md)).
+
 ## Public page relation
 
 Default content is the exact stored JSONB payload. Only the optional named include adds an envelope:
