@@ -70,6 +70,7 @@ All endpoints are mounted under `/api/plugin/pluradash/`:
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
 | GET | `/apps` | authenticated | List repos assigned to the active/requested workspace (RLS-filtered); includes per-app `fileCount` and `totalBytes` from the R2 apps prefix |
+| GET | `/apps/info` | authenticated | Per-app **deploy state**: live GitHub compare of `{production}...dev` (`changesToDeploy`, `aheadBy`/`behindBy`), the production branch resolved dynamically from the GitHub API, the latest dev build (incl. real `previewUrl`/`buildUrl`) and the combined `deployState`/`canDeploy` — mirrors the server-side deploy gate. Documented in `/admin/api` as `pluradash-apps-info`. See `plugins/pluradash/specs/app-deploy-state.md` |
 | POST | `/apps/launch` | authenticated | Initiate a workspace session for an assigned repository (agent/API surface — the tenant dashboard has no launch button) |
 | GET | `/admin/github/repos` | super-admin | List live org repos + workspace assignments + workspaces |
 | POST | `/admin/github/assign` | super-admin | Assign/unassign a repository to a workspace. **Assign automatically provisions the data** (see [Provisioning lifecycle](#provisioning-lifecycle-resync)); **unassign automatically removes all provisioned data** (R2 objects + storage catalog rows) |
@@ -141,6 +142,13 @@ infrastructure/CI-CD concern of the administrator:
   file count and **per-branch build status** (running/succeeded/failed plus a
   link — the running preview deployment when available, otherwise the build
   link given by the check_run) — no GitHub link, no repository URL.
+- When the latest dev build succeeded **and** dev contains commits the
+  production branch lacks, the app card shows an emerald info banner
+  („Änderungen bereit zum Deployen“). The deploy button is enabled only in
+  that state (`canDeploy`) and disabled with a lock-reason tooltip otherwise
+  — e.g. when dev is fully merged into the production branch (nothing to
+  ship). Deploy state is served by `GET /apps/info`; contract:
+  [`plugins/pluradash/specs/app-deploy-state.md`](../../plugins/pluradash/specs/app-deploy-state.md).
 - Workspace users can download the app files as a ZIP via the **ZIP** button
   (`GET /sync/archive`) for portability.
 - The storage stats in the PluraDash file overview include an **Apps**
