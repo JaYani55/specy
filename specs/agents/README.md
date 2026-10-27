@@ -14,6 +14,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | [`frontend-prompt-specs.md`](frontend-prompt-specs.md) | Prompt specs served via `/api/specs` for frontends |
 | [`r2-file-storage.md`](r2-file-storage.md) | Unified R2 file & media storage: API vs. binding decision, auth, DB schema, key conventions |
 | [`plurapi-file-sync-integration.md`](plurapi-file-sync-integration.md) | Handoff spec for PluraPi: workspace file sync endpoints, auth, workflows, error recovery |
+| [`pluradash-apps-integration.md`](pluradash-apps-integration.md) | Handoff spec for consuming apps: `/apps*` endpoints (listing, deploy state via `/apps/info`, launch, deploy), data models, auth, deploy-state machine, client workflows |
 | [`plurapi-agent-bridge.md`](plurapi-agent-bridge.md) | **Canonical entry point** — PluraDash ⇄ PluraPi-Sessions bridge: build feedback to agent sessions, agent-session overview, configuration, and triage playbook (router-404 vs. DO-miss) |
 | [`database-integration.md`](database-integration.md) | Database layer overview (Supabase client, core tables) and the dedicated-schema rule for plugin databases |
 | [`unified-secrets-storage.md`](unified-secrets-storage.md) | Secrets storage via Cloudflare (Secrets Store bindings, Worker secrets) and encrypted managed secrets |

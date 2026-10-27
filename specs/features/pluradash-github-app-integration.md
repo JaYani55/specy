@@ -248,5 +248,6 @@ will still mint tokens correctly.
 
 ## Related
 
+- Developer handoff (consuming apps): [`../agents/pluradash-apps-integration.md`](../agents/pluradash-apps-integration.md)
 - Change record: [`../changes/2026-08-26-pluradash-github-app-integration.md`](../changes/2026-08-26-pluradash-github-app-integration.md)
 - Key-format fix: [`../changes/2026-08-27-pluradash-github-app-pkcs8-key-fix.md`](../changes/2026-08-27-pluradash-github-app-pkcs8-key-fix.md)

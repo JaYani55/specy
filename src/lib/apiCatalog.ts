@@ -157,6 +157,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     logging: 'agentLogger',
     responseExamples: [{ status: 201, description: 'Created draft aggregate and canonical editor URL.', example: '{ "product": { "id": "<uuid>", "page_id": "<uuid>" }, "editor_url": "..." }' }],
     tables: ['mentorbooking_products', 'pages', 'page_schemas'],
+    notes: ['Mirrored agentically by MCP tool specy_products_create (see the MCP catalog entry POST /mcp for the full specy_products_* tool family).'],
   },
   {
     id: 'products-update',
@@ -186,6 +187,7 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     requestExample: '{ "tenant_id": "<tenant-uuid>", "expected_version": 4, "schema_id": "<schema-uuid>", "expected_definition_revision": 2 }',
     responseExamples: [{ status: 200, description: 'Product page associated with the selected schema.', example: '{ "product": { "id": "<product-uuid>", "schema_id": "<schema-uuid>", "status": "draft", "version": 5 } }' }],
     tables: ['mentorbooking_products', 'pages', 'page_schemas'],
+    notes: ['Also available agentically as the MCP tool specy_products_reassign_schema (same inputs: tenant_id, expected_version, schema_id, expected_definition_revision).'],
   },
   {
     id: 'products-publish',
@@ -1782,8 +1784,8 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
       },
     ],
     notes: [
-      'Authenticated schema/page tools: specy_pages_schemas_list, specy_pages_schemas_get, specy_pages_schemas_list_pages, specy_pages_schemas_get_page, specy_pages_schemas_create_page, specy_pages_schemas_update_page, specy_pages_schemas_update_definition, specy_pages_schemas_update_system_data, and specy_pages_schemas_replace_frontend_targets. Service products use specy_products_list/create/get/update/publish/archive/delete with explicit tenant IDs.',
-      'specy_pages_schemas_create_page/update_page dispatch event-classified schemas through event aggregate RPCs when explicit tenant and schema/page revisions plus event details are supplied. Product schemas use specy_products_* aggregate operations.',
+      'Authenticated schema/page tools: specy_pages_schemas_list, specy_pages_schemas_get, specy_pages_schemas_list_pages, specy_pages_schemas_get_page, specy_pages_schemas_create_page, specy_pages_schemas_update_page, specy_pages_schemas_update_definition, specy_pages_schemas_update_system_data, and specy_pages_schemas_replace_frontend_targets. Service products use specy_products_list/create/get/update/publish/archive/delete/reassign_schema with explicit tenant IDs — the full product lifecycle (create, edit, publish, archive, delete, schema reassignment) is controllable agentically over MCP and mirrors the authenticated REST surface under /api/products.',
+      'specy_pages_schemas_create_page/update_page dispatch event-classified schemas through event aggregate RPCs when explicit tenant and schema/page revisions plus event details are supplied. Product schemas use specy_products_* aggregate operations; tool results carry next_step hints chaining the draft → edit → publish → archive/delete lifecycle.',
       'specy_pages_schemas_update_system_data accepts api_slug or one unambiguous tenant-local schema slug; it edits non-secret frontend_url/route metadata under caller RLS.',
       'The logging verbosity key POST /mcp controls all MCP JSON-RPC operations; rows are distinguished by operation_name, and actor identity is recorded only after bearer verification.',
       'MCP management POST requires OAuth. GET /mcp discovery is separate and does not invoke management tools.',

@@ -69,15 +69,38 @@ test('MCP page tools expose the specy-pages > schemas hierarchy and management a
     'specy_products_publish',
     'specy_products_archive',
     'specy_products_delete',
+    'specy_products_reassign_schema',
   ]) {
     assert.match(mcpSource, new RegExp(`'${toolName}'`));
   }
+  // Schema reassignment mirrors the authenticated REST contract PATCH /api/products/:id/schema.
+  assert.match(mcpSource, /changeProductSchemaAggregate\(supabase, id, tenant_id, expected_version, schema_id, expected_definition_revision\)/);
   assert.match(mcpSource, /include_content: z\.boolean\(\)\.optional\(\)/);
   assert.match(mcpSource, /List Page records only: editorial content, publication and Page system fields/);
   assert.match(mcpSource, /Get the current dynamic Object data and schema/);
   assert.match(mcpSource, /Objects are the dynamic API stream, separate from Pages/);
   assert.match(mcpSource, /updateSchemaDefinition\(supabase, schema_slug, parsed\.patch\)/);
   assert.doesNotMatch(mcpSource, /fetch\(`\$\{baseUrl\}\/api\/schemas\/\$\{encodeURIComponent\(schema_slug\)\}\/definition`/);
+});
+
+test('MCP products tooling mirrors the full authenticated REST product lifecycle', () => {
+  const discoverySource = readFileSync(new URL('../api/index.ts', import.meta.url), 'utf8');
+  const restSource = readFileSync(new URL('../api/routes/products.ts', import.meta.url), 'utf8');
+  // Every product lifecycle step reachable over REST is also an MCP tool and
+  // advertised in the /.well-known/mcp.json discovery payload.
+  const lifecycle = [
+    ['list', "products.get('/'"],
+    ['create', "products.post('/'"],
+    ['update', "products.patch('/:id'"],
+    ['reassign_schema', "products.patch('/:id/schema'"],
+    ['publish', "products.post('/:id/publish'"],
+    ['archive', "products.post('/:id/archive'"],
+    ['delete', "products.delete('/:id'"],
+  ];
+  for (const [toolSuffix, restRoute] of lifecycle) {
+    assert.match(discoverySource, new RegExp(`'specy_products_${toolSuffix}'`));
+    assert.ok(restSource.includes(restRoute), `REST route missing: ${restRoute}`);
+  }
 });
 
 test('REST schema system data repair is authenticated and restricted to non-secret integration fields', () => {

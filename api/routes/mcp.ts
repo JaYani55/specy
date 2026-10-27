@@ -27,6 +27,7 @@ import { getSchemaFrontendTargets } from '../lib/schemaRegistration';
 import { serializeMcpError } from '../lib/apiError';
 import {
   archiveProductAggregate,
+  changeProductSchemaAggregate,
   createProductAggregate,
   deleteProductAggregate,
   getProductAggregate,
@@ -102,6 +103,7 @@ const BUILT_IN_MCP_TOOLS = [
   'specy_products_publish',
   'specy_products_archive',
   'specy_products_delete',
+  'specy_products_reassign_schema',
 ] as const;
 
 const AUTHENTICATED_MCP_TOOLS = new Set([
@@ -111,6 +113,7 @@ const AUTHENTICATED_MCP_TOOLS = new Set([
   'specy_pages_schemas_update_system_data', 'specy_pages_schemas_update_definition', 'specy_pages_schemas_replace_frontend_targets',
   'specy_pages_schemas_preview',
   'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive', 'specy_products_delete',
+  'specy_products_reassign_schema',
 ]);
 
 function generateRegistrationCode(): string {
@@ -380,7 +383,11 @@ async function createMcpServerWithTools(
           const editorPath = schema && tenant?.slug
             ? `/pages/schema/${encodeURIComponent(tenant.slug)}/${encodeURIComponent(schema.slug)}/edit/${product.page_id}`
             : `/pages/schema/${encodeURIComponent(schema?.api_slug ?? schema_id)}/edit/${product.page_id}`;
-          return { product, editor_url: product.page_id ? `${baseUrl}${editorPath}` : null };
+          return {
+            product,
+            editor_url: product.page_id ? `${baseUrl}${editorPath}` : null,
+            next_step: 'The aggregate is a draft. Edit name/slug/content with specy_products_update or open editor_url in PageBuilder, then publish with specy_products_publish (status "published").',
+          };
         });
       },
     );
@@ -417,17 +424,25 @@ async function createMcpServerWithTools(
       'specy_products_publish',
       '[specy-products] Publish or return a product page to draft status through the aggregate service.',
       { id: z.string().uuid(), tenant_id: z.string().uuid(), expected_version: z.number().int().min(1), expected_definition_revision: z.number().int().min(1), status: z.enum(['draft', 'published']) },
-      async ({ id, tenant_id, expected_version, expected_definition_revision, status }) => callProductOperation(
-        () => publishProductAggregate(supabase, id, tenant_id, expected_version, expected_definition_revision, status),
-      ),
+      async ({ id, tenant_id, expected_version, expected_definition_revision, status }) => callProductOperation(async () => {
+        const product = await publishProductAggregate(supabase, id, tenant_id, expected_version, expected_definition_revision, status);
+        const next_step = status === 'published'
+          ? 'Published. Public delivery: GET /api/schemas/{apiSlug}/pages (published only) and the generated Product Object stream; retire later with specy_products_archive (reversible) or delete permanently with specy_products_delete.'
+          : 'Returned to draft. Re-publish with specy_products_publish after content review.';
+        return { product, next_step };
+      }),
     );
     server.tool(
       'specy_products_archive',
       '[specy-products] Retire a product and archive its canonical page atomically while preserving its history.',
       { id: z.string().uuid(), tenant_id: z.string().uuid(), expected_version: z.number().int().min(1) },
-      async ({ id, tenant_id, expected_version }) => callProductOperation(
-        () => archiveProductAggregate(supabase, id, tenant_id, expected_version),
-      ),
+      async ({ id, tenant_id, expected_version }) => callProductOperation(async () => {
+        const product = await archiveProductAggregate(supabase, id, tenant_id, expected_version);
+        return {
+          product,
+          next_step: 'Archived (reversible retirement). Permanent deletion incl. all linked events, event pages and archive history: specy_products_delete with confirm_delete: true after explicit user confirmation.',
+        };
+      }),
     );
     server.tool(
       'specy_products_delete',
@@ -440,6 +455,20 @@ async function createMcpServerWithTools(
       },
       async ({ id, tenant_id, expected_version }) => callProductOperation(
         () => deleteProductAggregate(supabase, id, tenant_id, expected_version),
+      ),
+    );
+    server.tool(
+      'specy_products_reassign_schema',
+      '[specy-products] Move a product and its canonical page to another eligible product schema in the same workspace. Page identity and content are preserved; a published page is returned to draft for review against the new schema. Mirrors PATCH /api/products/:id/schema.',
+      {
+        id: z.string().uuid(),
+        tenant_id: z.string().uuid(),
+        expected_version: z.number().int().min(1),
+        schema_id: z.string().uuid().describe('Target product schema UUID; must be an eligible tenant-owned product schema in the same workspace.'),
+        expected_definition_revision: z.number().int().min(1),
+      },
+      async ({ id, tenant_id, expected_version, schema_id, expected_definition_revision }) => callProductOperation(
+        () => changeProductSchemaAggregate(supabase, id, tenant_id, expected_version, schema_id, expected_definition_revision),
       ),
     );
 

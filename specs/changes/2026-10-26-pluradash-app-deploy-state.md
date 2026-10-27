@@ -43,6 +43,7 @@ States: `up-to-date` | `changes-available` | `build-running` |
 - `plugins/pluradash/src/pages/AppsPage.tsx` — info banner, deploy gating on `canDeploy`, polling
 - `plugins/pluradash/README.md` — integration scope bullet
 - `specs/features/pluradash-github-app-integration.md` — API table + apps card description
+- `specs/agents/pluradash-apps-integration.md` — developer handoff spec for consuming applications (endpoints, data models, auth, deploy-state machine, workflows); registered in `specs/agents/README.md`
 
 ## Impact Analysis
 

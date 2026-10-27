@@ -60,6 +60,9 @@ Authenticated MCP tools share the REST aggregate services:
 - `specy_products_publish`
 - `specy_products_archive`
 - `specy_products_delete` — permanently delete the Product and all linked Event/Page history using tenant and expected-version checks
+- `specy_products_reassign_schema` — move the Product and its canonical page to another eligible Product schema in the same workspace (mirrors `PATCH /api/products/:id/schema`); published pages return to draft for review
+
+Lifecycle tools (`create`, `publish`, `archive`) include `next_step` hints in their results so agents can chain the draft → edit → publish → archive/delete flow without leaving the tool loop.
 
 Every tool requires an explicit `tenant_id`; the browser's active workspace is not an MCP tenant selector. Create accepts the stable schema UUID, `expected_definition_revision`, and a caller-supplied or generated idempotency key. Updates/publication require both aggregate `expected_version` and schema `expected_definition_revision`. Generic `specy_pages_schemas_create_page/update_page` cannot create or mutate product pages.
 

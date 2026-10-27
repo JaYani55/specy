@@ -173,6 +173,7 @@ app.get('/.well-known/mcp.json', (c) => {
       'specy_products_publish',
       'specy_products_archive',
       'specy_products_delete',
+      'specy_products_reassign_schema',
     ],
     authentication: {
       required: true,
