@@ -121,6 +121,7 @@ type AppDeployState =
   | 'build-failed'       // changes exist, latest dev build failed
   | 'no-build'           // changes exist, no dev build tracked yet (or dev branch missing)
   | 'stale-build'        // changes exist, build green but on an older dev head
+  | 'merge-conflict'     // changes exist, but the dev→production merge has conflicting content (wins over build state)
   | 'unknown';           // GitHub comparison failed — fail-closed
 
 interface WorkspaceAppInfo {
@@ -141,6 +142,15 @@ interface WorkspaceAppInfo {
   buildUrl: string | null;      // convenience copy of devBuild.buildUrl
   deployState: AppDeployState;
   canDeploy: boolean;           // true ONLY for 'changes-available'
+  diverged: boolean;            // aheadBy > 0 && behindBy > 0
+  mergeState: 'clean' | 'conflicted' | 'unknown'; // same 3-way planner as push
+  conflictingPaths: string[];   // set when mergeState === 'conflicted'
+  recentPushes?: Array<{        // advisory (sync_logs), max 5 per repo
+    userId: string | null;
+    sessionId: string | null;
+    at: string;
+    changedPaths: string[];
+  }>;
 }
 ```
 
@@ -154,6 +164,7 @@ interface WorkspaceAppInfo {
 | `build-failed` | `true` | `failed` | no — fix and rebuild |
 | `no-build` | `true` (or dev missing) | none/unusable | no — push to trigger a build |
 | `stale-build` | `true` | `succeeded`, but `builtCommitSha !== devHeadSha` | no — newest change not built yet |
+| `merge-conflict` | `true` | any | no — production diverged with conflicting content (`mergeState: 'conflicted'`); resolve or deploy with `onConflict: 'pr'` |
 | `unknown` | `null` | any | no — fail-closed (also `gitError` set) |
 
 Two subtleties worth locking in:
@@ -172,10 +183,15 @@ Two subtleties worth locking in:
 ```ts
 interface DeployAppResponse {
   success: boolean;
-  merged: boolean;               // true = new merge commit created; false = already identical ('clean')
-  status: 'merged' | 'clean';
+  merged: boolean;               // true = new merge commit created
+  status: 'merged' | 'clean' | 'pr-opened'; // 'clean' = already identical; 'pr-opened' = onConflict:'pr'
   mergeCommitSha: string | null; // set when merged
   productionBranch: string;      // resolved Standard-Branch
+  pullRequestUrl?: string;       // set when status === 'pr-opened'
+  diverged?: boolean;            // aheadBy > 0 && behindBy > 0
+  mergeState?: 'clean' | 'conflicted' | 'unknown';
+  conflictingPaths?: string[];   // set when mergeState === 'conflicted'
+  mergedRemoteCommits?: number;  // production commits dev lacked (behindBy)
   repo: { id: number; fullName: string; url: string };
   gate: { allowed: true; builtCommitSha: string | null; devHeadSha: string | null };
 }
@@ -252,7 +268,13 @@ Response `200`:
       "previewUrl": "https://dev.acme-website.workers.dev",
       "buildUrl": "https://github.com/acme/website/actions/runs/123",
       "deployState": "changes-available",
-      "canDeploy": true
+      "canDeploy": true,
+      "diverged": false,
+      "mergeState": "clean",
+      "conflictingPaths": [],
+      "recentPushes": [
+        { "userId": "b2d9…", "sessionId": "sess_abc", "at": "2026-10-26T10:00:00.000Z", "changedPaths": ["src/App.tsx"] }
+      ]
     }
   ]
 }
@@ -260,6 +282,14 @@ Response `200`:
 
 Behavior contract:
 
+- **`mergeState` reuses the push planner.** When production has commits dev
+  lacks (`behindBy > 0`), the dev→production merge is planned with the same
+  pure 3-way planner as `/sync/push` (`planMerge(base, production, dev)`), so
+  `conflictingPaths` can never disagree with a real merge. Only computed then
+  (rare), to keep the poll cheap. `mergeState: 'conflicted'` ⇒
+  `deployState: 'merge-conflict'` and `canDeploy: false`.
+- **`recentPushes`** is advisory (read from `sync_logs`, max 5, no GitHub
+  calls) so agents can avoid hot files.
 - The **production branch is resolved dynamically** per request from the
   GitHub API (`repos.get → default_branch`). If that call fails the stored
   `workspace_repos.default_branch` is used and
@@ -308,7 +338,12 @@ Roles: **human only** — active tenant admin or super-admin. Agent tokens are
 rejected with `403 {"error": "Nur Workspace-Administratoren können produktiv deployen."}`.
 
 ```json
-{ "workspaceId": "4d2f6e78-…", "repoId": 812345678, "commitMessage": "Release v3" }
+{
+  "workspaceId": "4d2f6e78-…",
+  "repoId": 812345678,
+  "commitMessage": "Release v3",
+  "onConflict": "fail"
+}
 ```
 
 | Field | Required | Description |
@@ -316,9 +351,12 @@ rejected with `403 {"error": "Nur Workspace-Administratoren können produktiv de
 | `workspaceId` | yes | Workspace UUID |
 | `repoId` | yes | GitHub repository ID |
 | `commitMessage` | no | Defaults to `Deploy {repo} dev → {productionBranch} (PluraDash)` |
+| `onConflict` | no | `'fail'` (default) → `409 MERGE_CONFLICT` with `conflictingPaths`; `'pr'` → open a resolution PR and return `status: 'pr-opened'` + `pullRequestUrl` |
 
 Response `200`: `DeployAppResponse` (§5.3). `status: 'clean'` means dev was
 already fully contained in the production branch — nothing was merged.
+`status: 'pr-opened'` (only with `onConflict: 'pr'`) means conflicts were
+detected and a PR was opened for a human to resolve.
 
 Errors:
 
@@ -326,6 +364,7 @@ Errors:
 |---|---|
 | `403` | Agent token, or caller is not tenant-admin/super-admin |
 | `404` | Repo not assigned to this workspace (RLS) |
+| `409 code:"MERGE_CONFLICT"` | **Dev→production merge conflicts** (production diverged). Body carries `conflictingPaths`, `mergeState: 'conflicted'`, `diverged`. Retry with `onConflict: 'pr'` or resolve on GitHub |
 | `409` | **Deploy gate closed** — latest dev build is `no-build` / `running` / `failed` / `stale-build` on the current dev head. German message, e.g. `"Deploy abgelehnt: Der neueste Dev-Build ist fehlgeschlagen. …"` |
 
 Side effects (server-side, all handled by the CMS): merge commit on the
@@ -376,7 +415,8 @@ listing.
 | `deployState: 'unknown'` / `gitError` set | Retry with backoff; the GitHub comparison is transient — do not enable deploy on `unknown` |
 | `409` on deploy although `canDeploy` was `true` | State went stale between read and call — refetch `/apps/info` and re-evaluate |
 | `devBranchExists: false` | Nobody pulled/pushed yet — run `POST /sync/pull` first (creates `dev` from the default branch) |
-| `behindBy > 0` and `aheadBy > 0` (diverged) | Deploy still merges dev → production; surface the counts, don't block |
+| `behindBy > 0` and `aheadBy > 0` (diverged) | Inspect `mergeState`: `'clean'` → deploy still merges and reports `mergedRemoteCommits`; `'conflicted'` → `deployState: 'merge-conflict'`, deploy with `onConflict: 'pr'` or resolve on GitHub |
+| `deployState: 'merge-conflict'` / `409 code:"MERGE_CONFLICT"` | Production diverged with conflicting content. Do **not** force it; either open a PR (`onConflict: 'pr'`) or let a human resolve the `conflictingPaths` |
 
 ## 8. Related documentation
 

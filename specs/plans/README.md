@@ -15,3 +15,4 @@ the implementation is recorded in `../changes/`.
 | [`docker-installer.md`](docker-installer.md) | Docker installer planning |
 | [`managed_secrets_changes.md`](managed_secrets_changes.md) | Managed secrets change plan |
 | [`Twilio_SMS_Notif.md`](Twilio_SMS_Notif.md) | Twilio SMS notification planning |
+| [`apps-merge-conflict-handling.md`](apps-merge-conflict-handling.md) | Multi-user PluraPi workspace sessions: session-scoped staging, retried 3-way merge on `dev` (auto-merge, structured conflicts, non-destructive rebase), save-time stale detection and deploy-side `merge-conflict`/PR fallback — **implemented 2026-10-27 (P0–P5; P6 deferred)**, change record: [`../changes/2026-10-27-apps-merge-conflict-handling.md`](../changes/2026-10-27-apps-merge-conflict-handling.md) |

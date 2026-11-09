@@ -20,7 +20,9 @@ PluraPi can treat a Specy workspace as a remote filesystem backed by GitHub:
 | Initialize / refresh local workspace | `workspace_sync_upstream` | `POST /api/plugin/pluradash/sync/pull` |
 | List workspace files / read one file | `workspace_pull_files` | `GET /api/plugin/pluradash/sync/files` |
 | Write files into the workspace cache | `workspace_save_changes` | `POST /api/plugin/pluradash/sync/save` |
-| Publish changes as a GitHub commit | `workspace_push_dev` | `POST /api/plugin/pluradash/sync/push` |
+| Publish changes as a GitHub commit (auto-merge + conflict resolution) | `workspace_push_dev` | `POST /api/plugin/pluradash/sync/push` |
+| Cheap preflight (base vs. live head, remote delta) | — | `GET /api/plugin/pluradash/sync/status` |
+| List remote-changed paths since a commit | — | `GET /api/plugin/pluradash/sync/changes` |
 | Production release (human only) | `workspace_deploy_prod` | `POST /api/plugin/pluradash/sync/deploy` |
 | Download workspace as ZIP (portability) | `workspace_download_archive` | `GET /api/plugin/pluradash/sync/archive` |
 
@@ -209,15 +211,32 @@ Response `200`:
 
 ### 4.4 `POST /sync/push` — commit workspace changes to GitHub `dev`
 
-Diffs the R2 workspace against `baseCommitSha` and commits exactly that diff
-via the GitHub Git Data API. Pushing triggers the Cloudflare **preview**
-deployment.
+Merges the staging tree on top of the live GitHub `dev` head using a retried,
+blob-level 3-way merge (never a force-push, never a server-side text merge).
+Pushing triggers the Cloudflare **preview** deployment.
 
 Request:
 
 ```json
-{ "workspaceId": "7c9e…", "repoId": 123456789, "commitMessage": "feat: new hero section" }
+{
+  "workspaceId": "7c9e…",
+  "repoId": 123456789,
+  "commitMessage": "feat: new hero section",
+  "sessionId": "sess_abc",
+  "expectedHeadSha": "def456…",
+  "strategy": "merge",
+  "resolutions": { "src/App.tsx": "ours", "src/theme.css": "theirs" }
+}
 ```
+
+- `sessionId` (optional) selects the session-scoped staging tree; omitted ⇒
+  the implicit `default` session.
+- `expectedHeadSha` (optional, recommended after a conflict) fails fast with
+  `409 STALE_HEAD` when the head moved since you planned the push.
+- `strategy: "merge"` (default) auto-merges; `"strict"` reproduces the legacy
+  "any remote advance ⇒ 409".
+- `resolutions` (optional): per path `"ours"` | `"theirs"` |
+  `{ "content": "…" }` / `{ "contentBase64": "…", "mode": "100755" }`.
 
 Response `200`:
 
@@ -229,19 +248,82 @@ Response `200`:
   "commitSha": "9d8c7b6…",
   "commitUrl": "https://github.com/acme/website/commit/9d8c7b6…",
   "previewUrl": "https://dev.website.pages.dev",
-  "diff": { "added": ["assets/logo.png"], "modified": ["index.html"], "deleted": [] }
+  "diff": { "added": ["assets/logo.png"], "modified": ["index.html"], "deleted": [] },
+  "autoMerged": ["index.html"],
+  "keptRemote": ["src/other.ts"],
+  "resolutions": [{ "path": "src/App.tsx", "choice": "ours" }],
+  "rebased": true,
+  "mergedRemoteChanges": 1
 }
 ```
 
+- Different-file concurrency is **auto-merged** — `keptRemote` lists remote-only
+  changes that survived, `autoMerged` lists your paths that landed on a head
+  that had moved.
 - `previewUrl` is `null` unless the operator configured
   `PLURADASH_PREVIEW_URL_TEMPLATE`. Surface `commitUrl` as fallback.
 - **No-op push** (no local differences) returns `200` with the current head SHA
   and empty diff — safe to call optimistically.
 
-Error `409` — "The dev branch advanced on GitHub … Pull first": someone else
-pushed to `dev` since the last sync. The correct recovery is: re-run
-`/sync/pull` (resets the base), re-apply the changes, push again. **Never**
-retry the push blindly.
+#### Conflict response `409` (same-path divergence)
+
+```jsonc
+{
+  "error": "Merge conflict on 1 path — resolve and retry with expectedHeadSha.",
+  "code": "CONFLICT",
+  "conflictId": "a1b2c3d4e5f6",       // stable across retries; changes when head moves
+  "workspaceId": "7c9e…",
+  "repoId": 123456789,
+  "branch": "dev",
+  "baseSha": "abc123…",
+  "headSha": "def456…",
+  "staleBase": true,
+  "retryAfterMs": 0,
+  "conflicts": [
+    {
+      "path": "src/App.tsx",
+      "kind": "edit-edit",           // edit-edit | edit-delete | delete-edit | add-add
+      "baseSha": "a1…", "ourSha": "b2…", "theirSha": "c3…",
+      "binary": false,
+      "ours":   { "encoding": "utf-8", "content": "…" },
+      "theirs": { "encoding": "utf-8", "content": "…" },
+      "downloadPath": "/api/plugin/pluradash/sync/files?…&path=src%2FApp.tsx&ref=ours"
+    }
+  ]
+}
+```
+
+Candidate content is capped at 64 KiB per side (binary files return
+`binary: true`, text/binary content as `encoding`). For larger files use
+`GET /sync/files?…&path=…&ref=ours|theirs` (`ref=theirs` reads the live head).
+The error is also logged to `sync_logs` (`operation: 'push'`, `status: 'error'`,
+`detail.conflict = { conflictId, paths, kinds }`).
+
+`409 CONFLICT_RETRY_EXHAUSTED` means three consecutive ref races: wait
+`retryAfterMs` and retry once the other writer pauses.
+
+### 4.4a `GET /sync/status` — cheap preflight
+
+```
+GET /sync/status?workspaceId=7c9e…&repoId=123456789[&sessionId=sess_abc]
+```
+
+Returns `{ baseCommitSha, devHeadSha, behindBy, aheadBy, staleBase,
+remoteChangedPaths, stagingSessionId, stagingExpiresAt, cacheState }` from the
+R2 head-tree cache — **no full tree download** on a warm cache. Use it before a
+push to see whether others pushed.
+
+### 4.4b `GET /sync/changes` — remote delta since a commit
+
+```
+GET /sync/changes?workspaceId=7c9e…&repoId=123456789[&since=abc123…][&includeContent=true]
+```
+
+Returns `{ since, headSha, cacheState, paths: [{ path, change:
+'added'|'modified'|'deleted', blobSha, size, mode, content? }] }`. Defaults
+`since` to your `baseCommitSha`. `includeContent=true` inlines text/binary
+content for files under 64 KiB. This replaces the destructive re-pull in the
+rebase path.
 
 ### 4.5 `POST /sync/deploy` — production release (human users only)
 
@@ -319,25 +401,35 @@ GET /sync/archive?workspaceId=7c9e…&repoId=123456789[&branch=dev|main]
 2. POST /sync/deploy      { workspaceId }        # human click only
 ```
 
-### 5.4 Conflict recovery
+### 5.4 Conflict recovery (non-destructive, P2)
 
-> **⚠ Data-loss warning:** a `/sync/pull` **replaces** the R2 staging tree and
-> resets the manifest. Unpushed edits that only exist in R2 (staged via
-> `/sync/save`) are **destroyed** by a pull.
-
-PluraPi MUST therefore maintain an in-memory or local-disk buffer of its
-uncommitted edits (the same file map it would send to `/sync/save`) **before**
-triggering a pull during conflict recovery:
+Since the merge-conflict work (2026-10-27) a conflict **never** requires
+destroying staged work. The staging tree survives the round-trip:
 
 ```
-push → 409
-1. Buffer uncommitted edits client-side (files map is already in memory).
-2. POST /sync/pull                      # resets R2 staging to remote dev
-3. POST /sync/save (buffered edits)     # re-stage — re-apply on top of remote
-4. POST /sync/push
+1. POST /sync/push            { workspaceId, commitMessage }
+     → 409 { code: "CONFLICT", conflicts: [...], headSha }
+2. GET  /sync/changes         ?since=<baseSha>          # what the others changed
+3. Resolve locally (agent-side 3-way apply, or ask the human for ambiguous hunks)
+4. POST /sync/push            { workspaceId, expectedHeadSha: <headSha>,
+                               resolutions: { "path": "ours" | "theirs" | { content } } }
 ```
 
-Never rely solely on the R2 staging area for uncommitted state.
+- `resolutions` are keyed by path; unresolved paths keep the push blocked.
+- `"theirs"` keeps the remote version, `"ours"` keeps the staged version, an
+  object writes caller-supplied bytes.
+- Retrying after a transient failure is idempotent — the `conflictId` is stable
+  until the head advances.
+
+`POST /sync/pull` with `"rebase": true` is a non-destructive alternative for
+clients that prefer a pull-shaped flow: staged files whose paths did not change
+remotely are kept; the response reports `{ kept, merged, discarded }`. Plain
+`/sync/pull` (no `rebase`) stays destructive for back-compat, but it is no
+longer the conflict path.
+
+> **Data-loss warning (legacy):** a plain `/sync/pull` still *replaces* the R2
+> staging tree. Use the conflict loop above, or `rebase: true`, when staged
+> work must survive.
 
 ## 6. Error handling summary
 
@@ -345,7 +437,14 @@ Never rely solely on the R2 staging area for uncommitted state.
 |---|---|---|
 | `404` "Repository not found … (RLS)" | Repo not assigned to workspace, or token belongs to another workspace | Stop; ask the user to assign the repo / fix the token |
 | `409` "No synced workspace found" | Save/push/list before the first pull | Run `/sync/pull` |
-| `409` "dev branch advanced on GitHub" | Remote moved since last sync | Buffer local edits, pull, re-save, push (§5.4) |
+| `409 code:"CONFLICT"` | Same-path divergence — both sides changed a file differently | Resolve via `resolutions` + `expectedHeadSha` (§5.4); never force-push |
+| `409 code:"CONFLICT_RETRY_EXHAUSTED"` | Three consecutive ref races | Wait `retryAfterMs`, retry once the other writer pauses |
+| `409 code:"STALE_HEAD"` | `expectedHeadSha` no longer matches the live head | Re-run `/sync/status`, re-resolve, retry |
+| `409 code:"STALE_FILE"` | A save's `baseBlobSha` is behind the live head | Re-read the file (`/sync/files?ref=theirs`), re-apply, save again |
+| `409 code:"STAGING_BUSY"` | Two concurrent saves on one manifest | Retry the save once |
+| `409 code:"STAGING_UPGRADE_REQUIRED"` | Legacy (v1) staging layout found | Run `/sync/pull` once to migrate to the session-scoped layout |
+| `409 code:"MANIFEST_CORRUPT"` | The manifest file index disagrees with its own totals (clobbered cache) | Run `/sync/pull` to rebuild staging; do not retry the push |
+| `409 code:"MERGE_CONFLICT"` | Deploy-time dev→production merge conflicts (human path) | Human resolves or re-runs deploy with `onConflict:"pr"` |
 | `400` "Refusing to sync protected paths…" | Payload touched `.env` / `.git/` / `.pi/` / `node_modules/` (server-side ignore rules) | Remove those paths from the batch; never retry them |
 | `403` "Production deploys are restricted…" / "Only workspace admins…" | Deploy attempted by agent or non-admin | Never retry from an agent loop |
 | `413` | File > 80 MiB (pull), > 2 MiB (prod snapshot), > 500 files per save | Split the operation |
@@ -373,11 +472,12 @@ Never rely solely on the R2 staging area for uncommitted state.
 
 ## 8. Discovery
 
-The six endpoints are also published in the agent-facing API catalog
+The endpoints are also published in the agent-facing API catalog
 (`/api/specs` frontend-integration manifest) with ids
 `pluradash-sync-pull`, `pluradash-sync-files`, `pluradash-sync-save`,
-`pluradash-sync-push`, `pluradash-sync-deploy`, `pluradash-sync-archive`, so
-MCP/API discovery surfaces them automatically. MCP server tools mirroring
+`pluradash-sync-push`, `pluradash-sync-status`, `pluradash-sync-changes`,
+`pluradash-sync-deploy`, `pluradash-sync-archive`, so MCP/API discovery
+surfaces them automatically. MCP server tools mirroring
 these endpoints are a planned follow-up (see the feature doc's roadmap).
 
 Every endpoint call is logged server-side (`pluradash.sync_logs`) and visible
@@ -391,7 +491,7 @@ the PluraDash plugin via the core `mcp.tools` hook (authenticated MCP
 connections only):
 
 `app_sync_list`, `app_sync_pull`, `app_sync_list_files`, `app_sync_read_file`,
-`app_sync_save`, `app_sync_commit`.
+`app_sync_save`, `app_sync_status`, `app_sync_changes`, `app_sync_commit`.
 
 `workspaceId` defaults to the agent token's `tenant_id` claim and `repoId`
 to the first assigned repo — repository IDs must be taken from

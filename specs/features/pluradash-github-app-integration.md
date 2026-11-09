@@ -135,6 +135,16 @@ including app launches and repo (un-)assignments. Super-admins review them in
 the GitHub Apps admin panel (**Sync-Logs** tab), modeled after the Agent
 Communication Logs view.
 
+**Merge-conflict visibility (2026-10-27):** a rejected push is logged as
+operation `push`, `status: 'error'`, with
+`detail.conflict = { conflictId, paths, kinds }`. The same `conflictId`
+repeatedly in the log means an agent is looping without resolving; use it to
+triage hot files. Concurrent sessions are visible in the **Agent-Sessions** tab
+via the existing (tenant, user, session) keying. The app card additionally
+surfaces `deployState: 'merge-conflict'` when production diverged with
+conflicting content — the deploy button stays disabled and, for humans, a
+resolution PR can be opened (`onConflict: 'pr'`).
+
 User-facing surfaces deliberately hide all GitHub details. GitHub is an
 infrastructure/CI-CD concern of the administrator:
 

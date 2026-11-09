@@ -41,9 +41,13 @@ quota-tracked file tree in Cloudflare R2.
   missing it is created from the latest commit SHA of the repository's default
   branch (`createRef`). Pushing to `dev` triggers the Cloudflare preview
   deployment pipeline.
-- **Push safety:** a push refuses (HTTP 409) when the GitHub `dev` head differs
-  from the manifest's `baseCommitSha` — the workspace must re-pull first, so
-  remote changes are never silently clobbered.
+- **Push safety (merge model, 2026-10-27):** a push plans a blob-level 3-way
+  merge against the live `dev` head and retries on a lost ref race
+  (`updateRef(force:false)`). Different-file concurrency auto-merges; same-path
+  divergence returns `409 CONFLICT` with per-path candidate content. The
+  workspace never needs a destructive re-pull — staged work survives and is
+  resolved with `resolutions` + `expectedHeadSha`. See
+  [`../agents/plurapi-file-sync-integration.md`](../agents/plurapi-file-sync-integration.md) §5.4.
 - **Deploy gating:** `POST /sync/deploy` rejects agent tokens (`is_agent`) with
   403 and requires a super-admin or an active tenant admin of the workspace.
 
@@ -51,10 +55,22 @@ quota-tracked file tree in Cloudflare R2.
 
 ```
 tenant/{tenantId}/user/{userId}/files/apps/{owner__repo}/
-└── {branch}/                 # dev (agent active) | main (production snapshot)
-    ├── HEAD/                 # extracted file tree (index.html, src/...)
-    └── manifest.json         # commit SHA, file index, sync timestamps
+└── sessions/{sessionId}/     # one staging tree per PluraPi session ('default' = implicit)
+    └── {branch}/             # dev (agent active) | main (production snapshot)
+        ├── HEAD/             # extracted file tree (index.html, src/...)
+        └── manifest.json     # commit SHA, file index, sync timestamps, sessionId
+
+tenant/{tenantId}/cache/pluradash/git-head/{owner__repo}/
+├── current.json              # head-tree cache pointer (no GitHub call on hit)
+└── sha/{headSha}.json        # immutable per-commit tree snapshots (pruned to 10)
 ```
+
+- Staging keys are session-scoped (v2 layout, 2026-10-27): two people/agents
+  in one workspace session no longer share a mutable tree. The implicit
+  `default` session reproduces the legacy single-writer behaviour. A legacy
+  (v1) manifest yields `409 STAGING_UPGRADE_REQUIRED`; one `/sync/pull`
+  migrates. Expired sessions are reaped opportunistically
+  (`PLURADASH_STAGING_TTL_HOURS`, default 24 h).
 
 - Workspace files are **fully tracked** in `tenant_storage_objects` (scope
   `apps`, mount `pluradash`) — quota accounting works like every other file in
@@ -136,11 +152,13 @@ SELECT the row for `{workspaceId, repoId}`.
 
 | Method | Path | Spec tool name | Description |
 |---|---|---|---|
-| POST | `/sync/pull` | `workspace_sync_upstream` | Validates/creates `dev`, downloads the GitHub dev tree, replaces R2 `dev/HEAD/`, rewrites manifest. Returns `{ fileCount, totalBytes, headCommitSha, devBranchCreated }` |
-| GET | `/sync/files` | `workspace_pull_files` | Without `path`: manifest + file listing. With `path`: streams raw file bytes (`Content-Type`, `X-Workspace-Path`) |
-| POST | `/sync/save` | `workspace_save_changes` | Overwrites/creates (`content`/`contentBase64`), deletes (`deleted: true`) files in R2 `dev/HEAD/` only (no GitHub call). Max 500 entries AND 10 MiB body. Quota-checked; server-side ignore filter rejects protected paths |
-| POST | `/sync/push` | `workspace_push_dev` | Diffs R2 tree vs. `baseCommitSha`, commits via Git Data API (`createTree` → `createCommit` → `updateRef`), returns `commitSha`, `commitUrl`, `previewUrl`, diff summary. The `previewUrl` is only a static template guess — the **real** preview URL and build state arrive asynchronously via the check_run webhook (see [GitHub App integration](pluradash-github-app-integration.md#preview-build-feedback-check_run-webhook)) |
-| POST | `/sync/deploy` | `workspace_deploy_prod` | **User UI only** (agents get 403). Merges dev → main via `repos.merge`, snapshots merged tree into R2 `main/HEAD/` |
+| POST | `/sync/pull` | `workspace_sync_upstream` | Validates/creates `dev`, downloads the GitHub dev tree, replaces R2 `dev/HEAD/`, rewrites manifest. `rebase: true` keeps staged paths that did not change remotely. Returns `{ fileCount, totalBytes, headCommitSha, devBranchCreated, kept?, merged?, discarded? }` |
+| GET | `/sync/files` | `workspace_pull_files` | Without `path`: manifest + file listing. With `path`: streams raw file bytes (`Content-Type`, `X-Workspace-Path`). `ref=ours\|theirs` reads the staged/remote side for conflict resolution |
+| GET | `/sync/status` | — | Cheap preflight from the head-tree cache: `baseCommitSha`, `devHeadSha`, `behindBy`, `aheadBy`, `staleBase`, `remoteChangedPaths`, staging-session metadata |
+| GET | `/sync/changes` | — | Remote-changed paths since `<sha>` (default base), optional inline content (< 64 KiB) |
+| POST | `/sync/save` | `workspace_save_changes` | Overwrites/creates (`content`/`contentBase64`), deletes (`deleted: true`) files in R2 `dev/HEAD/` only (no GitHub call). Max 500 entries AND 10 MiB body. Quota-checked; server-side ignore filter rejects protected paths. Optional `baseBlobSha` triggers a `409 STALE_FILE` save-time probe |
+| POST | `/sync/push` | `workspace_push_dev` | Retried 3-way merge onto the live `dev` head via Git Data API, returns `commitSha`, `commitUrl`, `previewUrl`, diff summary, `autoMerged`/`keptRemote`. Same-path divergence → structured `409 CONFLICT`; resolve with `resolutions` + `expectedHeadSha`. The `previewUrl` is only a static template guess — the **real** preview URL and build state arrive asynchronously via the check_run webhook (see [GitHub App integration](pluradash-github-app-integration.md#preview-build-feedback-check_run-webhook)) |
+| POST | `/sync/deploy` | `workspace_deploy_prod` | **User UI only** (agents get 403). Merges dev → main via `repos.merge`, snapshots merged tree into R2 `main/HEAD/`. Plans divergence with the same 3-way planner → `409 MERGE_CONFLICT` or `onConflict:'pr'` |
 | GET | `/sync/archive` | `workspace_download_archive` | Streams the synced workspace branch (default `dev`, or `main`) as a ZIP archive (`application/zip`, `Content-Disposition: attachment`) for portability. 409 when no pull has happened yet |
 
 Payload examples and agent workflows: see
@@ -151,6 +169,7 @@ Payload examples and agent workflows: see
 | Variable | Kind | Purpose |
 |---|---|---|
 | `PLURADASH_PREVIEW_URL_TEMPLATE` | wrangler var | Optional Cloudflare preview URL template, e.g. `https://{branch}.{project}.pages.dev`. `{branch}`, `{owner}`, `{repo}` placeholders. Empty → `previewUrl: null` |
+| `PLURADASH_STAGING_TTL_HOURS` | wrangler var (optional) | Idle staging-session TTL before opportunistic reaping (default 24 h). Empty/invalid → 24 |
 | GitHub App vars / Secrets Store | existing | See [GitHub App integration](pluradash-github-app-integration.md) — unchanged |
 | `MEDIA_BUCKET` | R2 binding | Core-owned R2 binding, reused by the sync engine |
 
@@ -159,7 +178,8 @@ Payload examples and agent workflows: see
 ```
 plugins/pluradash/api/sync/
 ├── types.ts        — shared types (manifest, payloads, results, SyncError)
-├── keys.ts         — R2 key layout, path normalization, MIME guessing
+├── keys.ts         — R2 key layout (session-scoped), path normalization, MIME guessing
+├── merge.ts        — pure 3-way merge planner + conflict id (unit-tested)
 ├── github.ts       — Octokit: dev provisioning, tree/blob fetch, Git Data commits, prod merge
 ├── manifest.ts     — (folded into storage.ts) manifest persistence
 ├── storage.ts      — R2 puts/gets/deletes + tenant_storage_objects catalog sync
@@ -227,7 +247,11 @@ and `pluradash.ai_service_logs`.
   go through the same catalog registration. Deploy limits snapshot files to
   2 MiB to keep production snapshots cheap.
 - **Manifests are untracked:** documented above; keeps quota semantics clean.
-- **MCP tools:** not yet registered; agents integrate via the HTTP endpoints
+- **MCP tools:** registered via `mcp.tools` (`app_sync_list`, `app_sync_pull`,
+  `app_sync_list_files`, `app_sync_read_file`, `app_sync_save`,
+  `app_sync_status`, `app_sync_changes`, `app_sync_commit`) — see
+  `plugins/pluradash/specs/app-sync-mcp-tools.md`. Agents may also integrate via
+  the HTTP endpoints
   (OAuth 2.1 tokens), which the API catalog advertises. Registering
   `mcp.tools` contributions mirroring the six endpoints is a planned follow-up.
 - **ZIP archives instead of a zip library:** `/sync/archive` assembles the ZIP
