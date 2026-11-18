@@ -32,6 +32,7 @@ import {
   wrapReplicaTransaction,
   wrapReplicaSession,
 } from '../scripts/lib/db-snapshot.mjs';
+import { sqlRetryDelayMs } from '../scripts/lib/remote-sql.mjs';
 import { ensureDataDirs, createActionLog, timestampSlug } from '../scripts/lib/action-log.mjs';
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'specy-snapshots-test-'));
@@ -382,5 +383,29 @@ describe('trigger suppression wrapping', () => {
     assert.match(wrapReplicaSession('select 1;'), /^set session_replication_role = replica;\nselect 1;/);
     assert.equal(REPLICA_SET_LOCAL_SQL, 'set local session_replication_role = replica;');
     assert.equal(REPLICA_SET_SESSION_SQL, 'set session_replication_role = replica;');
+  });
+});
+
+// ─── Management API throttling ──────────────────────────────────────────────
+
+describe('sqlRetryDelayMs (Management API 429 backoff)', () => {
+  it('backs off exponentially and caps at 30s', () => {
+    assert.equal(sqlRetryDelayMs(1), 1_000);
+    assert.equal(sqlRetryDelayMs(2), 2_000);
+    assert.equal(sqlRetryDelayMs(3), 4_000);
+    assert.equal(sqlRetryDelayMs(4), 8_000);
+    assert.equal(sqlRetryDelayMs(6), 30_000);
+    assert.equal(sqlRetryDelayMs(10), 30_000);
+  });
+
+  it('honours the server Retry-After header (seconds) when present', () => {
+    assert.equal(sqlRetryDelayMs(1, '5'), 5_000);
+    assert.equal(sqlRetryDelayMs(1, '120'), 30_000); // capped
+  });
+
+  it('falls back to exponential backoff on a missing/invalid Retry-After', () => {
+    assert.equal(sqlRetryDelayMs(2, null), 2_000);
+    assert.equal(sqlRetryDelayMs(2, 'not-a-number'), 2_000);
+    assert.equal(sqlRetryDelayMs(2, '0'), 2_000);
   });
 });

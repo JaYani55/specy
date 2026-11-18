@@ -53,8 +53,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { usePermissions } from '@/hooks/usePermissions';
-import { getPluginAdminConnectionSections } from '@/plugins/loader';
-import type { PluginAdminConnectionSection } from '@/types/plugin';
+import { getPluginAdminSections } from '@/plugins/loader';
+import type { PluginAdminSection } from '@/types/plugin';
 import {
   listSecrets,
   getEnvStatus,
@@ -595,8 +595,8 @@ const VerwaltungConnections: React.FC = () => {
   );
 
   // Plugin admin connection sections
-  const pluginAdminSections = useMemo<PluginAdminConnectionSection[]>(
-    () => getPluginAdminConnectionSections(permissions.userRoles),
+  const pluginAdminSections = useMemo<PluginAdminSection[]>(
+    () => getPluginAdminSections('connections', permissions.userRoles),
     [permissions.userRoles],
   );
 

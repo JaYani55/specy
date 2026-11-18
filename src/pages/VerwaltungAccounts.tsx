@@ -11,7 +11,7 @@ import {
   type Role,
   type AccountUser,
 } from '@/services/accountService';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -72,7 +72,10 @@ import {
   Building2,
   UserCog,
   UserMinus,
+  Puzzle,
 } from 'lucide-react';
+import { getPluginAdminSections } from '@/plugins/loader';
+import type { PluginAdminSection } from '@/types/plugin';
 
 // ─── Role Color Map ─────────────────────────────────────────────────
 const ROLE_COLORS: Record<string, string> = {
@@ -112,7 +115,7 @@ const VerwaltungAccounts: React.FC = () => {
   const [roles, setRoles] = useState<Role[]>([]);
   const [accounts, setAccounts] = useState<AccountUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'accounts' | 'roles' | 'tenants'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'roles' | 'tenants' | 'extensions'>('accounts');
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [tenantMemberships, setTenantMemberships] = useState<TenantMembershipRecord[]>([]);
 
@@ -148,6 +151,10 @@ const VerwaltungAccounts: React.FC = () => {
 
   const de = language === 'de';
   const isSuperAdmin = permissions.userRoles.includes('super-admin');
+  const pluginAccountSections = useMemo<PluginAdminSection[]>(
+    () => getPluginAdminSections('accounts', permissions.userRoles),
+    [permissions.userRoles],
+  );
 
   // ─── Data Loading ───────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -484,6 +491,16 @@ const VerwaltungAccounts: React.FC = () => {
               <Building2 className="h-4 w-4" />
               {de ? 'Tenants' : 'Tenants'}
               <Badge variant="secondary" className="ml-1">{tenants.length}</Badge>
+            </Button>
+          )}
+          {isSuperAdmin && pluginAccountSections.length > 0 && (
+            <Button
+              variant={activeTab === 'extensions' ? 'default' : 'outline'}
+              onClick={() => setActiveTab('extensions')}
+              className="gap-2"
+            >
+              <Puzzle className="h-4 w-4" />
+              {de ? 'Erweiterungen' : 'Extensions'}
             </Button>
           )}
         </div>
@@ -930,6 +947,34 @@ const VerwaltungAccounts: React.FC = () => {
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ EXTENSIONS TAB (super-admin plugin sections) ═══ */}
+        {activeTab === 'extensions' && isSuperAdmin && (
+          <div className="space-y-6">
+            {pluginAccountSections.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {de ? 'Keine Erweiterungen registriert.' : 'No extensions registered.'}
+              </p>
+            ) : (
+              pluginAccountSections.map((section) => {
+                const SectionComponent = section.component;
+                return (
+                  <Card key={section.id}>
+                    <CardHeader>
+                      <CardTitle className="text-lg">{section.title}</CardTitle>
+                      {section.description && (
+                        <CardDescription>{section.description}</CardDescription>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      <SectionComponent />
+                    </CardContent>
+                  </Card>
+                );
+              })
             )}
           </div>
         )}

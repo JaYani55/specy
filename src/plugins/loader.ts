@@ -8,7 +8,8 @@
 import registeredPlugins from './registry';
 import { pluginClaimMatches } from './claimMatching';
 import type {
-  PluginAdminConnectionSection,
+  PluginAdminSection,
+  PluginAdminSectionPage,
   PluginApiMetadata,
   PluginApiRouteMetadata,
   PluginCapabilityDescriptor,
@@ -197,12 +198,26 @@ export function getPluginApiRoutes(userRoles?: string[]): Array<PluginApiRouteMe
 }
 
 /**
- * Returns all admin connection settings sections contributed by plugins,
- * filtered by user roles and sorted by order.
+ * Returns admin settings sections contributed by plugins for one core admin
+ * page, filtered by plugin access, the section `requiredRole`, and sorted by
+ * order. `page` defaults to `'connections'` (the original behaviour).
  */
-export function getPluginAdminConnectionSections(userRoles?: string[]): PluginAdminConnectionSection[] {
+export function getPluginAdminSections(
+  page: PluginAdminSectionPage = 'connections',
+  userRoles?: string[],
+): PluginAdminSection[] {
   return registeredPlugins
     .filter((plugin) => isPluginAccessible(plugin, userRoles))
     .flatMap((plugin) => plugin.adminSections ?? [])
+    .filter((section) => (section.page ?? 'connections') === page)
+    .filter((section) => !section.requiredRole || Boolean(userRoles?.includes(section.requiredRole)))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+}
+
+/**
+ * Backwards-compatible alias for the `/admin/connections` page.
+ * @deprecated Use `getPluginAdminSections('connections', userRoles)`.
+ */
+export function getPluginAdminConnectionSections(userRoles?: string[]): PluginAdminSection[] {
+  return getPluginAdminSections('connections', userRoles);
 }

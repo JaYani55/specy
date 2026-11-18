@@ -34,25 +34,71 @@ export function extractProjectRef(supabaseUrl) {
   }
 }
 
+// ─── Throttling ──────────────────────────────────────────────────────────────
+// The Management API rate-limits bursts of requests (HTTP 429
+// ThrottlerException). Callers like snapshots.mjs legitimately issue many
+// queries in a row (one per table page), so every runSqlQuery retry with
+// exponential backoff instead of failing the whole run.
+
+const SQL_RETRY_MAX_ATTEMPTS = 6;
+const SQL_RETRY_BASE_DELAY_MS = 1_000;
+const SQL_RETRY_MAX_DELAY_MS = 30_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Backoff for a failed Management API call.
+ * Honours the server's `Retry-After` header when present (seconds), otherwise
+ * exponential: 1s, 2s, 4s, 8s, 16s, capped at 30s.
+ * Exported for unit testing.
+ */
+export function sqlRetryDelayMs(attempt, retryAfterHeader) {
+  const retryAfterSeconds = Number(retryAfterHeader);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1_000, SQL_RETRY_MAX_DELAY_MS);
+  }
+  return Math.min(SQL_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), SQL_RETRY_MAX_DELAY_MS);
+}
+
+function isRetryableSqlStatus(status) {
+  // 429 = throttled; 5xx = transient platform errors (e.g. 502/503/504).
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
 export async function runSqlQuery(projectRef, pat, sql) {
-  const res = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-    {
+  const url = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
+
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: sql }),
-    },
-  );
-  if (!res.ok) {
+    });
+
+    if (res.ok) {
+      return res.json().catch(() => null);
+    }
+
     const rawText = await res.text().catch(() => '');
     let detail = rawText;
     try {
       const body = JSON.parse(rawText);
       detail = body.message || body.error || rawText;
     } catch { /* keep raw */ }
+
+    // Throttled or transient platform error — slow down and retry instead of
+    // aborting the run (e.g. a snapshot that already read 90 tables).
+    if (isRetryableSqlStatus(res.status) && attempt < SQL_RETRY_MAX_ATTEMPTS) {
+      const delayMs = sqlRetryDelayMs(attempt, res.headers.get('retry-after'));
+      warn(`Management API ${res.status} (${detail}) — retry ${attempt}/${SQL_RETRY_MAX_ATTEMPTS - 1} in ${Math.round(delayMs / 1000)}s…`);
+      await sleep(delayMs);
+      continue;
+    }
+
     throw new Error(`HTTP ${res.status}: ${detail}`);
   }
-  return res.json().catch(() => null);
 }
 
 /**

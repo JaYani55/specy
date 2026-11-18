@@ -550,7 +550,7 @@ export interface PluginDefinition {
    * Optional admin connection settings sections contributed by this plugin.
    * Each section renders as a Card inside /admin/connections.
    */
-  adminSections?: PluginAdminConnectionSection[];
+  adminSections?: PluginAdminSection[];
 }
 
 // ─── Admin Connection Section ─────────────────────────────────────────────────
@@ -559,7 +559,15 @@ export interface PluginDefinition {
  * /admin/connections page. Plugins use this to add configuration UIs
  * for services like AI models, providers, etc.
  */
-export interface PluginAdminConnectionSection {
+/** Core admin pages a plugin section can target. */
+export type PluginAdminSectionPage = 'connections' | 'accounts';
+
+/**
+ * A settings section contributed by a plugin that renders inside a core admin
+ * page (`/admin/connections` or `/admin/accounts`). Plugins use this to add
+ * configuration UIs for services like AI models, providers and entitlements.
+ */
+export interface PluginAdminSection {
   /** Unique section identifier inside the plugin namespace. */
   id: string;
   /** Human-readable section title shown as the Card header. */
@@ -570,7 +578,21 @@ export interface PluginAdminConnectionSection {
   component: ComponentType;
   /** Lower numbers render first; defaults to 100. */
   order?: number;
+  /**
+   * Core admin page this section renders on. Defaults to `'connections'`
+   * (backwards compatible with the original connection-only field).
+   */
+  page?: PluginAdminSectionPage;
+  /**
+   * Optional role gate (exact match against the caller's `user_roles`).
+   * Example: `'super-admin'`. Omit for no extra gate beyond the plugin's
+   * own access rule.
+   */
+  requiredRole?: string;
 }
+
+/** @deprecated Use `PluginAdminSection`. Kept as an alias for existing imports. */
+export type PluginAdminConnectionSection = PluginAdminSection;
 
 // ─── Database Record ─────────────────────────────────────────────────────────
 /** Mirrors the public.plugins DB table. */
