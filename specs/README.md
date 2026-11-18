@@ -23,6 +23,7 @@ rather than a flat file list. Each folder has a `README.md` indexing its documen
 | [`features/`](features/) | Feature-level subsystems: forms, rich text editing |
 | [`plugins/`](plugins/) | Plugin development guide, installation lifecycle, EUPL licensing |
 | [`agents/`](agents/) | Everything agent-facing: MCP exposition, agent system prompt, frontend integration manifest, prompt specs, R2 file storage integration |
+| [`audits/`](audits/) | Audit-oriented documentation: business logic, control environments and BPMN process flows for compliance review |
 | [`plans/`](plans/) | Forward-looking plans and drafts (not yet implemented specs) |
 | [`changes/`](changes/) | Date-prefixed change records (`YYYY-MM-DD-<description>.md`) — mandatory for every change |
 
@@ -35,4 +36,5 @@ rather than a flat file list. Each folder has a `README.md` indexing its documen
 - *"How do I store files?"* → [`agents/r2-file-storage.md`](agents/r2-file-storage.md)
 - *"How does my plugin use the database?"* → [`agents/database-integration.md`](agents/database-integration.md)
 - *"What must I document after a change?"* → [`changes/`](changes/) (see AGENTS.md §3)
+- *"How does the AI credit system work (business/audit view)?"* → [`audits/AI-CREDIT-WALLETS-AUDIT.md`](audits/AI-CREDIT-WALLETS-AUDIT.md); technical view: [`features/ai-credit-wallets.md`](features/ai-credit-wallets.md)
 - *"PluraPi / agent sessions / build feedback for agents?"* → [`agents/plurapi-agent-bridge.md`](agents/plurapi-agent-bridge.md) — canonical bridge entry point incl. triage playbook

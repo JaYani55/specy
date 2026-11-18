@@ -17,3 +17,4 @@ Feature-level subsystem documentation.
 | [`pluradash-github-app-integration.md`](pluradash-github-app-integration.md) | PluraDash GitHub App & workspace repository management |
 | [`pluradash-r2-sync-engine.md`](pluradash-r2-sync-engine.md) | PluraDash R2 sync engine: GitHub ⇄ R2 workspace mirroring, dev/main branch protocol |
 | [`pluradash-plurapi-sessions-bridge.md`](pluradash-plurapi-sessions-bridge.md) | Pointer stub — canonical bridge doc: [`../agents/plurapi-agent-bridge.md`](../agents/plurapi-agent-bridge.md) |
+| [`ai-credit-wallets.md`](ai-credit-wallets.md) | AI credit wallets (PluraDash): post-paid wallet + grant/charge ledgers, entitlement RPCs, cron settlement, RLS, API/UI surface, PluraPi integration |

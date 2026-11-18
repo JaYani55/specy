@@ -1,7 +1,9 @@
 # AI Services, Packages & Credit Wallets — Revised Plan
 
-Status: **plan (not implemented)** · Owner: PluraDash plugin + manual PluraPi SQL
+Status: **implemented** (PluraDash `033` + runtime integration, 2026-11-17) · Owner: PluraDash plugin + manual PluraPi SQL
 Supersedes: the first draft of this document (2026-11-17)
+Live documentation: [`../features/ai-credit-wallets.md`](../features/ai-credit-wallets.md) (technical) ·
+[`../audits/AI-CREDIT-WALLETS-AUDIT.md`](../audits/AI-CREDIT-WALLETS-AUDIT.md) (business/audit). This plan is retained as the design record.
 
 ---
 
