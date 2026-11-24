@@ -1399,6 +1399,70 @@ const serializeForm = (form: FormRow, fields: FormFieldDefinition[]) => ({
   llm_instructions: form.llm_instructions,
 });
 
+/**
+ * Shared bearer-protected answer retrieval. Rows are read through the
+ * caller's own Supabase session, so the existing forms_answers RLS policy
+ * (user_select_forms_answers: user/staff/admin/super-admin) governs access
+ * exactly like the dashboard. IP/user-agent are never exposed via the API.
+ */
+const retrieveFormAnswers = async (
+  c: Context<{ Bindings: Env }>,
+  form: FormRow,
+  token: string | undefined,
+): Promise<Response> => {
+  if (!token) {
+    return c.json({ error: 'Bearer authentication required.' }, 401);
+  }
+
+  const auth = await verifyAuthSession(c.env, token);
+  if (!auth) {
+    return c.json({ error: 'Invalid or expired session.' }, 401);
+  }
+
+  const hasContentRole = auth.roles.some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin');
+  if (!hasContentRole) {
+    return c.json({ error: 'Insufficient permissions.' }, 403);
+  }
+
+  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '100', 10) || 100, 1), 500);
+  const offset = Math.max(parseInt(c.req.query('offset') || '0', 10) || 0, 0);
+  const ascending = c.req.query('order') === 'asc';
+
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const { count, error: countError } = await supabase
+    .from('forms_answers')
+    .select('id', { count: 'exact', head: true })
+    .eq('form_id', form.id);
+  if (countError) return c.json({ error: 'Failed to count answers.' }, 500);
+
+  const { data, error } = await supabase
+    .from('forms_answers')
+    .select('id, form_id, submitted_by, submitter_name, answers, source_slug, submitted_via, created_at')
+    .eq('form_id', form.id)
+    .order('created_at', { ascending })
+    .range(offset, offset + limit - 1);
+
+  if (error) return c.json({ error: 'Failed to load answers.' }, 500);
+
+  return c.json({
+    form: {
+      id: form.id,
+      name: form.name,
+      slug: form.slug,
+      requires_auth: form.requires_auth,
+      api_enabled: form.api_enabled,
+      share_enabled: form.share_enabled,
+    },
+    answers: data ?? [],
+    pagination: {
+      offset,
+      limit,
+      total: count ?? 0,
+    },
+  });
+};
+
 forms.get('/', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const supabase = await createSupabaseClient(c.env, token);
@@ -1566,6 +1630,27 @@ forms.post('/s/:tenantName/:shareSlug/upload', async (c) => {
   return response;
 });
 
+// GET /api/forms/share/:tenantName/:shareSlug/answers — bearer-protected answer retrieval
+forms.get('/share/:tenantName/:shareSlug/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
+
+  return retrieveFormAnswers(c, form, token);
+});
+
+forms.get('/s/:tenantName/:shareSlug/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
+
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
+
+  return retrieveFormAnswers(c, form, token);
+});
+
 forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
@@ -1679,6 +1764,32 @@ const submitFormAnswers = async (
 
   return c.json({ success: true, answer_id: answerId });
 };
+
+// GET /api/forms/:identifier/answers — bearer-protected answer retrieval (id or slug).
+// Registered BEFORE the 2-segment '/:tenantName/:formSlug' route so Hono does
+// not swallow '/x/answers' as a tenant/slug pair.
+forms.get('/:identifier/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+  const supabase = await createSupabaseClient(c.env, token);
+
+  const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
+
+  return retrieveFormAnswers(c, form, token);
+});
+
+// GET /api/forms/:tenantName/:formSlug/answers — bearer-protected answer retrieval (API variant)
+forms.get('/:tenantName/:formSlug/answers', async (c) => {
+  const token = parseBearerToken(c.req.header('Authorization'));
+
+  // Workspace-scoped resolution: the tenant segment must belong to the form.
+  const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
+  if (!form) return c.json({ error: 'Form not found.' }, 404);
+  if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
+
+  return retrieveFormAnswers(c, form, token);
+});
 
 forms.get('/:tenantName/:formSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));

@@ -35,6 +35,7 @@
 
 ## Files Changed
 
+- `api/routes/forms.ts` — **new bearer-protected answer retrieval**: shared `retrieveFormAnswers` handler + `GET /api/forms/share/:tenantName/:shareSlug/answers` (and `/s/…` alias), `GET /api/forms/:tenantName/:formSlug/answers`, `GET /api/forms/:identifier/answers`; reads through the caller's Supabase session (RLS-backed), pagination (`limit`/`offset`/`order`), IP/user-agent excluded from projection; identifier variant registered before the 2-segment form-definition route to avoid Hono route-shadowing
 - `api/lib/auth.ts` — transparent `spc_`-prefix exchange inside `verifyAuthSession`; new `viaApiToken` marker on `VerifiedAuthSession`
 - `api/routes/config.ts` — `GET /api/config/logging` open to any authenticated user; `PUT` restricted to `support`/`super-admin`
 - `api/routes/logs.ts` — list + delete endpoints accept `support` (route-level `user_id` scoping mirroring RLS); `stats`/`download` unchanged (super-admin)
@@ -47,7 +48,8 @@
 - `src/App.tsx` — `/admin/api` no longer super-admin-gated
 - `src/pages/Verwaltung.tsx` — API Administration card visible to all Verwaltung users
 - `src/pages/VerwaltungApi.tsx` — PAT management section (secure one-time reveal, masked list, revoke confirm); verbosity card read-only + paid-tier warning for users without `canManageLogging`
-- `src/lib/apiCatalog.ts` — API-token endpoints documented in the catalog
+- `src/lib/apiCatalog.ts` — API-token endpoints documented in the catalog; form-answer retrieval endpoints documented
+- `specs/features/forms.md` — document the bearer-protected answer retrieval contract (three variants, RLS-backed visibility, pagination, privacy note)
 - `specs/auth/README.md` — register `api-tokens.md`
 - `specs/agents/mcp-exposition.md` — register `agent_tokens_*` tools
 
@@ -61,7 +63,9 @@
   (nothing logged until enabled). agentLogger now skips `/api/tokens`.
 - **API surface:** new `/api/tokens*` endpoints; `GET/PUT /api/config/logging`
   permission change; `/api/schemas/logs` list/delete now accept `support`
-  (scoped to own entries). MCP `tools/list` grows by three authenticated tools.
+  (scoped to own entries); **new bearer-protected `GET .../answers` form
+  endpoints (share + api variants) reading answers through the caller's
+  RLS-scoped session**. MCP `tools/list` grows by three authenticated tools.
 - **Security:** PATs are super-admin-exclusive by exclusion; no token chaining
   via the `viaApiToken` marker (documented residual gap: sessions minted
   outside the exchange path cannot be distinguished — mitigated by per-account

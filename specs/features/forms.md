@@ -306,8 +306,10 @@ The Worker API exposes:
 - `GET /api/forms`
 - `GET /api/forms/:identifier`
 - `POST /api/forms/:identifier/answers`
+- `GET /api/forms/:identifier/answers` (bearer-protected answer retrieval)
 - `GET /api/forms/share/:shareSlug`
 - `POST /api/forms/share/:shareSlug/answers`
+- `GET /api/forms/share/:tenantName/:shareSlug/answers` (bearer-protected answer retrieval)
 
 Where `:identifier` can be either the form UUID or the internal slug.
 
@@ -535,6 +537,55 @@ Validation behavior:
 ### Share Endpoints
 
 `GET /api/forms/share/:shareSlug` and `POST /api/forms/share/:shareSlug/answers` use the same normalized definition and submission contract, but resolve the form by `share_slug` instead of internal slug/UUID.
+
+### `GET /api/forms/.../answers` — Retrieve Answers (Bearer Protected)
+
+Retrieval of submitted answers is available in three resolution variants:
+
+| Variant | Resolution | Gate |
+|---|---|---|
+| `GET /api/forms/share/:tenantName/:shareSlug/answers` (alias `/s/…`) | share slug + tenant segment | `share_enabled` |
+| `GET /api/forms/:tenantName/:formSlug/answers` | workspace-scoped slug | `api_enabled` |
+| `GET /api/forms/:identifier/answers` | form UUID or slug | `api_enabled` |
+
+All variants are **bearer-protected** — no anonymous access:
+
+- missing token → `401`
+- invalid/expired token (incl. API tokens, exchanged transparently) → `401`
+- caller without a content role (`user`/`staff`/`admin`/`super-admin`) → `403`
+
+Rows are read through the **caller's own Supabase session**, so the existing
+`user_select_forms_answers` RLS policy governs visibility exactly like the
+dashboard. Query parameters: `limit` (1–500, default 100), `offset` (default 0),
+`order=asc|desc` (default newest first).
+
+Response:
+
+```json
+{
+  "form": { "id": "…", "name": "…", "slug": "…" },
+  "answers": [
+    {
+      "id": "…",
+      "form_id": "…",
+      "submitted_by": "…",
+      "submitter_name": "…",
+      "answers": { },
+      "source_slug": "…",
+      "submitted_via": "share",
+      "created_at": "…"
+    }
+  ],
+  "pagination": { "offset": 0, "limit": 100, "total": 42 }
+}
+```
+
+Privacy note: `ip_address` and `user_agent` are intentionally excluded from the
+API projection (the dashboard reads them via its own Supabase session).
+
+Tenancy note: `forms_answers` has no tenant attribution today — visibility is
+governed by the content-role RLS policy, mirroring dashboard behavior.
+Tenant-scoped answer visibility is a documented follow-up.
 
 ---
 
