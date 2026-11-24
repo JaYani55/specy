@@ -1,6 +1,6 @@
 import { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
-export type AppRole = 'user' | 'admin' | 'super-admin';
+export type AppRole = 'user' | 'admin' | 'super-admin' | 'support';
 
 // Enums instead of type for better type safety
 export enum UserRole {

@@ -12,6 +12,13 @@ import {
 } from '../lib/managedSecrets';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 import { normalizeSchemaIntegrationRequirements } from '../lib/schemaRouting';
+import {
+  API_TOKEN_PREFIX,
+  MAX_ACTIVE_TOKENS_PER_USER,
+  generateApiToken,
+  hashApiToken,
+  validateTokenCreateInput,
+} from '../lib/apiTokenCrypto';
 import { getOptionalAuthSession, unauthorizedWithChallenge } from '../lib/auth';
 import {
   getDiscoverableSpecBySlug,
@@ -104,6 +111,9 @@ const BUILT_IN_MCP_TOOLS = [
   'specy_products_archive',
   'specy_products_delete',
   'specy_products_reassign_schema',
+  'agent_tokens_create',
+  'agent_tokens_list',
+  'agent_tokens_revoke',
 ] as const;
 
 const AUTHENTICATED_MCP_TOOLS = new Set([
@@ -114,6 +124,7 @@ const AUTHENTICATED_MCP_TOOLS = new Set([
   'specy_pages_schemas_preview',
   'specy_products_list', 'specy_products_create', 'specy_products_get', 'specy_products_update', 'specy_products_publish', 'specy_products_archive', 'specy_products_delete',
   'specy_products_reassign_schema',
+  'agent_tokens_create', 'agent_tokens_list', 'agent_tokens_revoke',
 ]);
 
 function generateRegistrationCode(): string {
@@ -1572,6 +1583,115 @@ async function createMcpServerWithTools(
   );
 
   // ── Tool: register_frontend ─────────────────────────────────────────────
+  // ── Tools: agent_tokens_* (authenticated, non-super-admin callers) ────
+  // Self-service API tokens (PATs): OAuth bootstraps trust once, the agent
+  // then manages its own machine credentials. The raw token is returned
+  // exactly once; only the SHA-256 hash is stored. Super-admin accounts are
+  // excluded. Contract: specs/auth/api-tokens.md
+  if (isAuthenticated && authSession && !authSession.roles.includes('super-admin') && authSession.userId) {
+    const tokenOwnerClient = await createSupabaseClient(env, authToken ?? undefined);
+    const ownerUserId = authSession.userId;
+
+    server.tool(
+      'agent_tokens_create',
+      'Create an API token (PAT) for the authenticated account. The raw token is returned exactly once — store it immediately. The token acts as the account (same roles/tenant) until revoked and is accepted as `Authorization: Bearer spc_…` on all Specy API endpoints.',
+      {
+        name: z.string().min(1).max(100).describe('Human-readable label for the token (e.g. "n8n product sync")'),
+        expires_at: z.string().optional().describe('Optional ISO 8601 expiry. Omit for a token that never expires.'),
+      },
+      async ({ name, expires_at }) => {
+        const validationError = validateTokenCreateInput(name, expires_at);
+        if (validationError) return mcpToolFailure(validationError, 400);
+
+        const { count: activeCount, error: countError } = await tokenOwnerClient
+          .from('api_tokens')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', ownerUserId)
+          .is('revoked_at', null);
+        if (countError) return mcpToolFailure('Failed to check existing tokens.', 500);
+        if ((activeCount ?? 0) >= MAX_ACTIVE_TOKENS_PER_USER) {
+          return mcpToolFailure(`Active token limit reached (max ${MAX_ACTIVE_TOKENS_PER_USER}). Revoke a token first.`, 400);
+        }
+
+        const generated = generateApiToken();
+        const tokenHash = await hashApiToken(generated.raw);
+
+        const { data, error } = await tokenOwnerClient
+          .from('api_tokens')
+          .insert({
+            user_id: ownerUserId,
+            tenant_id: authSession.tenantId,
+            name: name.trim(),
+            token_hash: tokenHash,
+            prefix: generated.displayPrefix,
+            expires_at: expires_at ? new Date(expires_at).toISOString() : null,
+          })
+          .select('id, name, prefix, created_at, expires_at')
+          .single();
+
+        if (error || !data) return mcpToolFailure('Failed to create API token.', 500);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              token: generated.raw,
+              prefix: generated.displayPrefix,
+              token_record: data,
+              usage: `Send as Authorization: Bearer <token> against ${baseUrl}/api/* — the API exchanges it transparently (or POST /api/tokens/session).`,
+              warning: 'This raw token is shown exactly once. Store it securely now — it cannot be retrieved later.',
+            }, null, 2),
+          }],
+        };
+      },
+    );
+
+    server.tool(
+      'agent_tokens_list',
+      'List the API tokens (PATs) of the authenticated account. Metadata only — raw tokens are never retrievable.',
+      {},
+      async () => {
+        const { data, error } = await tokenOwnerClient
+          .from('api_tokens')
+          .select('id, name, prefix, created_at, expires_at, last_used_at, revoked_at')
+          .eq('user_id', ownerUserId)
+          .order('created_at', { ascending: false });
+
+        if (error) return mcpToolFailure('Failed to load API tokens.', 500);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ tokens: data ?? [], total: (data ?? []).length }, null, 2),
+          }],
+        };
+      },
+    );
+
+    server.tool(
+      'agent_tokens_revoke',
+      "Revoke one of the authenticated account's API tokens (PATs) by id. Revoked tokens stop authenticating immediately.",
+      { id: z.string().uuid().describe('Token id from agent_tokens_list') },
+      async ({ id }) => {
+        const { data, error } = await tokenOwnerClient
+          .from('api_tokens')
+          .update({ revoked_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('user_id', ownerUserId)
+          .is('revoked_at', null)
+          .select('id')
+          .maybeSingle();
+
+        if (error) return mcpToolFailure('Failed to revoke API token.', 500);
+        if (!data) return mcpToolFailure('Token not found or already revoked.', 404);
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: true, revoked: id }, null, 2) }],
+        };
+      },
+    );
+  }
+
   if (isAuthenticated) server.tool(
     'register_frontend',
     'Register a deployed frontend with a schema. Requires the registration code from the CMS and the frontend domain URL.',

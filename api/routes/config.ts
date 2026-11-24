@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { requireAppRole } from '../lib/auth';
+import { requireAppRole, requireAnyJwtRole, requireAuthSession } from '../lib/auth';
 import type { Env } from '../lib/supabase';
 import { buildMailSecretName, buildS3SecretName, getMailSecretNamespace, getManagedSecretMetadata, getS3SourceSecretNamespace, upsertManagedSecret } from '../lib/managedSecrets';
 import { invalidateLoggingConfigCache } from '../middleware/agentLogger';
@@ -201,16 +201,21 @@ config.get('/mail', async (c) => {
   return c.json({ mail, secrets });
 });
 
+// GET /logging — any authenticated user may read the logging configuration.
+// The /admin/api overview renders the allowlist read-only for users without
+// logging-management rights (support / super-admin).
 config.get('/logging', async (c) => {
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAuthSession(c);
   if (auth instanceof Response) return auth;
 
   const logging = await getLoggingConfig(c.env);
   return c.json({ logging });
 });
 
+// PUT /logging — only support / super-admin may change the agentLogger
+// allowlist (endpoint tagging + verbosity).
 config.put('/logging', async (c) => {
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAnyJwtRole(c, ['support', 'super-admin']);
   if (auth instanceof Response) return auth;
 
   let body: LoggingConfigPayload;

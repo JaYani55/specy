@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { createSupabaseClient, type Env } from './supabase';
 import { getPublicUrlConfig } from './systemConfig';
+import { exchangeApiTokenForSession, isApiTokenValue } from './apiTokens';
 
 export type AppRole = 'user' | 'admin' | 'super-admin';
 
@@ -19,6 +20,12 @@ export interface VerifiedAuthSession {
   isAgent: boolean;
   tenantId: string | null;
   claims: JwtPayload;
+  /**
+   * True when the caller authenticated with an API token (PAT) that was
+   * transparently exchanged for a Supabase session. Used to keep PAT-minted
+   * sessions from minting further PATs (no token chaining).
+   */
+  viaApiToken?: boolean;
 }
 
 const ROLE_ORDER: AppRole[] = ['user', 'admin', 'super-admin'];
@@ -68,8 +75,21 @@ function hasAnyJwtRole(userRoles: string[], requiredRoles: string[]): boolean {
 }
 
 export async function verifyAuthSession(env: Env, token: string): Promise<VerifiedAuthSession | null> {
-  const supabase = await createSupabaseClient(env, token);
-  const { data, error } = await supabase.auth.getClaims(token);
+  // API tokens (PATs) are exchanged transparently for a real Supabase session
+  // so RLS and the access-token claims hook apply unchanged.
+  let effectiveToken = token;
+  let viaApiToken = false;
+  if (isApiTokenValue(token)) {
+    const session = await exchangeApiTokenForSession(env, token);
+    if (!session) {
+      return null;
+    }
+    effectiveToken = session.accessToken;
+    viaApiToken = true;
+  }
+
+  const supabase = await createSupabaseClient(env, effectiveToken);
+  const { data, error } = await supabase.auth.getClaims(effectiveToken);
 
   if (error || !data) {
     return null;
@@ -79,7 +99,7 @@ export async function verifyAuthSession(env: Env, token: string): Promise<Verifi
   const roles = normalizeRoles(claims.user_roles);
 
   return {
-    token,
+    token: effectiveToken,
     roles,
     userId: normalizeUserId(claims.sub),
     // is_agent is injected by custom_access_token_hook; fall back to the role
@@ -87,6 +107,7 @@ export async function verifyAuthSession(env: Env, token: string): Promise<Verifi
     isAgent: claims.is_agent === true || roles.includes('agent'),
     tenantId: normalizeUserId(claims.tenant_id),
     claims,
+    viaApiToken,
   };
 }
 

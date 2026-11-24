@@ -293,7 +293,7 @@ const AppContent = () => {
           <Route path="/admin/accounts" element={<ProtectedRoute requiredRole="admin"><VerwaltungAccounts /></ProtectedRoute>} />
           <Route path="/admin/mail" element={<ProtectedRoute requiredRole="user"><VerwaltungMail /></ProtectedRoute>} />
           <Route path="/admin/connections" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungConnections /></ProtectedRoute>} />
-          <Route path="/admin/api" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungApi /></ProtectedRoute>} />
+          <Route path="/admin/api" element={<ProtectedRoute><VerwaltungApi /></ProtectedRoute>} />
           <Route path="/admin/branding" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungBranding /></ProtectedRoute>} />
           <Route path="/admin/add-mentor" element={<ProtectedRoute requiredRole="user"><VerwaltungAddMentor /></ProtectedRoute>} />
           <Route path="/admin/all-mentors" element={<ProtectedRoute requiredRole="user"><VerwaltungAllMentors /></ProtectedRoute>} />

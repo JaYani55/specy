@@ -3,6 +3,7 @@
 | Document | Purpose |
 |---|---|
 | [`authentication-authorization.md`](authentication-authorization.md) | Supabase Auth model, roles, RLS-backed authorization, token lifecycle |
+| [`api-tokens.md`](api-tokens.md) | Self-service API tokens (PATs): creation, exchange, MCP tools, guardrails |
 | [`oauth-mcp-authentication.md`](oauth-mcp-authentication.md) | OAuth 2.1 (Authorization Code + PKCE) for programmatic MCP clients |
 | [`plugin-claims.md`](plugin-claims.md) | Plugin-declared custom JWT claims: declaration, resolver contract, mint-time merge, runtime dispatch |
 

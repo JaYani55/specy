@@ -31,6 +31,9 @@ export interface Permissions {
   
   // Access permissions
   canAccessVerwaltung: boolean;
+
+  // Logging management (support or super-admin only)
+  canManageLogging: boolean;
   
   // Account administration (super-admin only)
   canManageAccounts: boolean;
@@ -59,6 +62,7 @@ export const usePermissions = (): Permissions => {
     const userRoles = user?.roles || [];
     const isSuperAdmin = userRoles.includes('super-admin');
     const isAdmin = isSuperAdmin || userRoles.includes('admin');
+    const isSupport = userRoles.includes('support');
     const isUser = isAdmin || userRoles.includes('user') || userRoles.includes('staff');
 
     const hasRole = (role: AppRole) => {
@@ -113,6 +117,9 @@ export const usePermissions = (): Permissions => {
 
       // Access permissions
       canAccessVerwaltung: isUser,
+
+      // Logging management (support or super-admin)
+      canManageLogging: isSuperAdmin || isSupport,
 
       // Account administration
       canManageAccounts: isAdmin,

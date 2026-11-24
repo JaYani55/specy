@@ -2,15 +2,20 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Braces,
+  Check,
+  Copy,
   Database,
   Eye,
   FileJson,
   KeyRound,
   Loader2,
+  Plus,
   Search,
   Shield,
+  Trash2,
   Waypoints,
 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -25,7 +30,14 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getLoggingConfigSettings, updateLoggingConfigSettings } from '@/services/connectionsService';
+import {
+  type ApiTokenRecord,
+  createApiToken,
+  listApiTokens,
+  revokeApiToken,
+} from '@/services/apiTokensService';
 import { toast } from 'sonner';
 
 const methodClasses: Record<ApiEndpointDefinition['method'], string> = {
@@ -239,6 +251,20 @@ const VerwaltungApi: React.FC = () => {
   const [loggingLoading, setLoggingLoading] = useState(true);
   const [loggingSaving, setLoggingSaving] = useState(false);
 
+  // API tokens (PATs)
+  const [apiTokens, setApiTokens] = useState<ApiTokenRecord[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(true);
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenFormOpen, setTokenFormOpen] = useState(false);
+  const [tokenName, setTokenName] = useState('');
+  const [tokenExpiry, setTokenExpiry] = useState('');
+  const [revealedToken, setRevealedToken] = useState<{ raw: string; record: ApiTokenRecord } | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [tokenPendingRevoke, setTokenPendingRevoke] = useState<ApiTokenRecord | null>(null);
+
+  const canManageLogging = permissions.canManageLogging;
+  const isSuperAdmin = permissions.userRoles.includes('super-admin');
+
   const apiCatalog = useMemo(() => getApiCatalog(permissions.userRoles), [permissions.userRoles]);
   const apiTags = useMemo(() => getApiTags(permissions.userRoles), [permissions.userRoles]);
 
@@ -249,10 +275,28 @@ const VerwaltungApi: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!permissions.canManageAccounts || !permissions.userRoles.includes('super-admin')) {
-      navigate('/admin');
-    }
-  }, [navigate, permissions.canManageAccounts, permissions.userRoles]);
+    let cancelled = false;
+
+    const loadApiTokens = async () => {
+      setTokensLoading(true);
+      try {
+        const tokens = await listApiTokens();
+        if (!cancelled) setApiTokens(tokens);
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : 'Failed to load API tokens');
+        }
+      } finally {
+        if (!cancelled) setTokensLoading(false);
+      }
+    };
+
+    void loadApiTokens();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,6 +372,56 @@ const VerwaltungApi: React.FC = () => {
       toast.error(error instanceof Error ? error.message : 'Failed to save logging settings');
     } finally {
       setLoggingSaving(false);
+    }
+  };
+
+  const submitNewToken = async () => {
+    if (!tokenName.trim()) {
+      toast.error(language === 'de' ? 'Bitte einen Namen angeben.' : 'Please provide a name.');
+      return;
+    }
+    setTokenSaving(true);
+    try {
+      const created = await createApiToken({
+        name: tokenName.trim(),
+        expires_at: tokenExpiry ? new Date(tokenExpiry).toISOString() : null,
+      });
+      setApiTokens((current) => [created.token_record, ...current]);
+      setRevealedToken({ raw: created.token, record: created.token_record });
+      setTokenCopied(false);
+      setTokenFormOpen(false);
+      setTokenName('');
+      setTokenExpiry('');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create API token');
+    } finally {
+      setTokenSaving(false);
+    }
+  };
+
+  const confirmRevokeToken = async () => {
+    if (!tokenPendingRevoke) return;
+    try {
+      await revokeApiToken(tokenPendingRevoke.id);
+      setApiTokens((current) => current.map((entry) =>
+        entry.id === tokenPendingRevoke.id ? { ...entry, revoked_at: new Date().toISOString() } : entry,
+      ));
+      toast.success(language === 'de' ? 'Token widerrufen' : 'Token revoked');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to revoke API token');
+    } finally {
+      setTokenPendingRevoke(null);
+    }
+  };
+
+  const copyRevealedToken = async () => {
+    if (!revealedToken) return;
+    try {
+      await navigator.clipboard.writeText(revealedToken.raw);
+      setTokenCopied(true);
+      setTimeout(() => setTokenCopied(false), 2000);
+    } catch {
+      toast.error(language === 'de' ? 'Kopieren fehlgeschlagen.' : 'Copy failed.');
     }
   };
 
@@ -455,6 +549,88 @@ const VerwaltungApi: React.FC = () => {
 
         <Card className="border-slate-200 dark:border-slate-800">
           <CardHeader className="pb-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5" /> {language === 'de' ? 'API-Token (PAT) Verwaltung' : 'API Token (PAT) Management'}</CardTitle>
+                <CardDescription>
+                  {language === 'de'
+                    ? 'Selbst erstellte Zugangstokens für externe Automatisierungen (z. B. n8n). Ein Token agiert mit den eigenen Berechtigungen im zugehörigen Arbeitsbereich und kann jederzeit widerrufen werden. Super-Admin-Konten können keine Tokens erstellen.'
+                    : 'Self-created access tokens for external automations (e.g. n8n). A token acts with your own permissions inside your workspace and can be revoked at any time. Super-admin accounts cannot create tokens.'}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => setTokenFormOpen(true)} disabled={isSuperAdmin}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {language === 'de' ? 'Token erstellen' : 'Create token'}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isSuperAdmin && (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {language === 'de'
+                    ? 'Für Super-Admin-Konten sind API-Tokens deaktiviert.'
+                    : 'API tokens are disabled for super-admin accounts.'}
+                </span>
+              </div>
+            )}
+
+            {tokensLoading ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {language === 'de' ? 'Lade API-Tokens ...' : 'Loading API tokens ...'}
+              </div>
+            ) : apiTokens.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                {language === 'de' ? 'Noch keine API-Tokens vorhanden.' : 'No API tokens yet.'}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {apiTokens.map((entry) => {
+                  const isRevoked = Boolean(entry.revoked_at);
+                  const isExpired = Boolean(entry.expires_at && new Date(entry.expires_at).getTime() <= Date.now());
+                  const active = !isRevoked && !isExpired;
+                  return (
+                    <div key={entry.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-950/40">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-slate-900 dark:text-slate-100">{entry.name}</span>
+                          <Badge variant="outline" className="font-mono text-xs">{entry.prefix}••••••••</Badge>
+                          {active && <Badge variant="secondary">{language === 'de' ? 'Aktiv' : 'Active'}</Badge>}
+                          {isRevoked && <Badge variant="outline" className="border-rose-300 text-rose-700 dark:border-rose-800 dark:text-rose-300">{language === 'de' ? 'Widerrufen' : 'Revoked'}</Badge>}
+                          {isExpired && <Badge variant="outline" className="border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300">{language === 'de' ? 'Abgelaufen' : 'Expired'}</Badge>}
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                          <span>{language === 'de' ? 'Erstellt' : 'Created'}: {new Date(entry.created_at).toLocaleString(language === 'de' ? 'de-DE' : 'en-US')}</span>
+                          <span>{language === 'de' ? 'Letzte Nutzung' : 'Last used'}: {entry.last_used_at ? new Date(entry.last_used_at).toLocaleString(language === 'de' ? 'de-DE' : 'en-US') : '—'}</span>
+                          <span>{language === 'de' ? 'Läuft ab' : 'Expires'}: {entry.expires_at ? new Date(entry.expires_at).toLocaleDateString(language === 'de' ? 'de-DE' : 'en-US') : language === 'de' ? 'nie' : 'never'}</span>
+                        </div>
+                      </div>
+                      <div className="shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                          disabled={isRevoked}
+                          onClick={() => setTokenPendingRevoke(entry)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {language === 'de' ? 'Widerrufen' : 'Revoke'}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 dark:border-slate-800">
+          <CardHeader className="pb-4">
             <CardTitle>{language === 'de' ? 'Katalog filtern' : 'Filter Catalog'}</CardTitle>
             <CardDescription>{language === 'de' ? 'Suche nach Pfad, Handler, Tag, Tabelle oder Methode.' : 'Search by path, handler, tag, table, or method.'}</CardDescription>
           </CardHeader>
@@ -514,10 +690,11 @@ const VerwaltungApi: React.FC = () => {
                 <CardTitle>{language === 'de' ? 'Verbosity Settings' : 'Verbosity Settings'}</CardTitle>
                 <CardDescription>
                   {language === 'de'
-                    ? 'Super-Admin-Allowlist fuer agentLogger. POST /mcp schaltet alle MCP-Methoden und Tools gemeinsam; einzelne Tools werden im Log ueber operation_name unterschieden.'
-                    : 'Super-admin allowlist for agentLogger. POST /mcp toggles all MCP methods and tools together; individual tools are distinguished in logs by operation_name.'}
+                    ? 'Allowlist für agentLogger (Support und Super-Admin). POST /mcp schaltet alle MCP-Methoden und Tools gemeinsam; einzelne Tools werden im Log über operation_name unterschieden.'
+                    : 'agentLogger allowlist (support and super-admin). POST /mcp toggles all MCP methods and tools together; individual tools are distinguished in logs by operation_name.'}
                 </CardDescription>
               </div>
+              {canManageLogging && (
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => setSelectedLogKeys(allLoggableKeys)} disabled={loggingLoading || loggingSaving}>
                   {language === 'de' ? 'Alle aktivieren' : 'Enable all'}
@@ -534,9 +711,20 @@ const VerwaltungApi: React.FC = () => {
                   {language === 'de' ? 'Speichern' : 'Save'}
                 </Button>
               </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!canManageLogging && (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {language === 'de'
+                    ? 'Hinweis: Die detaillierte Logging-Steuerung ist Teil eines kostenpflichtigen Tarifs. Die aktuelle Einstellung ist nur sichtbar.'
+                    : 'Note: detailed logging control is part of a paid tier. The current setting is view-only.'}
+                </span>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
               <Badge variant="secondary">{selectedLogKeys.length} / {allLoggableKeys.length}</Badge>
               <span>
@@ -565,6 +753,7 @@ const VerwaltungApi: React.FC = () => {
                         id={`log-endpoint-${endpoint.id}`}
                         checked={selectedLogKeySet.has(endpointKey)}
                         onCheckedChange={(checked) => toggleLogKey(endpointKey, checked === true)}
+                        disabled={!canManageLogging}
                         className="mt-1"
                       />
                       <div className="min-w-0 space-y-2">
@@ -596,7 +785,7 @@ const VerwaltungApi: React.FC = () => {
               <div>• {language === 'de' ? 'agentLogger sitzt vor /api/* und /mcp*; MCP-SSE-Ergebnisse werden fuer die Tool-Auswertung mitgelesen.' : 'agentLogger sits in front of /api/* and /mcp*; MCP SSE results are read for tool-level outcomes.'}</div>
               <div>• {language === 'de' ? 'POST /mcp ist ein gemeinsamer Verbosity-Schalter; operation_name unterscheidet die einzelnen Tools.' : 'POST /mcp is one shared verbosity toggle; operation_name distinguishes individual tools.'}</div>
               <div>• {language === 'de' ? 'Die Log-Endpunkte werden vor /api/schemas montiert, damit /api/schemas/logs nicht erneut geloggt wird.' : 'The log endpoints are mounted before /api/schemas so /api/schemas/logs does not recursively re-log itself.'}</div>
-              <div>• {language === 'de' ? 'Super-Admins koennen ueber die Verbosity Settings einzelne agentLogger-Endpunkte gezielt ein- oder ausschalten.' : 'Super-admins can selectively enable or disable individual agentLogger endpoints through Verbosity Settings.'}</div>
+              <div>• {language === 'de' ? 'Support und Super-Admins koennen ueber die Verbosity Settings einzelne agentLogger-Endpunkte gezielt ein- oder ausschalten.' : 'Support and super-admins can selectively enable or disable individual agentLogger endpoints through Verbosity Settings.'}</div>
             </CardContent>
           </Card>
           <Card className="border-slate-200 dark:border-slate-800">
@@ -618,6 +807,122 @@ const VerwaltungApi: React.FC = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Create-token dialog */}
+        <Dialog open={tokenFormOpen} onOpenChange={setTokenFormOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{language === 'de' ? 'API-Token erstellen' : 'Create API token'}</DialogTitle>
+              <DialogDescription>
+                {language === 'de'
+                  ? 'Das Token wird nur einmal angezeigt und danach sicher verschluesselt gespeichert. Es agiert mit Ihren eigenen Berechtigungen.'
+                  : 'The token is shown once and stored securely afterwards. It acts with your own permissions.'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="api-token-name">{language === 'de' ? 'Name' : 'Name'}</Label>
+                <Input
+                  id="api-token-name"
+                  value={tokenName}
+                  onChange={(event) => setTokenName(event.target.value)}
+                  placeholder={language === 'de' ? 'z. B. n8n Produktabgleich' : 'e.g. n8n product sync'}
+                  maxLength={100}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="api-token-expiry">{language === 'de' ? 'Ablaufdatum (optional)' : 'Expiry date (optional)'}</Label>
+                <Input
+                  id="api-token-expiry"
+                  type="date"
+                  value={tokenExpiry}
+                  onChange={(event) => setTokenExpiry(event.target.value)}
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {language === 'de' ? 'Ohne Datum laeuft das Token nie ab.' : 'Without a date the token never expires.'}
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setTokenFormOpen(false)} disabled={tokenSaving}>
+                  {language === 'de' ? 'Abbrechen' : 'Cancel'}
+                </Button>
+                <Button onClick={submitNewToken} disabled={tokenSaving || !tokenName.trim()}>
+                  {tokenSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {language === 'de' ? 'Erstellen' : 'Create'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Revealed-token dialog — raw value shown exactly once */}
+        <Dialog open={Boolean(revealedToken)} onOpenChange={(open) => { if (!open) setRevealedToken(null); }}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{language === 'de' ? 'Token gespeichert' : 'Token created'}</DialogTitle>
+              <DialogDescription>
+                {language === 'de'
+                  ? 'Kopieren Sie das Token jetzt. Es wird aus Sicherheitsgruenden nur dieses eine Mal angezeigt und kann spaeter nicht wieder abgerufen werden.'
+                  : 'Copy the token now. For security reasons it is shown only this once and cannot be retrieved later.'}
+              </DialogDescription>
+            </DialogHeader>
+            {revealedToken && (
+              <div className="space-y-4">
+                <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-950 p-3 dark:border-slate-800">
+                  <code className="min-w-0 flex-1 break-all font-mono text-xs text-slate-100">{revealedToken.raw}</code>
+                  <Button variant="outline" size="sm" className="shrink-0" onClick={copyRevealedToken}>
+                    {tokenCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    <span className="ml-2">{tokenCopied ? (language === 'de' ? 'Kopiert' : 'Copied') : (language === 'de' ? 'Kopieren' : 'Copy')}</span>
+                  </Button>
+                </div>
+                <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    {language === 'de'
+                      ? 'Verwenden Sie das Token als Authorization-Header: `Authorization: Bearer <Token>`.'
+                      : 'Use the token as an authorization header: `Authorization: Bearer <token>`.'}
+                  </span>
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={() => setRevealedToken(null)}>
+                    {language === 'de' ? 'Fertig' : 'Done'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Revoke-confirmation dialog */}
+        <Dialog open={Boolean(tokenPendingRevoke)} onOpenChange={(open) => { if (!open) setTokenPendingRevoke(null); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{language === 'de' ? 'Token widerrufen?' : 'Revoke token?'}</DialogTitle>
+              <DialogDescription>
+                {language === 'de'
+                  ? 'Widerrufene Tokens verlieren sofort ihre Gueltigkeit und koennen nicht wiederhergestellt werden.'
+                  : 'Revoked tokens immediately lose validity and cannot be restored.'}
+              </DialogDescription>
+            </DialogHeader>
+            {tokenPendingRevoke && (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-800">
+                  <div className="font-medium text-slate-900 dark:text-slate-100">{tokenPendingRevoke.name}</div>
+                  <div className="font-mono text-xs text-slate-500 dark:text-slate-400">{tokenPendingRevoke.prefix}••••••••</div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setTokenPendingRevoke(null)}>
+                    {language === 'de' ? 'Abbrechen' : 'Cancel'}
+                  </Button>
+                  <Button variant="destructive" onClick={confirmRevokeToken}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {language === 'de' ? 'Widerrufen' : 'Revoke'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

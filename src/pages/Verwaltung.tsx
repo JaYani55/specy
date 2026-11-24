@@ -124,8 +124,7 @@ const Verwaltung = () => {
         : 'Swagger-style operational view of worker endpoints with auth, logging, and payload details',
       icon: Waypoints,
       href: '/admin/api',
-      permission: 'canManageAccounts',
-      isSuperAdmin: true,
+      permission: 'canAccessVerwaltung',
       color: 'from-cyan-600 to-slate-800',
     },
     {

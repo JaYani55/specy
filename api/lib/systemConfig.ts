@@ -374,7 +374,9 @@ export async function getLoggingConfig(env: Env): Promise<LoggingConfigValues> {
     // Local development or bootstrap path can fall back to defaults.
   }
 
-  return { mode: 'all', enabledEndpointKeys: [] };
+  // Verbosity is OFF by default: nothing is logged until a support/super-admin
+  // explicitly enables endpoints (mode 'custom' + allowlist).
+  return { mode: 'custom', enabledEndpointKeys: [] };
 }
 
 export async function upsertLoggingConfig(env: Env, input: LoggingConfigValues): Promise<void> {

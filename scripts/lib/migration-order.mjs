@@ -156,6 +156,13 @@ export const MIGRATION_ORDER_CORE = [
   // agent_logs retention: batched cleanup function + daily pg_cron job
   // (14-day default window). Needs agent_logs (agent_logs.sql) and pg_cron.
   '202610160002_agent_logs_retention.sql',
+  // Support-role access to agent_logs (retrieve/delete own entries via
+  // user_id). Needs agent_logs + user_id column (202610010001) and
+  // is_support() (202609090002).
+  '202610200001_agent_logs_support_rls.sql',
+  // Self-service API tokens (PATs). Needs tenants (202605240001) and
+  // is_super_admin() (202605240001/202609290001 repair).
+  '202610200002_api_tokens.sql',
   // Repair: re-asserts the canonical catalogue product-aggregate RPC
   // definitions (unified 'event' eligibility). The runner only re-applies
   // checksum-drifted migrations, so a database that recorded the unification

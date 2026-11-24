@@ -15,6 +15,7 @@ import formsRoute from './routes/forms';
 import mailRoute from './routes/mail';
 import objectsRoute from './routes/objects';
 import specsRoute from './routes/specs';
+import tokensRoute from './routes/tokens';
 import knowledgeBase from './routes/knowledgeBase';
 import products from './routes/products';
 import { mountPluginRoutes } from './plugin-routes';
@@ -174,6 +175,9 @@ app.get('/.well-known/mcp.json', (c) => {
       'specy_products_archive',
       'specy_products_delete',
       'specy_products_reassign_schema',
+      'agent_tokens_create',
+      'agent_tokens_list',
+      'agent_tokens_revoke',
     ],
     authentication: {
       required: true,
@@ -240,6 +244,7 @@ app.route('/api/forms', formsRoute);
 app.route('/api/mail', mailRoute);
 app.route('/api/objects', objectsRoute);
 app.route('/api/specs', specsRoute);
+app.route('/api/tokens', tokensRoute);
 app.route('/api/knowledge-base', knowledgeBase);
 app.route('/mcp', mcpRoute);
 

@@ -255,9 +255,10 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   const path = pathname + url.search;
 
   // Skip logging for the logs management endpoints themselves (avoid recursion),
-  // for sensitive secrets/connections management to prevent token leaks, and
-  // for high-frequency liveness/monitoring probes (zero diagnostic value).
-  if (pathname.startsWith('/api/schemas/logs') || pathname.startsWith('/api/secrets') || isMonitoringPath(pathname)) {
+  // for sensitive secrets/connections management to prevent token leaks, for
+  // API-token management (raw PATs must never appear in logs), and for
+  // high-frequency liveness/monitoring probes (zero diagnostic value).
+  if (pathname.startsWith('/api/schemas/logs') || pathname.startsWith('/api/secrets') || pathname.startsWith('/api/tokens') || isMonitoringPath(pathname)) {
     return next();
   }
 

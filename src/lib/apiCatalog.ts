@@ -1813,6 +1813,104 @@ export const CORE_API_CATALOG: ApiEndpointDefinition[] = [
     ],
     notes: ['This is a generated integration point, not a single callable route.', 'Run plugin installation to regenerate the mount file when plugins provide API handlers.'],
   },
+  {
+    id: 'api-tokens-create',
+    tag: 'Platform',
+    method: 'POST',
+    path: '/api/tokens',
+    summary: 'Create an API token (PAT) for the own account',
+    description: 'Mints a self-service API token. The raw token (spc_…) is returned exactly once and stored only as a SHA-256 hash. Super-admin accounts cannot hold API tokens; API-token-authenticated sessions cannot mint further tokens.',
+    auth: 'bearer-required',
+    mountsAt: '/api/tokens',
+    sourceFile: 'api/routes/tokens.ts',
+    logging: 'none',
+    parameters: [
+      { name: 'name', in: 'body', required: true, type: 'string', description: 'Human-readable label (1-100 chars).' },
+      { name: 'expires_at', in: 'body', required: false, type: 'string', description: 'Optional ISO 8601 expiry. Omit for a non-expiring token.' },
+    ],
+    requestExample: `{ "name": "n8n product sync", "expires_at": "2027-01-01T00:00:00Z" }`,
+    responseExamples: [
+      {
+        status: 201,
+        description: 'Token created — raw value shown exactly once.',
+        example: `{
+  "token": "spc_9f2K…43chars",
+  "token_record": { "id": "…", "name": "n8n product sync", "prefix": "spc_9f2Kab12", "expires_at": "…", "created_at": "…" }
+}`,
+      },
+      { status: 400, description: 'Validation error or active-token limit reached.', example: `{ "error": "Active token limit reached (max 10). Revoke a token first." }` },
+      { status: 403, description: 'Super-admin accounts and API-token sessions may not create tokens.' },
+    ],
+    tables: ['api_tokens'],
+    notes: ['Never logged by agentLogger (raw tokens in bodies).', 'Token acts as the own account via transparent Supabase session exchange — same roles, same RLS.'],
+  },
+  {
+    id: 'api-tokens-list',
+    tag: 'Platform',
+    method: 'GET',
+    path: '/api/tokens',
+    summary: 'List own API tokens (metadata only)',
+    description: 'Returns the caller\'s tokens: name, display prefix, expiry, last use and revocation state. Raw token values are never retrievable.',
+    auth: 'bearer-required',
+    mountsAt: '/api/tokens',
+    sourceFile: 'api/routes/tokens.ts',
+    logging: 'none',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Token metadata list.',
+        example: `{
+  "tokens": [{ "id": "…", "name": "n8n product sync", "prefix": "spc_9f2Kab12", "last_used_at": "…", "revoked_at": null }]
+}`,
+      },
+    ],
+    tables: ['api_tokens'],
+    notes: ['Never logged by agentLogger.'],
+  },
+  {
+    id: 'api-tokens-revoke',
+    tag: 'Platform',
+    method: 'DELETE',
+    path: '/api/tokens/:id',
+    summary: 'Revoke an own API token',
+    description: 'Soft-revokes the token (revoked_at timestamp). Revoked tokens stop authenticating immediately; the row remains for auditability.',
+    auth: 'bearer-required',
+    mountsAt: '/api/tokens',
+    sourceFile: 'api/routes/tokens.ts',
+    logging: 'none',
+    responseExamples: [
+      { status: 200, description: 'Token revoked.', example: `{ "success": true }` },
+      { status: 404, description: 'Token not found or already revoked.' },
+    ],
+    tables: ['api_tokens'],
+    notes: ['Never logged by agentLogger.'],
+  },
+  {
+    id: 'api-tokens-session',
+    tag: 'Platform',
+    method: 'POST',
+    path: '/api/tokens/session',
+    summary: 'Exchange an API token for a short-lived session',
+    description: 'Explicit token exchange for REST clients: accepts `Authorization: Bearer spc_…` and returns a Supabase access token (~1 h) for the linked account. Every Bearer-authenticated route also exchanges API tokens transparently, so this endpoint is optional.',
+    auth: 'bearer-required',
+    mountsAt: '/api/tokens',
+    sourceFile: 'api/routes/tokens.ts',
+    logging: 'none',
+    responseExamples: [
+      {
+        status: 200,
+        description: 'Session minted.',
+        example: `{
+  "token_type": "Bearer",
+  "access_token": "eyJ…",
+  "expires_at": "2026-10-20T12:00:00Z"
+}`,
+      },
+      { status: 401, description: 'Unknown, revoked or expired API token.' },
+    ],
+    tables: ['api_tokens'],
+    notes: ['The refresh token never leaves the Worker — callers re-exchange per run.', 'Never logged by agentLogger.'],
+  },
 ];
 
 function toPluginApiEndpoint(route: ReturnType<typeof getPluginApiRoutes>[number]): ApiEndpointDefinition {

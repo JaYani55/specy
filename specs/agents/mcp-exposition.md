@@ -117,6 +117,9 @@ Built-in tools remain available:
 - `get_schema_spec`
 - `register_frontend`
 - `check_health`
+- `agent_tokens_create` _(authenticated, non-super-admin) — creates an API token (PAT) for the caller's account; raw value shown exactly once. See [`../auth/api-tokens.md`](../auth/api-tokens.md)
+- `agent_tokens_list` _(authenticated, non-super-admin) — metadata list of the caller's API tokens
+- `agent_tokens_revoke` _(authenticated, non-super-admin) — soft-revokes one of the caller's API tokens
 - `specy_pages_schemas_list`, `specy_pages_schemas_get`
 - `specy_pages_schemas_list_pages`, `specy_pages_schemas_get_page`
 - `specy_pages_schemas_create_page`, `specy_pages_schemas_update_page`

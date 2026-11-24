@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { requireAppRole } from '../lib/auth';
+import { requireAppRole, requireAnyJwtRole } from '../lib/auth';
 import { createSupabaseClient, type Env } from '../lib/supabase';
 
 const logs = new Hono<{ Bindings: Env }>();
@@ -8,12 +8,16 @@ interface IpAddressRow {
   ip_address: string | null;
 }
 
-// GET /api/schemas/logs — List log entries (paginated, filterable)
+// GET /api/schemas/logs — List log entries (paginated, filterable).
+// Super-admin sees all entries; support sees only their own (RLS-mirrored
+// user_id filter). Cross-tenant aggregate views (stats/download) remain
+// super-admin-only.
 logs.get('/', async (c) => {
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAnyJwtRole(c, ['support', 'super-admin']);
   if (auth instanceof Response) return auth;
 
   const supabase = await createSupabaseClient(c.env, auth.token);
+  const isSupportOnly = !auth.roles.includes('super-admin');
 
   const page = parseInt(c.req.query('page') || '1', 10);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 200);
@@ -34,6 +38,7 @@ logs.get('/', async (c) => {
   if (minStatus) query = query.gte('status_code', minStatus);
   if (from) query = query.gte('created_at', from);
   if (to) query = query.lte('created_at', to);
+  if (isSupportOnly && auth.userId) query = query.eq('user_id', auth.userId);
 
   const { data, error, count } = await query;
 
@@ -134,12 +139,15 @@ logs.get('/download', async (c) => {
   });
 });
 
-// DELETE /api/schemas/logs — Clear all logs (or by filter)
+// DELETE /api/schemas/logs — Clear all logs (or by filter).
+// Super-admin may delete any filtered set; support may only delete their own
+// entries (forced user_id filter, mirroring the RLS policy).
 logs.delete('/', async (c) => {
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAnyJwtRole(c, ['support', 'super-admin']);
   if (auth instanceof Response) return auth;
 
   const supabase = await createSupabaseClient(c.env, auth.token);
+  const isSupportOnly = !auth.roles.includes('super-admin');
   const schemaSlug = c.req.query('schema_slug') || null;
   const before = c.req.query('before') || null; // ISO date — delete logs older than this
 
@@ -158,6 +166,10 @@ logs.delete('/', async (c) => {
     query = query.neq('id', '00000000-0000-0000-0000-000000000000'); // match all
   }
 
+  if (isSupportOnly && auth.userId) {
+    query = query.eq('user_id', auth.userId);
+  }
+
   const { error } = await query;
 
   if (error) {
@@ -167,18 +179,25 @@ logs.delete('/', async (c) => {
   return c.json({ success: true, message: 'Logs deleted' });
 });
 
-// DELETE /api/schemas/logs/:id — Delete a single log entry
+// DELETE /api/schemas/logs/:id — Delete a single log entry.
+// Super-admin may delete any entry; support only their own (RLS-backed).
 logs.delete('/:id', async (c) => {
   const id = c.req.param('id');
-  const auth = await requireAppRole(c, 'super-admin');
+  const auth = await requireAnyJwtRole(c, ['support', 'super-admin']);
   if (auth instanceof Response) return auth;
 
   const supabase = await createSupabaseClient(c.env, auth.token);
 
-  const { error } = await supabase
+  let deleteQuery = supabase
     .from('agent_logs')
     .delete()
     .eq('id', id);
+
+  if (!auth.roles.includes('super-admin') && auth.userId) {
+    deleteQuery = deleteQuery.eq('user_id', auth.userId);
+  }
+
+  const { error } = await deleteQuery;
 
   if (error) {
     return c.json({ error: 'Failed to delete log entry' }, 500);
