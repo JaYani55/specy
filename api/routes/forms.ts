@@ -1428,7 +1428,9 @@ const retrieveFormAnswers = async (
   const offset = Math.max(parseInt(c.req.query('offset') || '0', 10) || 0, 0);
   const ascending = c.req.query('order') === 'asc';
 
-  const supabase = await createSupabaseClient(c.env, token);
+  // auth.token is the exchanged session JWT (for PATs) — the raw spc_ value
+  // is NOT a Supabase JWT and PostgREST rejects it ("Expected 3 parts").
+  const supabase = await createSupabaseClient(c.env, auth.token);
 
   // Single round-trip: rows + exact total. (A separate `head: true` count
   // request turned out fragile here — HEAD responses carry no body, so any
