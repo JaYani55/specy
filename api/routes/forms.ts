@@ -1434,7 +1434,10 @@ const retrieveFormAnswers = async (
     .from('forms_answers')
     .select('id', { count: 'exact', head: true })
     .eq('form_id', form.id);
-  if (countError) return c.json({ error: 'Failed to count answers.' }, 500);
+  if (countError) {
+    console.error('[forms] answer count failed:', countError.message);
+    return c.json({ error: 'Failed to count answers.', detail: countError.message }, 500);
+  }
 
   const { data, error } = await supabase
     .from('forms_answers')
@@ -1443,7 +1446,10 @@ const retrieveFormAnswers = async (
     .order('created_at', { ascending })
     .range(offset, offset + limit - 1);
 
-  if (error) return c.json({ error: 'Failed to load answers.' }, 500);
+  if (error) {
+    console.error('[forms] answer load failed:', error.message);
+    return c.json({ error: 'Failed to load answers.', detail: error.message }, 500);
+  }
 
   return c.json({
     form: {
