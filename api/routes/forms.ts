@@ -1430,25 +1430,19 @@ const retrieveFormAnswers = async (
 
   const supabase = await createSupabaseClient(c.env, token);
 
-  const { count, error: countError } = await supabase
+  // Single round-trip: rows + exact total. (A separate `head: true` count
+  // request turned out fragile here — HEAD responses carry no body, so any
+  // failure surfaces as an unparseable, message-less error.)
+  const { data, error, count } = await supabase
     .from('forms_answers')
-    .select('id', { count: 'exact', head: true })
-    .eq('form_id', form.id);
-  if (countError) {
-    console.error('[forms] answer count failed:', countError.message);
-    return c.json({ error: 'Failed to count answers.', detail: countError.message }, 500);
-  }
-
-  const { data, error } = await supabase
-    .from('forms_answers')
-    .select('id, form_id, submitted_by, submitter_name, answers, source_slug, submitted_via, created_at')
+    .select('id, form_id, submitted_by, submitter_name, answers, source_slug, submitted_via, created_at', { count: 'exact' })
     .eq('form_id', form.id)
     .order('created_at', { ascending })
     .range(offset, offset + limit - 1);
 
   if (error) {
-    console.error('[forms] answer load failed:', error.message);
-    return c.json({ error: 'Failed to load answers.', detail: error.message }, 500);
+    console.error('[forms] answer load failed:', JSON.stringify(error));
+    return c.json({ error: 'Failed to load answers.', detail: JSON.stringify(error) }, 500);
   }
 
   return c.json({
