@@ -79,13 +79,19 @@ async function getAccountEmail(env: Env, userId: string): Promise<string | null>
 
 /**
  * Mint a real Supabase session for the account via the admin magic-link
- * generation + server-side verify flow. Requires the GoTrue /verify endpoint
- * to return a JSON session (standard for non-browser API clients).
+ * generation + server-side verify flow.
+ *
+ * GoTrue answers /verify in two flavors depending on version/config:
+ *  1. `200` with a JSON session body (preferred), or
+ *  2. `3xx` redirect with the session encoded in the URL fragment
+ *     (`#access_token=…&expires_in=…`) — the browser-style answer.
+ * Both are accepted here. Every failure stage carries a distinct message so
+ * `wrangler tail` pinpoint debugging is possible without leaking secrets.
  */
 async function mintSupabaseSession(env: Env, userId: string): Promise<MintedSession> {
   const email = await getAccountEmail(env, userId);
   if (!email) {
-    throw new Error('Token exchange failed: the linked account has no confirmed email address.');
+    throw new Error('token-exchange/account-email: the linked account has no confirmed email address.');
   }
 
   const admin = await createSupabaseAdminClient(env);
@@ -94,7 +100,9 @@ async function mintSupabaseSession(env: Env, userId: string): Promise<MintedSess
     email,
   });
   if (linkError || !linkData?.properties?.hashed_token) {
-    throw new Error('Token exchange failed: could not generate a session for the linked account.');
+    const detail = linkError?.message ?? 'missing hashed_token in generateLink response';
+    console.error('[api-tokens] generateLink failed:', detail);
+    throw new Error(`token-exchange/generate-link: ${detail}`);
   }
 
   const supabaseUrl = env.SUPABASE_URL.replace(/\/+$/, '');
@@ -111,20 +119,38 @@ async function mintSupabaseSession(env: Env, userId: string): Promise<MintedSess
   );
 
   const contentType = verifyResponse.headers.get('content-type') ?? '';
-  if (!verifyResponse.ok || !contentType.includes('application/json')) {
-    throw new Error('Token exchange failed: the auth server did not return a JSON session for the verification request.');
+
+  // Flavor 1: JSON session body.
+  if (verifyResponse.ok && contentType.includes('application/json')) {
+    const session = (await verifyResponse.json()) as { access_token?: unknown };
+    if (typeof session.access_token === 'string' && session.access_token) {
+      return {
+        accessToken: session.access_token,
+        expiresAt: decodeJwtExpiry(session.access_token),
+        userId,
+      };
+    }
   }
 
-  const session = (await verifyResponse.json()) as { access_token?: unknown };
-  if (typeof session.access_token !== 'string' || !session.access_token) {
-    throw new Error('Token exchange failed: session payload missing access_token.');
+  // Flavor 2: redirect with tokens in the URL fragment.
+  const location = verifyResponse.headers.get('location');
+  if (verifyResponse.status >= 300 && verifyResponse.status < 400 && location) {
+    const fragment = location.split('#')[1] ?? '';
+    const params = new URLSearchParams(fragment);
+    const accessToken = params.get('access_token');
+    if (accessToken) {
+      return {
+        accessToken,
+        expiresAt: decodeJwtExpiry(accessToken),
+        userId,
+      };
+    }
   }
 
-  return {
-    accessToken: session.access_token,
-    expiresAt: decodeJwtExpiry(session.access_token),
-    userId,
-  };
+  console.error(
+    `[api-tokens] verify returned status=${verifyResponse.status} content-type=${contentType} location=${location ? 'present' : 'absent'}`,
+  );
+  throw new Error(`token-exchange/verify: auth server answered status=${verifyResponse.status} without a usable session (content-type=${contentType || 'none'}).`);
 }
 
 async function touchLastUsed(env: Env, tokenId: string): Promise<void> {

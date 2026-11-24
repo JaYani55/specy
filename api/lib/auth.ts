@@ -80,7 +80,16 @@ export async function verifyAuthSession(env: Env, token: string): Promise<Verifi
   let effectiveToken = token;
   let viaApiToken = false;
   if (isApiTokenValue(token)) {
-    const session = await exchangeApiTokenForSession(env, token);
+    let session: Awaited<ReturnType<typeof exchangeApiTokenForSession>>;
+    try {
+      session = await exchangeApiTokenForSession(env, token);
+    } catch (error) {
+      // Minting infrastructure failure (auth server unreachable, unexpected
+      // GoTrue response …) — log the precise stage and answer 401 instead of
+      // surfacing an opaque 500.
+      console.error('[api-tokens] exchange failed:', error instanceof Error ? error.message : error);
+      return null;
+    }
     if (!session) {
       return null;
     }
