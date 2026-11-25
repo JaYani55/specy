@@ -14,7 +14,7 @@
 -- ── 1. Subscriptions ─────────────────────────────────────────────────────────
 create table if not exists public.webhook_subscriptions (
   id uuid not null default gen_random_uuid(),
-  tenant_id uuid not null references public.tenants (id) on delete cascade,
+  tenant_id uuid not null,
   name character varying(100) not null,
   url text not null,
   events text[] not null default '{}',
@@ -42,8 +42,8 @@ exception when duplicate_object then null; end $$;
 -- ── 2. Delivery jobs ─────────────────────────────────────────────────────────
 create table if not exists public.webhook_delivery_jobs (
   id uuid not null default gen_random_uuid(),
-  subscription_id uuid not null references public.webhook_subscriptions (id) on delete cascade,
-  tenant_id uuid not null references public.tenants (id) on delete cascade,
+  subscription_id uuid not null,
+  tenant_id uuid not null,
   event text not null,
   payload jsonb not null default '{}'::jsonb,
   status text not null default 'pending',
