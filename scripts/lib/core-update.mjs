@@ -510,6 +510,7 @@ export async function deployEdgeFunction(root, functionName, projectRef, pat) {
         '--use-api',
         '--project-ref', projectRef,
         '--workdir', stagedWorkdir,
+        '--yes',
       ],
       { SUPABASE_ACCESS_TOKEN: pat.trim() },
       { cwd: stagedWorkdir },

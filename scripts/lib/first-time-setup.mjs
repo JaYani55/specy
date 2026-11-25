@@ -1357,6 +1357,7 @@ async function stepEdgeFunctionDeployment(projectRef, pat, supabaseUrl, supabase
     '--use-api',
     '--project-ref', projectRef,
     '--workdir', stagedWorkdir,
+    '--yes',
   ], {
     SUPABASE_ACCESS_TOKEN: pat.trim(),
   }, {
@@ -1381,6 +1382,7 @@ async function stepEdgeFunctionDeployment(projectRef, pat, supabaseUrl, supabase
     '--use-api',
     '--project-ref', projectRef,
     '--workdir', whStagedWorkdir,
+    '--yes',
   ], {
     SUPABASE_ACCESS_TOKEN: pat.trim(),
   }, {
