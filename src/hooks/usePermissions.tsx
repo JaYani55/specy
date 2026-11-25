@@ -34,6 +34,9 @@ export interface Permissions {
 
   // Logging management (support or super-admin only)
   canManageLogging: boolean;
+
+  // Outbound webhooks (support or super-admin only — creation is RBAC-restricted)
+  canManageWebhooks: boolean;
   
   // Account administration (super-admin only)
   canManageAccounts: boolean;
@@ -120,6 +123,9 @@ export const usePermissions = (): Permissions => {
 
       // Logging management (support or super-admin)
       canManageLogging: isSuperAdmin || isSupport,
+
+      // Outbound webhooks (support or super-admin — mirrored by the API RBAC)
+      canManageWebhooks: isSuperAdmin || isSupport,
 
       // Account administration
       canManageAccounts: isAdmin,

@@ -1,6 +1,7 @@
 # API Tokens (PATs) — Self-Service Machine Credentials
 
-> **Status:** Implemented (core) · **Contract owner:** `api/routes/tokens.ts`,
+> **Status:** Implemented and live-verified in production (2026-11-17) ·
+> **Contract owner:** `api/routes/tokens.ts`,
 > `api/lib/apiTokens.ts`, `api/lib/apiTokenCrypto.ts`
 > **Related:** [`authentication-authorization.md`](authentication-authorization.md) ·
 > [`oauth-mcp-authentication.md`](oauth-mcp-authentication.md) ·
@@ -57,6 +58,48 @@ Two equivalent consumption paths:
 **The refresh token never leaves the Worker.** Callers receive only the
 short-lived access token (~1 h) and re-exchange per run — one cached lookup on
 the happy path.
+
+### How the session is minted (implementation notes)
+
+The exchange runs against **GoTrue** (Supabase Auth's server at `/auth/v1`):
+
+1. `auth.admin.generateLink({ type: 'magiclink', email })` → one-time
+   `hashed_token` (admin client, service role).
+2. `GET /auth/v1/verify?token=…&type=magiclink` with the anon key.
+
+GoTrue answers `/verify` in **two flavors** depending on version/configuration
+— both are accepted by `api/lib/apiTokens.ts`:
+
+- **`200` + JSON session body** (preferred), or
+- **`3xx` redirect with the session encoded in the URL fragment**
+  (`#access_token=…&expires_in=…`) — the browser-style answer. The handler
+  uses `redirect: 'manual'` and parses the fragment.
+
+### Failure semantics
+
+- Exchange failures are **never 500s**: `verifyAuthSession` catches minting
+  errors, logs the precise stage, and answers the caller with `401` +
+  RFC 9728 `WWW-Authenticate` challenge.
+- Stage-level log tags for `wrangler tail` debugging:
+  - `token-exchange/account-email` — the linked account has no confirmed email
+  - `token-exchange/generate-link` — admin `generateLink` failed (details logged)
+  - `token-exchange/verify` — GoTrue answered without a usable session (status
+    and content-type are logged)
+- An unknown/revoked/expired PAT also yields `401` (no minting attempted).
+
+### Implementation pitfall (do not reintroduce)
+
+Routes that accept PATs must build their Supabase client with
+`auth.token` (the exchanged JWT) — **never** with the raw parsed Bearer value.
+The raw `spc_…` string is not a JWT and PostgREST rejects it with
+`PGRST301: Expected 3 parts in JWT; got 1`. `verifyAuthSession` returns
+`auth.token` = the effective JWT precisely for this purpose.
+
+### Endpoint implementation note (GET with count)
+
+When a route needs rows *and* a total, prefer a single query with
+`{ count: 'exact' }` over a separate `head: true` count request: HEAD responses
+carry no body, so any failure surfaces as an unparseable, message-less error.
 
 ## 5. REST contract
 

@@ -27,7 +27,7 @@
 - `migrations/202610200001_agent_logs_support_rls.sql` — support RLS on `agent_logs`
 - `migrations/202610200002_api_tokens.sql` — `public.api_tokens` table + RLS
 - `api/lib/apiTokenCrypto.ts` — pure token primitives (format, hash, validation)
-- `api/lib/apiTokens.ts` — PAT→Supabase-session exchange (generateLink/verify + isolate cache)
+- `api/lib/apiTokens.ts` — PAT→Supabase-session exchange (generateLink/verify + isolate cache); **`mintSupabaseSession` accepts both GoTrue `/verify` flavors — JSON session body (`200`) and browser-style `3xx` redirect with tokens in the URL fragment — since production GoTrue answered with the redirect variant**
 - `api/routes/tokens.ts` — create/list/revoke/session endpoints (mounted at `/api/tokens`)
 - `src/services/apiTokensService.ts` — frontend service for the token endpoints
 - `tests/apiTokenCrypto.test.mjs` — unit tests for the pure crypto/validation logic
@@ -35,8 +35,8 @@
 
 ## Files Changed
 
-- `api/routes/forms.ts` — **new bearer-protected answer retrieval**: shared `retrieveFormAnswers` handler + `GET /api/forms/share/:tenantName/:shareSlug/answers` (and `/s/…` alias), `GET /api/forms/:tenantName/:formSlug/answers`, `GET /api/forms/:identifier/answers`; reads through the caller's Supabase session (RLS-backed), pagination (`limit`/`offset`/`order`), IP/user-agent excluded from projection; identifier variant registered before the 2-segment form-definition route to avoid Hono route-shadowing
-- `api/lib/auth.ts` — transparent `spc_`-prefix exchange inside `verifyAuthSession`; new `viaApiToken` marker on `VerifiedAuthSession`
+- `api/routes/forms.ts` — **new bearer-protected answer retrieval**: shared `retrieveFormAnswers` handler + `GET /api/forms/share/:tenantName/:shareSlug/answers` (and `/s/…` alias), `GET /api/forms/:tenantName/:formSlug/answers`, `GET /api/forms/:identifier/answers`; reads through the caller's Supabase session (RLS-backed), pagination (`limit`/`offset`/`order`), IP/user-agent excluded from projection; identifier variant registered before the 2-segment form-definition route to avoid Hono route-shadowing; **Supabase client built from `auth.token` (the exchanged JWT), never the raw `spc_` string — PostgREST rejects non-JWT bearer values with `PGRST301`; single round-trip query with `{ count: 'exact' }` instead of a fragile separate `head: true` count (HEAD responses carry no body → unparseable errors)**
+- `api/lib/auth.ts` — transparent `spc_`-prefix exchange inside `verifyAuthSession`; new `viaApiToken` marker on `VerifiedAuthSession`; **exchange failures are caught and answered as clean 401s with stage-level console.error logging (`token-exchange/{account-email,generate-link,verify}`) instead of opaque 500s**
 - `api/routes/config.ts` — `GET /api/config/logging` open to any authenticated user; `PUT` restricted to `support`/`super-admin`
 - `api/routes/logs.ts` — list + delete endpoints accept `support` (route-level `user_id` scoping mirroring RLS); `stats`/`download` unchanged (super-admin)
 - `api/lib/systemConfig.ts` — logging default flipped to `mode: 'custom'`, empty allowlist (off)
@@ -76,3 +76,15 @@
 - Tenant scoping for `agent_logs` (`tenant_id` column + backfill + policies) so
   support can see tenant-scoped (not merely own) log entries.
 - Optional transparent-exchange rate limiting per token hash.
+
+## Live verification (2026-11-17, production)
+
+The full PAT lifecycle was verified end-to-end against the production Worker:
+token creation, explicit exchange (`POST /api/tokens/session`), transparent
+exchange on a Bearer-protected read (`forms_answers` retrieval), and correct
+RLS-scoped results. Three defects were found and fixed during this pass (see
+Files Changed: GoTrue `/verify` redirect flavor, error surfacing via catch +
+401, and the raw-PAT-instead-of-exchanged-JWT bug in the forms handler).
+`forms_answers` visibility is owner/admin-scoped by the multi-tenant RLS
+hardening (`can_access_owned_row`) — plain tenant members see only their own
+submissions.

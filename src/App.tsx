@@ -61,6 +61,7 @@ import VerwaltungMentorGroups from "./pages/VerwaltungMentorGroups";
 import VerwaltungMentorGiveTraits from "./pages/VerwaltungMentorGiveTraits";
 import VerwaltungAccounts from "./pages/VerwaltungAccounts";
 import VerwaltungMail from "./pages/VerwaltungMail";
+import VerwaltungWebhooks from "./pages/VerwaltungWebhooks";
 import VerwaltungConnections from "./pages/VerwaltungConnections";
 import VerwaltungApi from "./pages/VerwaltungApi";
 import VerwaltungBranding from "./pages/VerwaltungBranding";
@@ -292,6 +293,7 @@ const AppContent = () => {
           <Route path="/admin" element={<ProtectedRoute requiredRole="user"><Verwaltung /></ProtectedRoute>} />
           <Route path="/admin/accounts" element={<ProtectedRoute requiredRole="admin"><VerwaltungAccounts /></ProtectedRoute>} />
           <Route path="/admin/mail" element={<ProtectedRoute requiredRole="user"><VerwaltungMail /></ProtectedRoute>} />
+          <Route path="/admin/webhooks" element={<ProtectedRoute requiredRole="user"><VerwaltungWebhooks /></ProtectedRoute>} />
           <Route path="/admin/connections" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungConnections /></ProtectedRoute>} />
           <Route path="/admin/api" element={<ProtectedRoute><VerwaltungApi /></ProtectedRoute>} />
           <Route path="/admin/branding" element={<ProtectedRoute requiredRole="super-admin"><VerwaltungBranding /></ProtectedRoute>} />

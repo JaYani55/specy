@@ -16,6 +16,7 @@ import mailRoute from './routes/mail';
 import objectsRoute from './routes/objects';
 import specsRoute from './routes/specs';
 import tokensRoute from './routes/tokens';
+import webhooksRoute from './routes/webhooks';
 import knowledgeBase from './routes/knowledgeBase';
 import products from './routes/products';
 import { mountPluginRoutes } from './plugin-routes';
@@ -245,6 +246,7 @@ app.route('/api/mail', mailRoute);
 app.route('/api/objects', objectsRoute);
 app.route('/api/specs', specsRoute);
 app.route('/api/tokens', tokensRoute);
+app.route('/api/webhooks', webhooksRoute);
 app.route('/api/knowledge-base', knowledgeBase);
 app.route('/mcp', mcpRoute);
 

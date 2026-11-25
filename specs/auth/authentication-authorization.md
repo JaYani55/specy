@@ -25,6 +25,18 @@ Supabase stores the session in localStorage by default. On app load, [AuthProvid
 
 [logout()](../../src/contexts/AuthContext.tsx#L256) clears the React Query cache, localStorage, sessionStorage, cookies, calls `supabase.auth.signOut()`, and redirects to `/login`.
 
+### API Tokens (PATs) — Machine Authentication
+
+Besides browser sessions and OAuth 2.1, accounts can hold **self-service API
+tokens (PATs)**: revocable `spc_…` credentials stored only as SHA-256 hashes.
+Every Bearer-authenticated route accepts them via a transparent exchange for a
+real Supabase session (same claims, same RLS). Super-admin accounts are
+excluded; creation is available in `/admin/api` and via the MCP tools
+`agent_tokens_create/list/revoke`.
+
+Full contract (format, exchange flow, guardrails, failure semantics,
+troubleshooting): [`api-tokens.md`](api-tokens.md).
+
 ---
 
 ## 2. Role Model: Database & JWT Claims

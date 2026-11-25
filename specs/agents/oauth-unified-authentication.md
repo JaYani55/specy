@@ -221,6 +221,13 @@ For machine-to-machine integrations (your microservice acting autonomously):
 Revocation = remove role assignments or delete the authorization in Supabase; outstanding
 access tokens die naturally at `exp` (≤ 1 hour).
 
+> **Simpler alternative for first-party machine integrations (n8n, cron, CI):**
+> accounts can self-create **API tokens (PATs)** after a single OAuth or
+> dashboard login, and every Bearer-authenticated route accepts them directly
+> (transparent exchange — no refresh logic in the client). See
+> [`../auth/api-tokens.md`](../auth/api-tokens.md). The OAuth flow remains the
+> right choice for third-party clients and MCP sessions.
+
 ---
 
 ## 6. Implementation Checklist

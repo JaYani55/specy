@@ -13,6 +13,10 @@ export const CORE_EDGE_FUNCTIONS = [
     name: 'send_email',
     requiredSecrets: ['APP_SUPABASE_SECRET_KEY', 'SECRETS_ENCRYPTION_KEY'],
   },
+  {
+    name: 'deliver_webhooks',
+    requiredSecrets: ['APP_SUPABASE_SECRET_KEY', 'SECRETS_ENCRYPTION_KEY'],
+  },
 ];
 
 // Source of truth: scripts/lib/migration-order.mjs (validated by

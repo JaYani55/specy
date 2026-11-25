@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cloudflare-docs": {
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "description": "Search and read the official Cloudflare developer documentation (Workers, R2, D1, KV, Wrangler, etc.)"
+    },
+    "n8n-docs": {
+      "url": "https://docs.n8n.io/~gitbook/mcp",
+      "description": "Search and read the official n8n workflow automation documentation"
+    }
+  }
+}

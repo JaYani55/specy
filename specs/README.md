@@ -31,6 +31,7 @@ rather than a flat file list. Each folder has a `README.md` indexing its documen
 
 - *"How do I add a plugin?"* → [`plugins/development.md`](plugins/development.md), then [`plugins/installation.md`](plugins/installation.md)
 - *"How does auth work?"* → [`auth/authentication-authorization.md`](auth/authentication-authorization.md)
+- *"How do I create API tokens (PATs) for integrations like n8n?"* → [`auth/api-tokens.md`](auth/api-tokens.md)
 - *"How do I authenticate another microservice against Specy?"* → [`agents/oauth-unified-authentication.md`](agents/oauth-unified-authentication.md)
 - *"How does multi-tenancy/RLS work?"* → [`platform/multi-tenancy.md`](platform/multi-tenancy.md)
 - *"How do I store files?"* → [`agents/r2-file-storage.md`](agents/r2-file-storage.md)

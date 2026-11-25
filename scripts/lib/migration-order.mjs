@@ -172,6 +172,7 @@ export const MIGRATION_ORDER_CORE = [
   // LAST migration defining these RPCs — and the LAST entry in this array
   // (enforced by tests/catalogueEligibilityConsistency.test.mjs), so new
   // migrations go above it.
+  '202611250001_webhook_subscriptions.sql',
   '202610120001_repair_catalogue_product_aggregate_rpcs.sql',
 ];
 

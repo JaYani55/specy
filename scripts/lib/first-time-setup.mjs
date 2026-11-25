@@ -1248,6 +1248,30 @@ async function stepMigrations(supabaseUrl, serviceRoleKey, storageProvider, stor
       `  ${supabaseUrl.trim()}/functions/v1/send_email. Set it via the Connections page or SQL.`,
     );
   }
+  // ── 3c. Configure the webhook queue cron trigger ───────────────────────
+  // Same pattern as the mail queue: the 202611250001_webhook_subscriptions.sql
+  // migration creates a pg_cron job that invokes the deliver_webhooks edge
+  // function once per minute (webhook_delivery_jobs processing).
+  const whCfg = spinner();
+  whCfg.start('Configuring webhook queue cron trigger (system_config)…');
+  try {
+    const webhookFunctionUrl = `${supabaseUrl.trim().replace(/\/+$/, '')}/functions/v1/deliver_webhooks`;
+    const escapeLiteral = (value) => value.replace(/'/g, "''");
+    const webhookCronSql = [
+      "insert into public.system_config (namespace, key, value) values",
+      `  ('webhooks', 'edge_function_url', '${escapeLiteral(webhookFunctionUrl)}')`,
+      "on conflict (namespace, key) do update set value = excluded.value, updated_at = now();",
+    ].join('\n');
+    await runSqlQuery(projectRef, pat.trim(), webhookCronSql);
+    whCfg.stop(pc.green(`Webhook queue cron configured (edge_function_url = ${webhookFunctionUrl}) ✓`));
+  } catch (err) {
+    whCfg.stop(pc.yellow(`Webhook queue cron configuration failed: ${err.message}`));
+    log.warn(
+      'Queued webhook deliveries will still be retried on manual dispatch, but the\n' +
+      '  automatic minute-by-minute cron needs system_config webhooks.edge_function_url\n' +
+      `  to point at ${supabaseUrl.trim()}/functions/v1/deliver_webhooks. Set it via SQL.`,
+    );
+  }
 
   // ── 4. Register the JWT claims hook in Supabase Auth ───────────────────
   // The function was just created by Auth/Access_hook.sql.
@@ -1346,6 +1370,31 @@ async function stepEdgeFunctionDeployment(projectRef, pat, supabaseUrl, supabase
   }
 
   deployFn.stop(pc.green('Supabase Edge Function send_email deployed ✓'));
+
+  // deliver_webhooks — staged from its own source dir (same pattern as send_email).
+  const whStagedWorkdir = stageEdgeFunctionWorkdir('deliver_webhooks');
+  const whFn = spinner();
+  whFn.start('Deploying Supabase Edge Function deliver_webhooks…');
+
+  const webhookDeployResult = runSupabaseCli([
+    'functions', 'deploy', 'deliver_webhooks',
+    '--use-api',
+    '--project-ref', projectRef,
+    '--workdir', whStagedWorkdir,
+  ], {
+    SUPABASE_ACCESS_TOKEN: pat.trim(),
+  }, {
+    cwd: whStagedWorkdir,
+  });
+
+  if (webhookDeployResult.status !== 0) {
+    const detail = (webhookDeployResult.stderr || webhookDeployResult.stdout || '').trim();
+    whFn.stop(pc.red('Failed to deploy Supabase Edge Function deliver_webhooks.'));
+    throw new Error(detail || 'Supabase functions deploy failed.');
+  }
+
+  whFn.stop(pc.green('Supabase Edge Function deliver_webhooks deployed ✓'));
+  rmSync(whStagedWorkdir, { recursive: true, force: true });
   } finally {
     rmSync(stagedWorkdir, { recursive: true, force: true });
   }

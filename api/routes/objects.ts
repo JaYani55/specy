@@ -3,6 +3,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 import { getOptionalAuthSession, parseBearerToken, requireAppRole } from '../lib/auth';
 import { isPublicObjectReadable } from '../lib/objectVisibility';
+import { emitWebhookEvent } from '../lib/webhookEmission';
 
 const objects = new Hono<{ Bindings: Env }>();
 
@@ -148,6 +149,34 @@ objects.get('/', async (c) => {
         objectQuery = objectQuery.eq('tenant_id', requestedTenantId);
       }
 
+      // Optional incremental-sync filter (specs/platform/webhooks.md): ISO 8601
+      // timestamp — only rows updated after it. Invalid values are ignored.
+      const updatedSince = c.req.query('updated_since');
+      if (updatedSince) {
+        const parsed = new Date(updatedSince);
+        if (!Number.isNaN(parsed.getTime())) {
+          objectQuery = objectQuery.gt('updated_at', parsed.toISOString());
+        }
+      }
+
+      // Optional pagination (specs/plans/n8n-nodes-specy-connector-plan.md §7).
+      // Absent params keep the legacy behavior (all rows, no total).
+      const limitRaw = c.req.query('limit');
+      const offsetRaw = c.req.query('offset');
+      let paginated = false;
+      let limitValue = 0;
+      let offsetValue = 0;
+      if (limitRaw != null && offsetRaw != null) {
+        const limit = Number.parseInt(limitRaw, 10);
+        const offset = Number.parseInt(offsetRaw, 10);
+        if (Number.isFinite(limit) && Number.isFinite(offset) && limit > 0 && offset >= 0 && limit <= 500) {
+          objectQuery = objectQuery.range(offset, offset + limit - 1);
+          paginated = true;
+          limitValue = limit;
+          offsetValue = offset;
+        }
+      }
+
       const { data, error: dbError } = await objectQuery;
 
       if (dbError) {
@@ -156,14 +185,18 @@ objects.get('/', async (c) => {
 
       const visibleRows = data ?? [];
       const rowIds = visibleRows.map((row) => row.id);
-      if (!rowIds.length) return c.json({ objects: [] });
+      if (!rowIds.length) return c.json({ objects: [], ...(paginated ? { total: 0, limit: limitValue, offset: offsetValue } : {}) });
       const admin = await createSupabaseAdminClient(c.env);
       const { data: sourceRows, error: sourceError } = await admin.from('objects')
         .select('id, source_product_id')
         .in('id', rowIds);
       if (sourceError) return c.json({ error: 'Failed to load object sources.' }, 500);
       const managedIds = new Set((sourceRows ?? []).filter((row) => row.source_product_id != null).map((row) => row.id));
-      return c.json({ objects: visibleRows.filter((row) => !managedIds.has(row.id)) });
+      const objects = visibleRows.filter((row) => !managedIds.has(row.id));
+      return c.json({
+        objects,
+        ...(paginated ? { total: objects.length, limit: limitValue, offset: offsetValue } : {}),
+      });
     }
   }
 
@@ -607,6 +640,14 @@ objects.post('/', async (c) => {
     return c.json({ error: 'Failed to create object.' }, 500);
   }
 
+  if (created?.tenant_id) {
+    await emitWebhookEvent(c.env, {
+      tenantId: created.tenant_id,
+      event: 'object.created',
+      data: { id: created.id, name: created.name, slug: created.slug, object_type: created.object_type },
+    });
+  }
+
   return c.json(created, 201);
 });
 
@@ -678,6 +719,14 @@ objects.put('/:id', async (c) => {
     return c.json({ error: 'Object not found.' }, 404);
   }
 
+  if (updated.tenant_id) {
+    await emitWebhookEvent(c.env, {
+      tenantId: updated.tenant_id,
+      event: 'object.updated',
+      data: { id: updated.id, name: updated.name, slug: updated.slug, object_type: updated.object_type },
+    });
+  }
+
   return c.json(updated);
 });
 
@@ -701,6 +750,12 @@ objects.delete('/:id', async (c) => {
   if (sourceError) return c.json({ error: 'Failed to load object source.' }, 500);
   if (source?.source_product_id != null) return c.json({ error: 'This object is managed by its product and cannot be archived here.' }, 409);
 
+  const { data: tenantRow, error: tenantError } = await supabase
+    .from('objects')
+    .select('tenant_id')
+    .eq('id', id)
+    .single();
+
   const { error } = await supabase
     .from('objects')
     .update({ status: 'archived' })
@@ -708,6 +763,16 @@ objects.delete('/:id', async (c) => {
 
   if (error) {
     return c.json({ error: 'Failed to archive object.' }, 500);
+  }
+
+  if (tenantError) {
+    console.error('webhook-emit/object-archived-tenant-lookup', tenantError.message);
+  } else if (tenantRow?.tenant_id) {
+    await emitWebhookEvent(c.env, {
+      tenantId: tenantRow.tenant_id,
+      event: 'object.archived',
+      data: { id, },
+    });
   }
 
   return c.json({ success: true });

@@ -1,4 +1,4 @@
-import { Activity, Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail, Package } from "lucide-react"
+import { Activity, Webhook, Bot, Box, Calendar, Settings, Users, User, List, LogOut, HelpCircle, Moon, Sun, ChevronUp, FileText, SlidersHorizontal, Puzzle, Globe, ClipboardList, ChevronDown, Building2, Mail, Package } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -101,6 +101,11 @@ export function AppSidebar() {
         title: language === "en" ? "Mail" : "E-Mail",
         url: "/admin/mail",
         icon: Mail,
+      },
+      {
+        title: language === "en" ? "Webhooks" : "Webhooks",
+        url: "/admin/webhooks",
+        icon: Webhook,
       },
       {
         title: "MCP",
