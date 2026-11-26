@@ -333,12 +333,17 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   // trust an unverified JWT payload for operational attribution.
   let userId: string | null = null;
   let userEmail: string | null = null;
+  let verifiedToken: string | null = null;
   const bearerToken = isMcpRequest ? parseBearerToken(c.req.header('Authorization')) : undefined;
   if (bearerToken) {
     try {
       const session = await verifyAuthSession(c.env, bearerToken);
       if (session) {
         userId = session.userId;
+        // Keep the exchanged session JWT (PATs are exchanged here — the raw
+        // `spc_…` value must never reach PostgREST, see
+        // specs/auth/api-tokens.md §4 pitfall).
+        verifiedToken = session.token;
         const email = session.claims.email;
         userEmail = typeof email === 'string' ? email : null;
       }
@@ -353,8 +358,8 @@ export const agentLogger: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   let schemaId: string | null = null;
   if (schemaSlug) {
     try {
-      const lookupClient: SupabaseClient = bearerToken && userId
-        ? await createSupabaseClient(c.env, bearerToken)
+      const lookupClient: SupabaseClient = verifiedToken
+        ? await createSupabaseClient(c.env, verifiedToken)
         : await createSupabaseClient(c.env);
       schemaId = await resolveSchemaId(c.env, schemaSlug, lookupClient, userId ? 'user' : 'anon');
     } catch {

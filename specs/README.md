@@ -22,7 +22,7 @@ rather than a flat file list. Each folder has a `README.md` indexing its documen
 | [`platform/`](platform/) | Infrastructure setup, multi-tenancy & RLS, core extensions (audio blocks, queues, secrets) |
 | [`features/`](features/) | Feature-level subsystems: forms, rich text editing |
 | [`plugins/`](plugins/) | Plugin development guide, installation lifecycle, EUPL licensing |
-| [`agents/`](agents/) | Everything agent-facing: MCP exposition, agent system prompt, frontend integration manifest, prompt specs, R2 file storage integration |
+| [`agents/`](agents/) | Everything agent-facing: MCP exposition, agent system prompt, frontend integration manifest, prompt specs, R2 file storage integration, n8n integration |
 | [`audits/`](audits/) | Audit-oriented documentation: business logic, control environments and BPMN process flows for compliance review |
 | [`plans/`](plans/) | Forward-looking plans and drafts (not yet implemented specs) |
 | [`changes/`](changes/) | Date-prefixed change records (`YYYY-MM-DD-<description>.md`) — mandatory for every change |

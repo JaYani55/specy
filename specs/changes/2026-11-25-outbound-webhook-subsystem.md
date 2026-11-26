@@ -39,6 +39,24 @@ the new `deliver_webhooks` edge function via pg_cron, with the same retry contra
 - `scripts/lib/first-time-setup.mjs` — webhook cron config (`system_config` `webhooks.edge_function_url`)
 - `specs/platform/README.md`, `specs/plans/n8n-nodes-specy-connector-plan.md` — registered/delivered markers
 
+## Follow-up Fixes (same day)
+
+- **Migration FK duplicates:** the initial migration declared the tenant/subscription
+  foreign keys twice (inline auto-named + explicit named constraint) — every run failed
+  with `42710 constraint already exists`. Removed all inline `references` clauses; the
+  named constraints are the sole FK definitions (idempotent, verified by re-run).
+- **Fresh-install function deploy:** first-time-setup now deploys `deliver_webhooks`
+  (own staged workdir) right after `send_email` — previously the function was only
+  deployed by the update flow, leaving fresh installs with a cron but no function.
+- **Non-interactive deploys:** all three `supabase functions deploy` call sites
+  (`core-update.mjs`, first-time-setup ×2) pass `--yes` — the CLI v3 requires
+  confirmation when stdout is not a terminal.
+- **Lint integrity gate:** `plugins/n8n-nodes-specy` (satellite repo incl. its compiled
+  `dist/`) excluded from the core ESLint config — the connector is a separate work and
+  is not governed by core lint rules.
+- **Objects list filters** (same change set): `updated_since` + `limit`/`offset` with
+  `total` — see `api/routes/objects.ts`.
+
 ## Impact Analysis
 
 - **Database:** two new tables (tenant FKs, RLS member + super-admin policies), one pg_cron

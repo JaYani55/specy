@@ -79,6 +79,8 @@ Existing change logs:
 - `2026-06-20-page-schema-visibility-fix.md`
 - `2026-07-04-pluradash-worker-connectors.md`
 - `2026-09-09-binding-intent-provisioning.md`
+- `2026-11-25-n8n-nodes-specy-connector-scaffold.md`
+- `2026-11-25-outbound-webhook-subsystem.md`
 
 ---
 

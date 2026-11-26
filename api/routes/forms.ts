@@ -3,7 +3,7 @@ import { Hono, type Context } from 'hono';
 import { runFormFileNotificationHooks, runFormFileUploadHooks, type FormFileNotificationLink } from '../lib/formFileUploadHooks';
 import { buildMediaMountUrl, ensureSupabaseStorageBucket, resolveAllMediaSourceMounts, resolvePrimaryMediaConfig } from '../lib/mediaStorage';
 import { buildS3SecretName, getManagedSecretValue } from '../lib/managedSecrets';
-import { verifyAuthSession } from '../lib/auth';
+import { verifyAuthSession, type VerifiedAuthSession } from '../lib/auth';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 import { hasUsableSubject, hasUsableTemplate, renderTemplateMessage, renderTemplateSubject, type TemplateTokenValue } from '../lib/formMessageTemplate';
 
@@ -1404,19 +1404,18 @@ const serializeForm = (form: FormRow, fields: FormFieldDefinition[]) => ({
  * caller's own Supabase session, so the existing forms_answers RLS policy
  * (user_select_forms_answers: user/staff/admin/super-admin) governs access
  * exactly like the dashboard. IP/user-agent are never exposed via the API.
+ *
+ * The caller must have resolved the Bearer value through verifyAuthSession
+ * beforehand (PAT exchange — specs/auth/api-tokens.md §4); the raw `spc_…`
+ * value must never reach PostgREST.
  */
 const retrieveFormAnswers = async (
   c: Context<{ Bindings: Env }>,
   form: FormRow,
-  token: string | undefined,
+  auth: VerifiedAuthSession | null,
 ): Promise<Response> => {
-  if (!token) {
-    return c.json({ error: 'Bearer authentication required.' }, 401);
-  }
-
-  const auth = await verifyAuthSession(c.env, token);
   if (!auth) {
-    return c.json({ error: 'Invalid or expired session.' }, 401);
+    return c.json({ error: 'Bearer authentication required.' }, 401);
   }
 
   const hasContentRole = auth.roles.some((role) => role === 'user' || role === 'staff' || role === 'admin' || role === 'super-admin');
@@ -1428,8 +1427,6 @@ const retrieveFormAnswers = async (
   const offset = Math.max(parseInt(c.req.query('offset') || '0', 10) || 0, 0);
   const ascending = c.req.query('order') === 'asc';
 
-  // auth.token is the exchanged session JWT (for PATs) — the raw spc_ value
-  // is NOT a Supabase JWT and PostgREST rejects it ("Expected 3 parts").
   const supabase = await createSupabaseClient(c.env, auth.token);
 
   // Single round-trip: rows + exact total. (A separate `head: true` count
@@ -1467,7 +1464,11 @@ const retrieveFormAnswers = async (
 
 forms.get('/', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Resolve a PAT up front — the raw `spc_…` value must never reach PostgREST
+  // (specs/auth/api-tokens.md §4 pitfall).
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+  const supabase = await createSupabaseClient(c.env, auth?.token);
   const { data, error } = await supabase
     .from('forms')
     .select('id, name, slug, description, status, share_enabled, share_slug, requires_auth, api_enabled')
@@ -1480,7 +1481,6 @@ forms.get('/', async (c) => {
 
 forms.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
 
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
@@ -1495,7 +1495,6 @@ forms.get('/share/:tenantName/:shareSlug', async (c) => {
 
 forms.get('/s/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
 
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
@@ -1510,7 +1509,9 @@ forms.get('/s/:tenantName/:shareSlug', async (c) => {
 
 forms.get('/share/:tenantName/:shareSlug/results', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
@@ -1552,7 +1553,9 @@ forms.get('/share/:tenantName/:shareSlug/results', async (c) => {
 
 forms.get('/s/:tenantName/:shareSlug/results', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
@@ -1594,7 +1597,6 @@ forms.get('/s/:tenantName/:shareSlug/results', async (c) => {
 
 forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   const formData = await c.req.formData().catch(() => null);
 
@@ -1614,7 +1616,6 @@ forms.post('/share/:tenantName/:shareSlug/upload', async (c) => {
 
 forms.post('/s/:tenantName/:shareSlug/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   const formData = await c.req.formData().catch(() => null);
 
@@ -1635,49 +1636,58 @@ forms.post('/s/:tenantName/:shareSlug/upload', async (c) => {
 // GET /api/forms/share/:tenantName/:shareSlug/answers — bearer-protected answer retrieval
 forms.get('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
 
-  return retrieveFormAnswers(c, form, token);
+  return retrieveFormAnswers(c, form, auth);
 });
 
 forms.get('/s/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
 
-  return retrieveFormAnswers(c, form, token);
+  return retrieveFormAnswers(c, form, auth);
 });
 
 forms.post('/share/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
-  return submitFormAnswers(c, { form, token, submittedVia: 'share', defaultSourceSlug: form.share_slug });
+  return submitFormAnswers(c, { form, auth, submittedVia: 'share', defaultSourceSlug: form.share_slug });
 });
 
 forms.post('/s/:tenantName/:shareSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
   const form = await getFormByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.share_enabled) return c.json({ error: 'Share link is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
-  return submitFormAnswers(c, { form, token, submittedVia: 'share', defaultSourceSlug: form.share_slug });
+  return submitFormAnswers(c, { form, auth, submittedVia: 'share', defaultSourceSlug: form.share_slug });
 });
 
 interface AnswerSubmissionOptions {
   form: FormRow;
-  token: string | undefined;
+  /** Pre-verified session (Bearer value already resolved through verifyAuthSession — PATs exchanged). */
+  auth: VerifiedAuthSession | null;
   submittedVia: 'api' | 'share';
   defaultSourceSlug: string | null;
 }
@@ -1691,8 +1701,10 @@ const submitFormAnswers = async (
   c: Context<{ Bindings: Env }>,
   options: AnswerSubmissionOptions,
 ): Promise<Response> => {
-  const { form, token, submittedVia: defaultSubmittedVia, defaultSourceSlug } = options;
-  const supabase = await createSupabaseClient(c.env, token);
+  const { form, auth, submittedVia: defaultSubmittedVia, defaultSourceSlug } = options;
+  // The caller resolves the Bearer value (PAT exchange) — the raw `spc_…`
+  // value must never reach PostgREST (specs/auth/api-tokens.md §4 pitfall).
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const { fields, errors: schemaErrors } = normalizeSchema(form.schema || {});
   if (schemaErrors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: schemaErrors }, 500);
@@ -1713,9 +1725,7 @@ const submitFormAnswers = async (
   if (errors.length > 0) return c.json({ error: 'Validation failed.', details: errors }, 400);
 
   let submittedBy: string | null = null;
-  if (token) {
-    const auth = await verifyAuthSession(c.env, token);
-    if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+  if (auth) {
     submittedBy = auth.userId;
   }
 
@@ -1772,35 +1782,49 @@ const submitFormAnswers = async (
 // not swallow '/x/answers' as a tenant/slug pair.
 forms.get('/:identifier/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  if (!token) return c.json({ error: 'Bearer authentication required.' }, 401);
+
+  // Exchange a PAT up front (specs/auth/api-tokens.md §4 pitfall): the form
+  // lookup below must run with the exchanged session JWT, never the raw
+  // `spc_…` bearer value (PostgREST: "Expected 3 parts in JWT; got 1").
+  const auth = await verifyAuthSession(c.env, token);
+  if (!auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+
+  const supabase = await createSupabaseClient(c.env, auth.token);
 
   const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
 
-  return retrieveFormAnswers(c, form, token);
+  return retrieveFormAnswers(c, form, auth);
 });
 
 // GET /api/forms/:tenantName/:formSlug/answers — bearer-protected answer retrieval (API variant)
 forms.get('/:tenantName/:formSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  // Resolve PATs up front so the session (roles, exchanged JWT) is available
+  // for the RLS-scoped answer read below.
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
 
   // Workspace-scoped resolution: the tenant segment must belong to the form.
   const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
 
-  return retrieveFormAnswers(c, form, token);
+  return retrieveFormAnswers(c, form, auth);
 });
 
 forms.get('/:tenantName/:formSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
 
   // Workspace-scoped resolution: the tenant segment must belong to the form.
   const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
   const { fields, errors } = normalizeSchema(form.schema || {});
   if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
@@ -1829,24 +1853,31 @@ forms.post('/:tenantName/:formSlug/upload', async (c) => {
 
 forms.post('/:tenantName/:formSlug/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
 
   // Workspace-scoped resolution: the tenant segment must belong to the form.
   const form = await getApiFormByTenantAndSlug(c.env, c.req.param('tenantName'), c.req.param('formSlug'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
-  return submitFormAnswers(c, { form, token, submittedVia: 'api', defaultSourceSlug: form.slug });
+  return submitFormAnswers(c, { form, auth, submittedVia: 'api', defaultSourceSlug: form.slug });
 });
 
 forms.get('/:identifier', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Exchange a PAT up front (specs/auth/api-tokens.md §4 pitfall) so the
+  // form lookup runs with the session JWT, never the raw `spc_…` value.
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
   const { fields, errors } = normalizeSchema(form.schema || {});
   if (errors.length > 0) return c.json({ error: 'Stored form schema is invalid.', details: errors }, 500);
@@ -1856,7 +1887,10 @@ forms.get('/:identifier', async (c) => {
 
 forms.post('/:identifier/upload', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+
+  const supabase = await createSupabaseClient(c.env, auth?.token);
   const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
   const formData = await c.req.formData().catch(() => null);
 
@@ -1867,7 +1901,7 @@ forms.post('/:identifier/upload', async (c) => {
     requestUrl: c.req.url,
     form,
     shareMode: false,
-    token,
+    token: auth?.token,
     formData,
   });
 
@@ -1876,14 +1910,17 @@ forms.post('/:identifier/upload', async (c) => {
 
 forms.post('/:identifier/answers', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  const auth = token ? await verifyAuthSession(c.env, token) : null;
+  if (token && !auth) return c.json({ error: 'Invalid or expired session.' }, 401);
+
+  const supabase = await createSupabaseClient(c.env, auth?.token);
   const form = await getFormByIdentifier(supabase, c.req.param('identifier'));
 
   if (!form) return c.json({ error: 'Form not found.' }, 404);
   if (!form.api_enabled) return c.json({ error: 'API access is disabled for this form.' }, 403);
-  if (form.requires_auth && !token) return c.json({ error: 'Authentication required.' }, 401);
+  if (form.requires_auth && !auth) return c.json({ error: 'Authentication required.' }, 401);
 
-  return submitFormAnswers(c, { form, token, submittedVia: 'api', defaultSourceSlug: form.slug });
+  return submitFormAnswers(c, { form, auth, submittedVia: 'api', defaultSourceSlug: form.slug });
 });
 
 

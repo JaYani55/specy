@@ -269,7 +269,9 @@ export async function objectsWithMeta(env: Env, tenantName: string, shareSlug: s
 
 objects.get('/share/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // No Supabase client needed here: the lookup is admin-based and the
+  // serialized object is public — never build a client from the raw bearer
+  // (specs/auth/api-tokens.md §4 pitfall).
 
   const obj = await getObjectByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!obj || obj.status === 'archived') {
@@ -287,7 +289,9 @@ objects.get('/share/:tenantName/:shareSlug', async (c) => {
 
 objects.get('/o/:tenantName/:shareSlug', async (c) => {
   const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // No Supabase client needed here: the lookup is admin-based and the
+  // serialized object is public — never build a client from the raw bearer
+  // (specs/auth/api-tokens.md §4 pitfall).
 
   const obj = await getObjectByShareSlug(c.env, c.req.param('tenantName'), c.req.param('shareSlug'));
   if (!obj || obj.status === 'archived') {

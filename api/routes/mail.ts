@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { parseBearerToken, requireAppRole } from '../lib/auth';
+import { requireAppRole } from '../lib/auth';
 import { createSupabaseAdminClient, createSupabaseClient, type Env } from '../lib/supabase';
 
 const mail = new Hono<{ Bindings: Env }>();
@@ -46,7 +46,7 @@ mail.get('/jobs', async (c) => {
   const auth = await requireAppRole(c, 'user');
   if (auth instanceof Response) return auth;
 
-  const supabase = await createSupabaseClient(c.env, parseBearerToken(c.req.header('Authorization')) ?? undefined);
+  const supabase = await createSupabaseClient(c.env, auth.token);
 
   const statusParam = c.req.query('status');
   const formIdParam = c.req.query('form_id');
@@ -88,8 +88,12 @@ mail.get('/jobs', async (c) => {
 async function getVisibleJob(
   c: Context<{ Bindings: Env }>,
   jobId: string,
+  sessionToken: string,
 ): Promise<{ id: string; status: string } | null> {
-  const scoped = await createSupabaseClient(c.env, parseBearerToken(c.req.header('Authorization')) ?? undefined);
+  // `sessionToken` is the caller's exchanged session JWT (auth.token — PATs
+  // were already exchanged by requireAppRole; the raw `spc_…` value must
+  // never reach PostgREST, see specs/auth/api-tokens.md §4 pitfall).
+  const scoped = await createSupabaseClient(c.env, sessionToken);
   const { data, error } = await scoped
     .from('mail_delivery_jobs')
     .select('id, status')
@@ -118,7 +122,7 @@ mail.post('/jobs/:id/retry', async (c) => {
 
   // Tenant-scope check: if the caller cannot read the job through RLS, it does
   // not belong to their tenant — respond with 404 to avoid existence leaks.
-  const visible = await getVisibleJob(c, jobId);
+  const visible = await getVisibleJob(c, jobId, auth.token);
   if (!visible) {
     return c.json({ error: 'Mail job not found.' }, 404);
   }
@@ -197,7 +201,7 @@ mail.delete('/jobs/:id', async (c) => {
 
   const jobId = c.req.param('id');
 
-  const visible = await getVisibleJob(c, jobId);
+  const visible = await getVisibleJob(c, jobId, auth.token);
   if (!visible) {
     return c.json({ error: 'Mail job not found.' }, 404);
   }
@@ -233,7 +237,7 @@ mail.delete('/jobs', async (c) => {
     return c.json({ error: `Invalid status filter "${statusParam}".` }, 400);
   }
 
-  const scoped = await createSupabaseClient(c.env, parseBearerToken(c.req.header('Authorization')) ?? undefined);
+  const scoped = await createSupabaseClient(c.env, auth.token);
 
   let visibleQuery = scoped
     .from('mail_delivery_jobs')

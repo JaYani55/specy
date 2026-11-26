@@ -1,7 +1,9 @@
 # Plan: `n8n-nodes-specy` — n8n Connector Package for Specy
 
-> **Status:** Scaffold created (2026-11-25) · reviewed 2026-11-25 (scope decisions: no
-> webhook subsystem, no account-type work — see §6/§7) · implementation phases below are pending.
+> **Status:** Scaffold created (2026-11-25) · reviewed 2026-11-25 (scope decisions: see
+> §6/§7 — webhook subsystem **implemented** same day, account-type work descoped) ·
+> connector phases below are pending. Next release cycle ships the scaffold alongside the
+> webhook feature; the `specyTrigger` node (§6) is the following deliverable.
 > **Repository:** `plugins/n8n-nodes-specy/` — **separate git repository**, gitignored by the
 > core repo (same convention as Specy plugins). Intended upstream home:
 > `github.com/pluracon/n8n-nodes-specy`.

@@ -363,7 +363,9 @@ media.get('/list', async (c) => {
       return c.json({ items, storage: summary });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
-      const supabase = await createStorageClient(c.env, token);
+      // auth.token (exchanged session) — the raw `spc_…` bearer must never
+      // reach Supabase (specs/auth/api-tokens.md §4 pitfall).
+      const supabase = await createStorageClient(c.env, auth?.token);
       const bucketName = cfg.bucket!;
 
       // Auto-create bucket if missing — requires admin client (service key).
@@ -434,7 +436,10 @@ media.post('/upload', async (c) => {
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
   }
-  const token = auth.token;
+  // Exchanged session JWT (PATs already exchanged by requireAuthSession) —
+  // the raw `spc_…` bearer must never reach Supabase
+  // (specs/auth/api-tokens.md §4 pitfall).
+  const sessionToken = auth.token;
 
   try {
     if (cfg.provider === 's3') {
@@ -489,7 +494,7 @@ media.post('/upload', async (c) => {
       return c.json({ url, path: scoped.objectKey });
     } else {
       // ── Supabase Storage ────────────────────────────────────────────────
-      const supabase = await createStorageClient(c.env, token);
+      const supabase = await createStorageClient(c.env, sessionToken);
       const buf = await file.arrayBuffer();
       const { error } = await supabase.storage
         .from(cfg.bucket!)
@@ -521,7 +526,8 @@ media.delete('/file', async (c) => {
   if (!cfg || !cfg.configured || cfg.provider === 'unconfigured') {
     return c.json({ error: 'Storage not configured' }, 503);
   }
-  const token = auth.token;
+  // Exchanged session JWT (see the upload route comment).
+  const sessionToken = auth.token;
 
   try {
     if (cfg.provider === 's3') {
@@ -540,7 +546,7 @@ media.delete('/file', async (c) => {
       assertTenantStorageAccess(summary);
       await deleteTenantStorageObject(c.env, auth, path);
     } else {
-      const supabase = await createStorageClient(c.env, token);
+      const supabase = await createStorageClient(c.env, sessionToken);
       const { error } = await supabase.storage.from(cfg.bucket!).remove([path]);
       if (error) return c.json({ error: error.message }, 500);
     }

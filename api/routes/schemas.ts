@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { createSupabaseAdminClient, createSupabaseClient, hasSupabaseAdminCredential, type Env } from '../lib/supabase';
-import { parseBearerToken, requireAppRole, requireAuthSession } from '../lib/auth';
+import { getOptionalAuthSession, parseBearerToken, requireAppRole, requireAuthSession } from '../lib/auth';
 import { validateOutboundHttpUrl } from '../lib/urlSafety';
 import {
   buildRevalidationSecretName,
@@ -509,8 +509,11 @@ function getManagedSecretUnavailableMessage(env: Env, error?: unknown): string {
   }
 }
 
-async function readSchemaSecretStatusWithUserToken(env: Env, slug: string, token: string): Promise<SchemaSecretStatusRow | null> {
-  const supabase = await createSupabaseClient(env, token);
+// `sessionToken` is always the caller's exchanged session JWT (auth.token);
+// the raw `spc_…` bearer must never reach PostgREST
+// (specs/auth/api-tokens.md §4 pitfall).
+async function readSchemaSecretStatusWithUserToken(env: Env, slug: string, sessionToken: string): Promise<SchemaSecretStatusRow | null> {
+  const supabase = await createSupabaseClient(env, sessionToken);
   const { data, error } = await supabase
     .from('page_schemas')
     .select('id, slug, frontend_url, revalidation_endpoint, revalidation_secret, revalidation_secret_name, registration_status')
@@ -672,8 +675,12 @@ async function getSchemaSecretStatus(
 
 // GET /api/schemas — Discovery endpoint: list all available schemas
 schemas.get('/', async (c) => {
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Bearer values may be PATs (`spc_…`) — exchange via getOptionalAuthSession
+  // so the client never sees a raw PAT (specs/auth/api-tokens.md §4 pitfall).
+  // Anonymous access stays allowed (public discovery).
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const { data, error } = await supabase
     .from('page_schemas')
@@ -838,8 +845,10 @@ schemas.patch('/:slug/definition', async (c) => {
 // GET /api/schemas/:slug/spec.txt — LLM-ready plaintext schema specification
 schemas.get('/:slug/spec.txt', async (c) => {
   const slug = c.req.param('slug');
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Bearer values may be PATs — exchange first (specs/auth/api-tokens.md §4).
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
@@ -857,8 +866,8 @@ schemas.get('/:slug/spec.txt', async (c) => {
     .select('*', { count: 'exact', head: true })
     .eq('schema_id', schema.id);
 
-  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
-  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
+  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, auth ? { token: auth.token } : undefined);
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, auth?.token);
   const baseUrl = await getPublicWorkerUrl(c.env, new URL(c.req.url).origin);
   const lines = buildSpecSections(schema, count ?? 0, baseUrl, specBundle, targets);
   lines.push(
@@ -882,8 +891,10 @@ schemas.get('/:slug/spec.txt', async (c) => {
 
 schemas.get('/:slug/spec', async (c) => {
   const slug = c.req.param('slug');
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Bearer values may be PATs — exchange first (specs/auth/api-tokens.md §4).
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   const { data: schema, error } = await supabase
     .from('page_schemas')
@@ -900,8 +911,8 @@ schemas.get('/:slug/spec', async (c) => {
     .select('*', { count: 'exact', head: true })
     .eq('schema_id', schema.id);
 
-  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, token ? { token } : undefined);
-  const targets = await getSchemaFrontendTargets(c.env, schema.id, token ?? undefined);
+  const specBundle = await getSchemaSpecBundle(c.env, { id: schema.id }, auth ? { token: auth.token } : undefined);
+  const targets = await getSchemaFrontendTargets(c.env, schema.id, auth?.token);
 
   return c.json({
     schema: { ...schema, slug: schema.api_slug, schema_slug: schema.slug },
@@ -1743,8 +1754,10 @@ schemas.delete('/:slug', async (c) => {
 
 schemas.post('/:slug/revalidate', async (c) => {
   const slug = c.req.param('slug');
-  const token = parseBearerToken(c.req.header('Authorization'));
-  const supabase = await createSupabaseClient(c.env, token);
+  // Bearer values may be PATs — exchange first (specs/auth/api-tokens.md §4).
+  const auth = await getOptionalAuthSession(c);
+  if (auth instanceof Response) return auth;
+  const supabase = await createSupabaseClient(c.env, auth?.token);
 
   let body: { page_slug: string };
   try {

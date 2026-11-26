@@ -93,7 +93,10 @@ Routes that accept PATs must build their Supabase client with
 `auth.token` (the exchanged JWT) — **never** with the raw parsed Bearer value.
 The raw `spc_…` string is not a JWT and PostgREST rejects it with
 `PGRST301: Expected 3 parts in JWT; got 1`. `verifyAuthSession` returns
-`auth.token` = the effective JWT precisely for this purpose.
+`auth.token` = the effective JWT precisely for this purpose. This bug shipped
+in the form `:identifier` routes (2026-11-26) and broke PAT access to
+`GET /api/forms/:identifier/answers`; a source-level regression guard lives in
+`tests/formPatExchange.test.mjs`.
 
 ### Endpoint implementation note (GET with count)
 

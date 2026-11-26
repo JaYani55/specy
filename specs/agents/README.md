@@ -19,6 +19,7 @@ Everything an AI agent or external microservice needs to integrate with Specy.
 | [`plurapi-agent-bridge.md`](plurapi-agent-bridge.md) | **Canonical entry point** — PluraDash ⇄ PluraPi-Sessions bridge: build feedback to agent sessions, agent-session overview, configuration, and triage playbook (router-404 vs. DO-miss) |
 | [`database-integration.md`](database-integration.md) | Database layer overview (Supabase client, core tables) and the dedicated-schema rule for plugin databases |
 | [`unified-secrets-storage.md`](unified-secrets-storage.md) | Secrets storage via Cloudflare (Secrets Store bindings, Worker secrets) and encrypted managed secrets |
+| [`n8n-integration.md`](n8n-integration.md) | n8n community node package (`n8n-nodes-specy`): full REST resource/operation matrix, signed webhook trigger, auth and error semantics |
 
 Related: token acquisition is covered in
 [`../auth/oauth-mcp-authentication.md`](../auth/oauth-mcp-authentication.md).
